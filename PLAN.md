@@ -8,6 +8,18 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
+work, pending checks and transport choices. No child, recurring task or PR watch
+is active as of the October 23 closeout.
+
+The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
+contains 348,000 verified complete operations across 2,610 cells and 90 workload
+views, with zero failed operations. It includes unprotected, OSCORE, DTLS and
+separate HTTP/3 strata. Raw receipts, latency samples and a regrading command
+are published. These closed-loop rankings do not establish server saturation,
+whole-system memory requirements or the CPU target below. The measured core is
+`b9b83d8`; the later dependency update is outside that measurement.
+
 [CPU efficiency #650](https://github.com/jeffglousher/coaptic/issues/650) remains
 open: halve server CPU time per verified complete operation, separately for
 unprotected and established OSCORE communication. Preserve behavior, security,
@@ -102,9 +114,13 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 
 ### Next steps
 
-- Review the client's idle admission path and absolute-deadline recheck against
-  the retained interval counters before changing pacing. Preserve the original
-  failed windows and gates; the new diagnostic establishes no cause or CPU gain.
+- Keep the client pacer unchanged: source inspection found no missing deadline
+  recheck or demonstrated defect. Preserve the original failed windows and gates;
+  interval counters establish no server, sleep or scheduler cause.
+- Resume the saved [server-App batch CPU draft](https://github.com/jeffglousher/coaptic-validation/pull/170)
+  with fresh combined review and affected native checks before Linux execution
+  or merge. Rust compilation and real ownership/clock cleanup qualification are
+  pending. Mocked Python checks are not native qualification.
 - Separate core processing from host I/O and scheduling using the existing
   optimizer-resistant core probe. Keep client preparation and response
   verification visible; whole-probe CPU is not isolated server CPU. Inspect
