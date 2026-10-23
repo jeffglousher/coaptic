@@ -29,7 +29,7 @@ and the measured 17,128-byte constrained async future stay unchanged. The
 local dispatch frame grows by 16 bytes. This is a recorded stack cost, not
 a whole-memory saving or measured CPU gain.
 
-The latest socket comparison tests current core `7ab6949` against baseline
+The latest clean socket comparison tests current core `7ab6949` against baseline
 `b8f44fa`, using companion `eea0374`. Commands, compiler settings and limits
 are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/eea0374b60c93098a7f0dcf24a999e49d753d624/tools/benchmark/linux_cpu.md).
@@ -53,6 +53,28 @@ pass. These optional whole-process, all-thread readings supplement the
 original tick metrics. They do not change eligibility or provide replacement
 ratios; reported nanosecond resolution is not nanosecond accuracy. They
 exclude descendants and unattributed whole-machine work. Profiling was off.
+
+A separate [admission diagnostic](https://github.com/jeffglousher/coaptic-validation/actions/runs/39937330058)
+uses companion `c123d8b4` and identical core `1629c853` on both labels: Mio,
+64 bytes, both security modes, 4,000/s, C1 CON, twelve seconds and two rotated
+pairs. All eight windows pass the original operation, rate, pacing, tick and
+cleanup gates: 384,000 verified operations plus 160 warmups, with no operation
+failures. Linux checks pass 111 runner tests and 19 diagnostic tests; the
+workflow builds Rust binaries but does not run native Rust tests.
+
+The fixed counters reconcile 293 missed starts: 287 were already at least one
+period late at the preceding verified completion, and six crossed that limit
+after traversing the idle-wait branch. No first-admission or no-idle crossing
+occurred. Prior completion includes inherited delay; these categories do not
+identify a server, client, sleep or scheduler cause. The idle branch can include
+a zero-duration sleep. This instrumented cohort does not explain or replace the
+prior 16 pacing failures.
+
+Both diagnostic CPU ratios remain withheld even though the original gates pass.
+One descriptive OSCORE pair median guard fails at +13.615 microseconds. No
+latency acceptance or instrumentation-overhead estimate follows. The diagnostic
+state and its containing Option each occupy 208 bytes on Linux; those nested
+sizes are not additive or whole-memory measurements. Profiling was off.
 
 The prior [same-Mio core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39902235048)
 qualified all 32 windows: 640,000 operations plus 640 warmups at 4,000/s,
@@ -80,10 +102,9 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 
 ### Next steps
 
-- Inspect the retained current-run pacing failures before selecting another
-  measurement. Check the exact C1 dispatch order and response-time traces;
-  distinguish a fixed-trace response-backpressure bound from unmeasured
-  client and scheduler delays. Do not replace failed windows or relax gates.
+- Review the client's idle admission path and absolute-deadline recheck against
+  the retained interval counters before changing pacing. Preserve the original
+  failed windows and gates; the new diagnostic establishes no cause or CPU gain.
 - Separate core processing from host I/O and scheduling using the existing
   optimizer-resistant core probe. Keep client preparation and response
   verification visible; whole-probe CPU is not isolated server CPU. Inspect
