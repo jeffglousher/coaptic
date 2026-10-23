@@ -26,6 +26,13 @@ unprotected and established OSCORE communication. Preserve behavior, security,
 capacities, refusal and recovery. A passing host control does not complete the
 representative SmallDevice/Constrained and cloud targets.
 
+The [performance acceptance matrix](architecture/requirements/PERFORMANCE-ACCEPTANCE.md)
+records the retained baseline, unchanged host gates and explicit remaining
+representative cells. Missing baseline or sufficient-resolution evidence keeps a
+cell open. The current implementation batch repairs production cleanup under
+validation #169 and compares a Linux direct RX control against the same Mio loop;
+neither has a qualified performance result yet.
+
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
 emitted code confirms removal of the helper return copy and the ordinary
