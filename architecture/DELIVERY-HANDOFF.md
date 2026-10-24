@@ -150,6 +150,23 @@ peak stack, runtime and socket/epoll kernel costs remain unknown. Do not count
 stack-resident owners again inside a stack reservation. Whole-memory acceptance
 remains open; the 96-byte Linux bound does not apply to Windows Mio.
 
+A read-only inspection of these exact retained server ELFs with LLVM 22.1.8
+(`llvm-readobj --elf-output-style=JSON --program-headers -` and
+`llvm-nm --print-size --demangle --defined-only -`, bytes supplied on stdin)
+accounts for additional image owners. Original `b8f44fa` declares 5,607,380 file
+bytes and 5,610,604 memory bytes across its four nonoverlapping `PT_LOAD` ranges;
+accepted `d23f93c` declares 5,594,852 and 5,598,284 bytes. Their respective 4096-byte
+page envelopes are 5,623,808 and 5,611,520 bytes. These are declared image extents
+and a page model, not measured resident memory, minimum RAM or a memory saving.
+Both images contain the 32-byte `SMALL_BODY` and 24-byte `BODY` metadata static;
+these are nested in the load image and must not be added again to an image total.
+The TLS header declares 168 file/304 memory bytes on both labels; it does not
+establish dynamic TLS instance requirements. Dynamic loader/libraries, TLS
+instances, allocator overhead, initialization, stacks and kernel costs remain
+unresolved. The inspection neither extracted nor executed either ELF. Exact
+segments, tools, hashes and accounting scope are retained in
+`parent-linux-image-static-owner-receipt.json` under the evidence root below.
+
 Private evidence is retained at
 `D:/CoapticCurrent/cpu-linux-20261024/representative-small-c1-20261024` under its
 declared 64 MiB phase ceiling; earlier evidence retains its separate 128 MiB
