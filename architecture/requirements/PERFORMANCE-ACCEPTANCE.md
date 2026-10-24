@@ -26,7 +26,7 @@ and 0.968586 OSCORE. This cell does not meet the required 0.5 ratio, qualify the
 remaining matrix or replace the failed host cohort. The delivery handoff records
 its exact sources, host, capacities, memory limits and reproduction command.
 
-That run used Ubuntu 24.04, Linux 6.17.0-1022-azure, Xeon Platinum 8370C,
+Historical run `39924741885` used Ubuntu 24.04, Linux 6.17.0-1022-azure, Xeon Platinum 8370C,
 four assigned logical CPUs, glibc 2.39, performance governor and 100 Hz process
 accounting. A fresh comparison must build both labels on the same recorded host;
 the host name is not a guarantee that two hosted runners are equivalent.
@@ -150,7 +150,7 @@ service impact before acceptance. An unexplained ceiling overrun, or unresolved
 material allocator, stack, runtime, kernel or worker cost, keeps memory acceptance
 and the overall target open; labeling such a cost unknown does not pass it.
 
-The 60,000 outbound datagrams per native socket, campaign output limits and
+The global 60,000 outbound-datagram client transport ceiling, campaign output limits and
 twenty-tick CPU gate currently limit long efficient windows. If a representative
 cell cannot collect sufficient CPU inside those bounds, it remains ineligible.
 Any remedy needs bounded ownership and MID/nonce lifetime proof; raising a send
