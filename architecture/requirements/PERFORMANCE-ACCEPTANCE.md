@@ -113,8 +113,12 @@ Companion #188 adds the explicit fixed SmallDevice 32-byte C1 probe and preserve
 the Default64 seven-field output and batch CPU fixture. Exact b8/d23 Windows
 builds pass twenty native tests and eight functional cells verify 1,152 exchanges
 with optimization barriers and full response verification. Companion #189 adds
-the fixed Linux proof to the existing workflow; Linux execution/receipt review
-remains pending. Neither wall samples nor this functional proof qualify socket
+the fixed Linux proof to the existing workflow; run `40079192247` passes twenty
+native tests and eight cells with 1,152 verified exchanges and 32,768 separate
+calibrations. Actual Linux SmallDevice App is 14,936 bytes including its nested
+2,976-byte CoreIo; this is a different fixture from Mio. The narrow SmallDevice32
+C1 probe obligation is now proved, with a Default64 regression control.
+Neither wall samples nor this functional proof qualify socket
 CPU, latency, remaining profiles/concurrency or whole memory.
 
 ## Representative execution matrix

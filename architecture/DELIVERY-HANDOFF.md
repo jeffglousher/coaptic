@@ -806,8 +806,45 @@ ten platform tests skip. The initial private harness failure is retained and
 corrected without changing frozen source. Fresh general correctness/security
 review has no findings. The single Linux run
 [`40079192247`](https://github.com/jeffglousher/coaptic-validation/actions/runs/40079192247)
-is pending execution/receipt review. Issue #187, both CPU targets, other
+passes its narrow Linux functional proof: twenty native tests, 75 Python passes
+and five skips, all eight cells, 1,152 fully verified exchanges and 32,768 separate
+calibrations. Both copied ELF/source/lock/compiler identities are frozen before
+the cells; final source/lock restoration and all owned-process cleanup pass.
+The legacy Default64 output remains seven fields. The actual Linux Small32
+ledger matches the listed Windows owner sizes; this is observed output, not a
+Windows-size assertion or equivalence to the Mio fixture. This completes #187's
+narrow SmallDevice32 C1 functional/probe proof. Both CPU targets, other
 profile/concurrency probe obligations and whole-memory acceptance remain open.
+
+Actual Linux original/accepted ELF SHA-256 values are respectively
+`07cd940a383a25cb9890dcc97655255b2a076b474702c1e88a094a4839bbdc2a`
+and `6635c4b149355a25aa705bc6922f2c6a4d02b5773092415f531f01dcbae4bdbb`,
+5,541,848/5,550,224 bytes. The builds use the recorded Rust/Cargo 1.99.0 GNU
+target, release `--locked`, thin LTO/one codegen unit, debug=1, strip=none,
+forced frame pointers, incremental=0 and two build jobs. The finite proof uses
+the same App poll boundary with complete authentication/response verification.
+Its sixteen wall samples per cell establish no statistical CPU or latency claim;
+separate calibration is never subtracted.
+
+The 3,330,559-byte remote archive, SHA-256
+`53b02c55b666f742e201283ec2846194df58c7c8406f672d72378f1f16458ba2`,
+contains 46 members and 11,318,087 uncompressed bytes. The collector checks all
+member CRC/SHA values, including both ELFs streamed as data. Parent verification
+rehashes all 44 retained text members and twenty source Git blobs, checks raw
+arrays/counts, selected locks, paired identities and restoration; it transparently
+reuses the remote archive/ELF stream hashes. Retained output is 789,274 bytes
+within 1.5 MiB, with no local ZIP/ELF/perf. The native index's own empty placeholder
+is consistent with its reviewed write ordering; its actual archived CRC/SHA is
+checked separately. An initial collector assumption and a parent local-path
+assumption were corrected in private verifiers, with original failures retained;
+no source, evidence, acceptance gate or benchmark attempt changed.
+
+Linux process limits are 512 MiB address space, thirty seconds and 512 KiB per
+raw output file. They are limits, not allocations or peak requirements. Reproduce
+from companion `7321663` using `small-device-proof` in the existing manual
+core-cost workflow, verifying the exact suite SHA; or use the recorded locked
+build inputs and the following commands without `.exe` on Linux. Original and
+batch diagnosis modes were preserved in source and were not run by this proof.
 
 From the recorded companion source and source-selected locked build, reproduce
 the finite functional cells for each security mode and each pinned core:

@@ -67,7 +67,9 @@ diagnostics do not establish server CPU gain or SmallDevice acceptance.
 Companion #188 adds the explicit fixed SmallDevice 32-byte mode without changing
 the legacy Default64 schema or batch CPU mode. Locked b8/d23 Windows checks and
 eight functional cells verify 1,152 exchanges. Companion #189 delivers its
-bounded opt-in Linux workflow; the single functional proof is pending review.
+bounded opt-in Linux workflow; run `40079192247` passes twenty native tests and
+all eight Linux functional cells, verifying another 1,152 exchanges. This completes
+the narrow SmallDevice32 C1 probe proof under #187, with Default64 regression.
 These wall probes do not establish either CPU target or whole-memory acceptance.
 The bounded 9970 Hz screen from companion #181 stopped at its first control's
 rounded report count; the other three controls did not run. The approach is
