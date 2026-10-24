@@ -207,8 +207,9 @@ material allocator, stack, runtime, kernel or worker cost, keeps memory acceptan
 and the overall target open; labeling such a cost unknown does not pass it.
 Retained host-fixture App/requested-pool reference caps are now named in the
 [delivery handoff](../DELIVERY-HANDOFF.md#retained-baseline-memory-owner-caps).
-They cover Windows profiles and Linux SmallDevice only, with exact source/build
-scope; they do not fill missing matched Linux or aggregate/whole-memory ceilings.
+They cover Windows profiles, Linux SmallDevice and the matched Linux fixed-Service
+configuration, with exact source/build scope. Linux SmallDevice blockwise,
+allocated Service and aggregate/whole-memory ceilings remain open.
 
 The global 60,000 outbound-datagram client transport ceiling, campaign output limits and
 twenty-tick CPU gate currently limit long efficient windows. Companion #184
