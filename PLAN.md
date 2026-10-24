@@ -9,8 +9,9 @@ it is not silently treated as finished software work.
 ## Current work
 
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
-work, pending checks and transport choices. One finite option-batch comparison
-and a bounded C1 profile fixture implementation are active. PR watches and
+work, pending checks and transport choices. The finite option-batch comparison
+has finished; its failed latency guard is retained. A bounded C1 profile fixture
+implementation and independent review are active. PR watches and
 recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
@@ -35,8 +36,9 @@ The bounded Linux direct RX comparison qualifies all windows and latency guards
 but shows no consistent CPU saving. Companion #172 and #173 are merged; the
 latter preserves source-specific locked builds across the syn dependency change.
 Core option reuse is reviewed in draft #675. The cumulative original-baseline
-comparison retains OSCORE p99 failures; a current-main comparison is isolating
-this batch. Neither representative CPU target is complete.
+comparison and current-main isolation both retain OSCORE p99 failures. The batch
+remains draft while a read-only disposition review checks for a supported next
+correction; no further campaign is scheduled. Neither CPU target is complete.
 
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
@@ -108,8 +110,12 @@ coverage/inline/throttle evidence for a causal hotspot ranking.
 This cumulative comparison does not isolate #675. The predeclared
 [incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
 uses d23f93c versus the same 7c04304 and otherwise the same clean plan, with
-profiling off. Its result is pending; the original-baseline failure remains
-retained and neither target can be completed by this local control.
+profiling off. All 32 windows verify 1,536,000 operations plus 640 warmups with
+zero failures; source, locks, pacing, ticks and cleanup pass. The second OSCORE
+1024-byte pair fails p99: 50.112 versus 72.139 microseconds, a +22.027-microsecond
+delta. Passing pooled guards cannot erase that failure. Qualified incremental
+CPU claims are withheld; the original-baseline failure remains retained and
+neither target can be completed by this local control.
 
 The [direct RX control](https://github.com/jeffglousher/coaptic-validation/actions/runs/40042232531)
 compares identical core `b9b83d8` using Mio versus direct Linux MSG_TRUNC receive:
@@ -198,7 +204,9 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   its mixed result does not justify further transport complexity. Any later
   completion/batching experiment needs a demonstrated cost and bounded ownership,
   cancellation, kernel/worker accounting and refusal/recovery proof first.
-- Finish matched socket validation of transient validated-option reuse. Existing
+- Resolve the disposition of transient validated-option reuse after its failed
+  incremental p99 guard. Do not merge or rerun without a concrete supported fix.
+  Existing
   Windows object/future checks remain unchanged; generated dispatch/poll frame
   reservations are unchanged, but validation is now outlined with a 200-byte
   reservation and 64 bytes of saved registers. Record that cost without claiming

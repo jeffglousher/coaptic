@@ -11,7 +11,7 @@ requires separate authorization under #132.
 - Core main includes the acceptance matrix from #674. Transient validated-option
   reuse is reviewed in draft [#675](https://github.com/jeffglousher/coaptic/pull/675),
   measured source `7c043046097e01e8e8f9f95fc51ee70dde3ed860`. The cumulative
-  baseline comparison fails OSCORE p99 guards; incremental isolation is pending.
+  baseline comparison and incremental isolation fail OSCORE p99 guards.
   The current host ranking measured clean core
   `b9b83d8663cbdcb7a80bf143670a05019f25cf25`; subsequent `11cf5b6` updates a
   dependency and is outside that measurement.
@@ -34,11 +34,13 @@ requires separate authorization under #132.
   fixed/allocated Service on the existing Mio loop. That implementation owns
   its source/refs/local build lane until explicit release. Independent-endpoint
   CON remains a separate pending client slice.
-- PR watches and recurring tasks are off. One finite
+- PR watches and recurring tasks are off. The finite
   [incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
-  has one finite collector: current main `d23f93c` versus `7c04304`, same Mio,
+  has completed: current main `d23f93c` versus `7c04304`, same Mio,
   64/1024 bytes, 4,000/s, twelve seconds and four rotated pairs, profiling off.
-  It isolates #675; the original-baseline failure below remains retained.
+  It isolates #675 and fails one pair p99 guard; the original-baseline failure
+  below remains retained. A read-only disposition review is active; no further
+  campaign is scheduled.
 
 ## Completed bounded Linux I/O control
 
@@ -145,7 +147,7 @@ socket/syscall/poll and server dispatch/AES/CCM symbols are leads, with no
 causal ranking or percentages: inline coverage and throttling remain unproven,
 and cycles/instructions are unsupported. Profile timings never enter clean
 CPU/latency. This comparison spans cumulative core changes, so it does not
-attribute its latency failure to #675. The incremental control above is pending.
+attribute its latency failure to #675. The incremental control is reported below.
 
 Reproduce from companion `8b25a25` with the same setup as the CPU guide, preserving
 all required windows and failures:
@@ -211,7 +213,25 @@ include measurement perturbation and establish no server CPU gain. Emission uses
 Rust 1.99.0, native release thin LTO/one codegen unit, default debug=0, no RUSTFLAGS,
 features `std,alloc,oscore`; it is separate from the Linux socket build profile.
 The original-baseline Linux comparison above retains its OSCORE p99 failures;
-the current-main incremental comparison remains pending. Both targets stay open.
+the current-main incremental comparison also fails its latency guard.
+
+Run `40045613509` uses the same companion source, Linux build flags, host-control
+capacities, payloads, rate, duration and four-pair plan, with profiling and
+diagnostics off. Both labels select the verified syn-3 lock and restore canonical
+bytes before recording clean identities. All 32 windows verify 1,536,000 measured
+operations plus 640 warmups with zero failures; source, lock, rate, pacing, tick
+and cleanup gates pass. The second OSCORE 1024-byte pair has baseline p99 50.112
+and candidate p99 72.139 microseconds (+22.027), exceeding the unchanged +10 guard.
+Its median delta is +0.187 microseconds. All pooled guards pass, including this
+stratum's +6.121-microsecond p99 delta; the pair failure still vetoes acceptance.
+Qualified incremental CPU claims remain withheld. This result establishes no
+cause for the tail increase. PR #675 remains draft while a read-only review
+checks whether existing source/evidence supports a correction. No blind rerun is
+scheduled. Both targets stay open.
+
+Reproduce this incremental control with the preceding original-baseline command,
+replacing `--baseline-sha` with `d23f93c0699b75ec17e692999d62ff89bb71463d`, omitting
+`--perf`, and using a fresh evidence destination. Retain both failed cohorts.
 
 ## Current server-App CPU result
 
