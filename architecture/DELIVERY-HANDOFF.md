@@ -33,12 +33,12 @@ one, deferred zero, association one, bindings four, RX/TX two ? 1,152 bytes,
 dedup four, Observe two and no body pools; each window sends 30,020 datagrams
 under the unchanged 60,000 ceiling.
 
-All eight ON captures record `sendto` one entry/success, `recvfrom` two entries
-with one success and one EAGAIN, and `epoll_wait` one entry/success per verified
-operation. Other bins and both anomaly counters are zero. Independent gated
+All eight ON captures, normalized by verified completions, record `sendto` one
+entry/success, `recvfrom` two entries with one success and one EAGAIN, and
+`epoll_wait` one entry/success per operation. No individual event order was
+captured. Other bins and both anomaly counters are zero. Independent gated
 entry/exit counts do not imply syscall durations, vDSO-clock coverage, removable
-kernel cost or a transport percentage. The extra empty receive is confirmed as
-a mechanism; removing it still needs a safe source design and matched evidence.
+kernel cost or a transport percentage. The window totals match the empty-receive path in source; removing it still needs a safe source design and matched evidence.
 
 Unprotected repeat 3 fails the +2 ?s median guard by a delta of +2.084 ?s;
 OSCORE repeats 0/1/2 have +2.875/+16.642/+2.514 ?s deltas. All pair p99 and both
