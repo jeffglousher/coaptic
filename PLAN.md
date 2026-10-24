@@ -267,6 +267,10 @@ Heap, allocator, generated peak stacks and kernel owners remain separate or
 unknown. The lazy local scratch adds one tag byte in measured Windows layouts,
 with no persistent App field or extra payload buffer. Do not sum nested owners;
 whole-memory acceptance remains open.
+The retained SmallDevice Linux ELF inspection now identifies the declared load
+image and its nested 32-byte representation/24-byte metadata statics in the
+handoff. Image extents and TLS headers do not establish resident, dynamic TLS or
+peak requirements; keep the remaining enclosing-owner ceilings open.
 
 ### Delivered behavior and boundaries
 
