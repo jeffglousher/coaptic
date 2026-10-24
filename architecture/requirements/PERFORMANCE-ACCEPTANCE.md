@@ -45,6 +45,18 @@ warmups, but zero-based repeat one fails median (+6.6925 microseconds) and p99
 CPU comparisons are withheld. The cell remains open; this failed cohort is
 retained without replacement or relaxed guards.
 
+The first fixed-Service 16 KiB blockwise/C1 CON/50 starts/s partition,
+[run 40081182117](https://github.com/jeffglousher/coaptic-validation/actions/runs/40081182117),
+uses companion `7321663`, original `b8f44fa` versus accepted `d23f93c`, ordinary
+Mio, a frozen baseline-built client and four rotated pairs of 74-second windows.
+All eight windows verify 29,600 unprotected complete operations plus 160 warmups;
+sources, capacities, pacing, ticks and cleanup pass. Median deltas fail in
+zero-based repeats 0/1/3 (+93.4885/+27.681/+32.200 microseconds) and pooled
+(+3.154); every p99 guard passes. All CPU comparisons are withheld. This cell
+and both reduction targets remain open. The first required OSCORE counterpart,
+`40083610413`, is pending and replaces no failed cohort. See the handoff for
+the exact Linux owner references, host boundary and reproduction.
+
 The separate identical-core memory functional control `40066937573` verifies
 1,600 measured operations, 160 warmups and 32 available process snapshots.
 All eight CPU windows miss the twenty-tick floor and one OSCORE pair median

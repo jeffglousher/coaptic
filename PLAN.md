@@ -25,6 +25,13 @@ SmallDevice partition verifies 400,000 operations but fails pair and pooled
 latency guards; its CPU comparisons are withheld. Both 50% targets and
 whole-memory acceptance remain open. PR watches and recurring tasks remain off.
 
+The first fixed-Service 16 KiB blockwise partition (`40081182117`) verifies
+29,600 unprotected operations plus 160 warmups. Its median guards fail in
+three pairs and the pooled stratum; CPU comparisons remain withheld. Actual
+Linux App owners match at 314,856 bytes, with separate 16,384-byte representation
+storage. The first required OSCORE counterpart is run `40083610413`, pending;
+it does not replace the failed unprotected cohort.
+
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
 views, with zero failed operations. It includes unprotected, OSCORE, DTLS and
@@ -279,6 +286,12 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   fails repeat-one median/p99, repeat-three median and pooled median guards.
   Keep its CPU comparisons withheld and that acceptance cell open; no retry or
   replacement cohort is planned.
+  Service-fixed 16 KiB/C1 CON/50 starts/s/74-second run `40081182117` completes
+  all eight windows but fails three pair median guards and the pooled median.
+  Its CPU comparisons remain withheld. Collect and independently verify the
+  first OSCORE counterpart `40083610413`; preserve both modes' original guards
+  and failed cohorts. Remaining Service storage/payload/load/concurrency and
+  complete-operation core-probe obligations stay open.
   Use these retained results before extending remaining plans. Companion #186's
   bounded lifetime memory/stack-limit observations pass the limited Linux proof
   in `40066937573`; they do not establish whole-memory ceilings or used stack.
@@ -298,8 +311,10 @@ image and its nested 32-byte representation/24-byte metadata statics in the
 handoff. Image extents and TLS headers do not establish resident, dynamic TLS or
 peak requirements; keep the remaining enclosing-owner ceilings open. The handoff
 now freezes source-identified host App/requested-pool owner caps from retained
-startup ledgers. Linux blockwise/Service and aggregate/whole-memory caps remain
-open; the Windows host figures do not establish device RAM requirements.
+startup ledgers. The fixed-Service Linux run now supplies a matched 314,856-byte
+App reference, with zero requested pool heap and separate representation backing.
+Linux SmallDevice blockwise, allocated Service and aggregate/whole-memory caps
+remain open; host figures do not establish device RAM requirements.
 
 ### Delivered behavior and boundaries
 
