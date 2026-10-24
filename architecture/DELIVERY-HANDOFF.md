@@ -261,6 +261,146 @@ the remaining matrix stay open. Reproduce the preceding command from companion
 `c1fa5bf`, selecting `--security-mode oscore` and a fresh output directory; the
 recorded failed cohort remains unchanged.
 
+### Fixed-Service blockwise partition
+
+[Run 40081182117](https://github.com/jeffglousher/coaptic-validation/actions/runs/40081182117),
+attempt one, compares original `b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57`
+with accepted `d23f93c0699b75ec17e692999d62ff89bb71463d`, using companion
+`73216630df57496e50bcc53189301cb74890f2e6`. Both labels use ordinary Mio and
+the same frozen baseline-built client. The fixed Service profile serves complete
+16,384-byte blockwise representations, C1 CON, 50 starts/s, 74 seconds and four
+rotated pairs. Profiling, admission diagnostics and independent endpoints are off.
+All eight windows verify 29,600 unprotected operations plus 160 warmups, with
+zero operation failures. Complete bodies and metadata verify; this unprotected
+partition makes no OSCORE authentication claim. Sources, selected locks,
+compiler, capacities, rate, pacing, CPU resolution and cleanup pass.
+
+Acceptance fails. Pair median deltas in zero-based repeats 0/1/3 are
+**+93.4885/+27.681/+32.200 microseconds**; pooled median is +3.154. Repeat two
+median passes at -84.216. All pair and pooled p99 guards pass. Pooled median
+is 748.8985 to 752.0525 microseconds and p99 1,145.009 to 1,113.309. The existing
+pair AND pooled +2/+10-microsecond guards remain unchanged. **All CPU ratios
+are withheld.** Raw server ticks total 702 to 692 and separate client ticks
+1,250 to 1,238 over 14,800 completions per label; these are accounting, not an
+accepted reduction or causal cost ranking. There is no rerun or replacement.
+
+Each window completes 3,700 measured operations and twenty warmups, using
+59,520 total client sends including the sixteen Block2 requests per operation.
+The live 60,000-send ceiling retains 480 sends of headroom for retries/controls;
+it is not enlarged. Zero starts are missed, achieved rates span
+50.0127465..50.0130277/s, and server CPU is 165..180 ticks/window at 100 Hz.
+Paced completion does not establish saturation or maximum throughput. The
+3,000 ms complete-operation deadline and 91-second measurement wait are retained.
+
+The host records EPYC 7763, four assigned logical CPUs, Ubuntu 24.04/Linux
+6.17.0-1022-azure, glibc 2.39, TSC, 100 Hz accounting and unavailable governor
+data. This is a separate host/run boundary from every other result, even where
+CPU model strings match. Rust/Cargo 1.99.0/LLVM 23.1.1 build release `--locked`
+for `x86_64-unknown-linux-gnu`, thin LTO/one codegen unit, debug=1, strip=none,
+forced frame pointers, incremental=0 and two jobs; `std,alloc,oscore` features
+with defaults off. Source-specific syn-2/syn-3 locks and clean restoration match.
+Linux passes 317 Python tests/two skips, ten endpoint and 37 staged tests,
+strict release/locked/all-target package Clippy and actual mixed-UID/live-thread
+and production-launcher success/timeout cleanup proofs. The ten endpoint tests
+include the path-included ownership, replay, cancellation and Service-boundary
+proofs; they are not merely adapter tests or a whole-client-suite claim.
+
+Both actual Linux App owners are **314,856 bytes**, including fixed pools,
+security, the 2,056-byte adapter and its 2,049-byte scratch. Requested pool heap
+is zero. Service capacities are routes 32/one populated GET, Calls 4, deferred
+8, association 1/request bindings 4, RX/TX each 32 x 1,472 bytes, dedup 64,
+Observe 32 and RX/TX bodies each 4 x 16,384 bytes; blockwise is on. The nested
+225,280-byte packet/body payload total is already inside App. Separate owners
+are 16,384 requested representation bytes, Poll 4 bytes and Events header 24
+bytes/capacity eight. The pinned-source 96-byte Events payload request described
+below remains separate; allocator/runtime/kernel/initialization and peak-stack
+costs remain unresolved. No worker or pending kernel operation is introduced.
+
+The baseline client used for both labels reports App 15,448 bytes including
+its 1,473-byte scratch, requested core heap 37,076 bytes, verification storage
+32,768 bytes, timing storage 29,600 bytes and pending metadata 288 bytes. These
+client costs are separate from the server. All 32 process snapshots are available
+and PID-coherent. Server lifetime VmHWM spans 5,627,904..5,922,816 bytes, VmPeak
+10,297,344..10,321,920 and VmStk 933,888..946,176, with one observed thread and
+a 16 MiB soft stack limit/hard unlimited. Approximate non-atomic lifetime/mapping
+observations do not establish used stack, peak RAM or minimum requirements.
+
+Actual baseline/candidate server ELF SHA-256 values are
+`5c4730ddc7e72eaeb05cfd50ee5647f75005cdbf00fc774c181a39ca71a968dc`
+and `48b0432fa03cf14beadcc54db271848c9482c0903ee659409a9881f17481d1a2`.
+The frozen baseline client is
+`c61bb04ca2de20424274a13a67f8c95066137f415fa5e6087f06a270ada337f2`.
+The remote archive is 21,201,546 bytes, SHA-256
+`451161431758a5275c83d3fd7e44a6bdd9b29a8d2986a8ada2d1656eb70fc582`,
+with sixty members and 80,215,926 uncompressed bytes. The collector verifies all
+member CRC/SHA values, including four ELFs streamed as data. Parent independently
+rehashes all 56 retained text members and 24 source Git blobs and reproduces raw
+latency/count/tick/capacity/memory checks (614 checks); remote archive/ELF hashes
+are transparently reused. A private verifier's initial metadata-type assumption
+was corrected with its failure retained; no evidence, source, gate or benchmark
+attempt changed. Sealed output `service-fixed16384-u50-74s-40081182117` under the
+existing evidence root is 936,498 bytes within 2 MiB, with no local ZIP/ELF/perf.
+
+The first required OSCORE counterpart,
+[run 40083610413](https://github.com/jeffglousher/coaptic-validation/actions/runs/40083610413),
+attempt one, passes all eight windows on the same declared sources, workload
+and unchanged guards. All 29,600 complete responses plus 160 warmups are
+authenticated and verified by the frozen baseline-built client. Sources,
+selected locks, capacities, pacing, ticks, every pair/pooled latency guard and
+cleanup pass. Server CPU is **610.811 to 561.486 microseconds/op**, ratio
+**0.919247788 (-8.08%)**. This exceeds the required 0.5 ratio; both 50% targets
+remain open. This is original-baseline versus accepted source, not an isolated
+optimization experiment. No confidence interval or repeatability claim follows.
+
+Server user/system ticks are 332/572 to 357/474 (904 to 831 total), over 14,800
+completions per label. Separate client totals are 1,520 to 1,399 ticks. Pair
+median deltas are -83.5265/-205.9915/-28.640/-8.549 microseconds; p99 deltas
+-28.102/-50.241/-54.360/-126.542. Pooled median is 894.332 to 849.8195
+microseconds and p99 1,421.318 to 1,366.653. All starts are met, each window
+uses 59,520 sends and has 201..238 server ticks. This paced rate is not a
+saturation result. Tick quantization, scheduling and machine kernel-worker
+uncertainty remain visible; counter components identify no causal hotspot.
+
+This second host also reports EPYC 7763/four logical CPUs, Linux
+6.17.0-1022-azure/glibc 2.39/TSC/100 Hz and unavailable governor data. It remains
+a separate run/host boundary from the failed unprotected result; do not combine
+their costs or infer a security/transport-cost percentage. Compiler/build/lock
+inputs, all four actual ELF hashes and preflight coverage match those above,
+with the binary hashes freshly checked in this second artifact. Both startup
+App owners again measure 314,856 bytes with zero requested pool heap and separate
+16,384-byte representation backing. All 32 snapshots are available/PID-coherent:
+server lifetime VmHWM 5,713,920..6,045,696 bytes, VmPeak 10,301,440..10,321,920
+and VmStk 937,984..946,176. Owner nesting and all unresolved peak/runtime/kernel
+and whole-memory limits remain unchanged.
+
+The OSCORE remote archive is 21,201,183 bytes, SHA-256
+`aec1eb5acc3b599b292dd5d894bae5baab598f75f94f02b42ba1d96a1684b501`,
+sixty members and 80,220,019 uncompressed bytes. All member CRC/SHA values,
+including four streamed ELFs, are checked anew by the collector. Parent
+verification independently rehashes 56 retained text members and 24 source Git
+blobs and reproduces all 29,600 raw samples, guards, ticks, capacities and
+memory observations (617 checks); remote archive/ELF stream hashes are reused
+transparently. Sealed `service-fixed16384-os50-74s-40083610413` output is 942,484
+bytes within 2 MiB, with no local ZIP/ELF/perf. No retry or replacement occurred.
+
+Both targets, the failed unprotected acceptance cell, other representative cells
+and whole-memory acceptance remain open. Companion #190 is the bounded two-file
+Service complete-operation core-probe work; validation/delivery remain pending.
+It cannot rescue socket guards or establish a transport-cost percentage.
+Reproduce from clean companion `7321663`, the compiler/flags above and a
+compatible lane. The command below selects the unprotected cohort; select
+`--security-mode oscore` and another fresh output for its separate counterpart:
+
+```sh
+python3 -B tools/benchmark/linux_cpu.py \
+  --baseline-sha b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57 \
+  --candidate-sha d23f93c0699b75ec17e692999d62ff89bb71463d \
+  --server-kind coaptic-mio --resource-profile service-fixed \
+  --sizes 16384 --rates 50 --seconds 74 --repeats 4 \
+  --long-window --security-mode unprotected --concurrency 1 --message-type con \
+  --build-lane /existing/compatible/lane --output /fresh/service-fixed-long
+```
+
 ### Limited Linux memory proof
 
 [Run 40066937573](https://github.com/jeffglousher/coaptic-validation/actions/runs/40066937573)
@@ -365,8 +505,11 @@ On Linux/GNU, qualified run `40054024038` supplies only SmallDevice fixed:
 App 14,016 bytes, pool request zero, Poll 4 bytes and Events header 24 bytes,
 with 32 static representation bytes. Its separate 96-byte Events payload is a
 pinned-source requested-allocation bound, not measured allocator use. The next
-section records exact sources/compiler/flags. Matched Linux blockwise and both
-Service owner caps remain OPEN; Windows values do not establish them. Do not add
+section records exact sources/compiler/flags. Run `40081182117` additionally
+supplies matched Linux fixed-Service App 314,856 bytes and zero requested pool
+heap, with separate 16,384-byte representation backing under its exact declared
+configuration above. Linux SmallDevice blockwise and allocated Service owner
+caps remain OPEN; Windows values do not establish them. Do not add
 nested scratch/pools again, or add stack/image residents again to their enclosing
 reservation/image. Material allocator, initialization, runtime, kernel and peak
 requirements still prevent aggregate/whole-memory acceptance.
@@ -919,7 +1062,8 @@ Stack-resident App/local owners must not also be added to that stack reservation
 No whole-memory or CPU acceptance follows from these functional receipts.
 
 The SmallDevice 32-byte C1 measurement strata at 1,000/s in both modes and at
-100/s unprotected qualify as recorded above. Their CPU ratios remain above 0.5;
+100/s unprotected, plus fixed-Service 16 KiB/C1 CON/50/s OSCORE, qualify as
+recorded above. Their CPU ratios remain above 0.5;
 both reduction targets and the remaining representative Linux CPU/latency cells
 remain open. Throughput/saturation remains unqualified. Default
 clean windows remain 2–30 seconds; delivered #184 adds explicitly selected

@@ -45,6 +45,24 @@ warmups, but zero-based repeat one fails median (+6.6925 microseconds) and p99
 CPU comparisons are withheld. The cell remains open; this failed cohort is
 retained without replacement or relaxed guards.
 
+The first fixed-Service 16 KiB blockwise/C1 CON/50 starts/s partition,
+[run 40081182117](https://github.com/jeffglousher/coaptic-validation/actions/runs/40081182117),
+uses companion `7321663`, original `b8f44fa` versus accepted `d23f93c`, ordinary
+Mio, a frozen baseline-built client and four rotated pairs of 74-second windows.
+All eight windows verify 29,600 unprotected complete operations plus 160 warmups;
+sources, capacities, pacing, ticks and cleanup pass. Median deltas fail in
+zero-based repeats 0/1/3 (+93.4885/+27.681/+32.200 microseconds) and pooled
+(+3.154); every p99 guard passes. All CPU comparisons are withheld. This cell
+and both reduction targets remain open. The first required OSCORE counterpart,
+[run 40083610413](https://github.com/jeffglousher/coaptic-validation/actions/runs/40083610413),
+uses the same source/configuration plan on a separately recorded host. All eight
+windows verify 29,600 authenticated operations plus 160 warmups and pass every
+eligibility, latency and cleanup guard. Server CPU/op is 610.811 to 561.486
+microseconds, ratio 0.919248 (-8.08%), above the required 0.5. This measurement
+qualifies only that OSCORE slice and replaces no failed cohort. Neither an
+isolated optimization nor a confidence interval is established. See the handoff
+for exact Linux owners, host boundaries and reproduction.
+
 The separate identical-core memory functional control `40066937573` verifies
 1,600 measured operations, 160 warmups and 32 available process snapshots.
 All eight CPU windows miss the twenty-tick floor and one OSCORE pair median
@@ -195,8 +213,9 @@ material allocator, stack, runtime, kernel or worker cost, keeps memory acceptan
 and the overall target open; labeling such a cost unknown does not pass it.
 Retained host-fixture App/requested-pool reference caps are now named in the
 [delivery handoff](../DELIVERY-HANDOFF.md#retained-baseline-memory-owner-caps).
-They cover Windows profiles and Linux SmallDevice only, with exact source/build
-scope; they do not fill missing matched Linux or aggregate/whole-memory ceilings.
+They cover Windows profiles, Linux SmallDevice and the matched Linux fixed-Service
+configuration, with exact source/build scope. Linux SmallDevice blockwise,
+allocated Service and aggregate/whole-memory ceilings remain open.
 
 The global 60,000 outbound-datagram client transport ceiling, campaign output limits and
 twenty-tick CPU gate currently limit long efficient windows. Companion #184
