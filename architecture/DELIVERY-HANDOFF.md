@@ -90,6 +90,125 @@ requires separate authorization under #132.
   below remains retained. Disposition review found no supported correction; no further
   campaign is scheduled.
 
+## Delivered measurement support; Linux receipts pending
+
+Companion [#184](https://github.com/jeffglousher/coaptic-validation/pull/184) is
+merged as `430722d73818e6b23ceecc6e6edb567a20111958`, tree-identical to reviewed
+`8274bf004ee2a6b78d8610de94c165b9eea7aef8`. Explicit long partitions select one
+representative profile/payload/rate/security mode, ordinary Mio on both labels,
+C1 CON, four rotated pairs/eight clean windows, 31..1500 seconds and at most
+12,000 scheduled clean seconds. Perf, admission diagnostics and independent
+endpoints are off. Default short/both-mode operation remains. The complete
+operation deadline stays 3000 ms and the one sender counter still charges all
+warmup, measured, retry and control datagrams against 60,000. Every window,
+every pair AND pooled stratum retain their original guards. One absolute long
+measurement wait is `ceil(D/0.95)+13`, capped at 1600 seconds; default/long job
+ceilings are 60/360 minutes. A single-security partition is partial evidence.
+The 256 MiB whole-upload plan now includes actual copied binaries, bounded
+metadata/profiles and a combined 16 MiB setup-log reserve. These are retained-file
+bounds, not build-cache, transient-disk or memory peaks.
+
+Retained Windows checks reconcile 290 Python passes/22 platform skips, 33 native
+client tests, strict release package Clippy, fmt and actionlint. Native checks use
+Rust/Cargo 1.99.0, MSVC, release thin LTO/one codegen unit, debug=0, incremental=0
+and two build jobs. Locked original
+`b8f44fa` and accepted `d23f93c` builds plus eight short functional cells verify
+176 operations including warmups, using one baseline-built client. These checks
+do not qualify long Linux behavior. The focused #183 qualification remains open.
+
+Companion [#186](https://github.com/jeffglousher/coaptic-validation/pull/186) is
+merged as `c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059`, tree-identical to reviewed
+`75a37d1ee12f8c56d87cb25d12d158a567d9ff52`. Existing before/after process snapshots
+attempt Linux status/limits observations after their original CPU/memory reads:
+approximate lifetime resident/virtual high water, stack mapping, thread count and
+configured stack limits. Reads are bounded to 16 KiB and compact metadata to
+1 KiB per process snapshot; parent temporary byte payloads stay below 32 KiB,
+with Python object/allocator costs separate. No new sampler or worker is added.
+Missing/refused/malformed reads are explicit unavailable data. These non-atomic
+observations include startup/warmup and cannot prove used stack, physical peaks,
+minimum RAM or an aggregate ceiling. Boundary work can affect raw resource
+windows; all CPU/latency gates remain. Windows runs 178 unittest cases: 170 pass,
+eight skip. Independent general reviews for both PRs have no actionable findings;
+Linux #185 proof and whole-memory acceptance remain open.
+
+Two source-frozen runs were dispatched, with results awaiting independent
+verification at this handoff:
+
+- [40065560596](https://github.com/jeffglousher/coaptic-validation/actions/runs/40065560596):
+  companion `430722d`, original `b8f44fa` versus core `5bd6f27` (protocol-identical
+  to accepted `d23f93c`), SmallDevice 32 B, unprotected C1 CON at 100/s, 500 seconds
+  and four matched pairs. The plan is 400,000 measured operations plus 160
+  warmups. Its source predates #186 and contains none of the new memory fields.
+- [40066937573](https://github.com/jeffglousher/coaptic-validation/actions/runs/40066937573):
+  companion `c1fa5bf`, core `37c3389` on both labels (protocol-identical to `d23f93c`),
+  SmallDevice 32 B, both modes, C1 CON at 100/s, two seconds and two pairs. The
+  functional plan is 1,600 measured operations plus 160 warmups and 32 memory
+  snapshots. Any low-tick result remains ineligible; this identical-core control
+  establishes no optimization gain. The unchanged concurrency group serializes
+  it behind the long run.
+
+No result from either dispatch is credited here. Both 50% targets, the remaining
+representative matrix and material memory unknowns remain OPEN. Exact software
+limits and command options are in the source-identified companion
+[guide](https://github.com/jeffglousher/coaptic-validation/blob/c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059/tools/benchmark/linux_cpu.md).
+
+## Retained baseline memory-owner caps
+
+The retained startup-ledger consolidation covers 28 configuration rows and 112
+raw observations from 55 hashed sources. Freeze the following original `b8f44fa`
+**owner-only no-regression caps** before future candidate qualification, under
+the same declared target/compiler, adapter, full capacities and workload. They
+are host-fixture owner references, not aggregate ceilings or device RAM needs.
+
+For x86_64 Windows/MSVC with Rust/Cargo 1.99.0, release thin LTO/one codegen unit,
+debug=0, incremental=0 and two jobs, the measured App-including-transport sizes
+and source-calculated requested pool layouts are:
+
+- SmallDevice fixed: App 14,032 bytes; pool request zero.
+- Explicit SmallDevice blockwise: App 27,760 bytes; pool request zero.
+- Service fixed: App 314,872 bytes; pool request zero.
+- Bounded Service allocated: App 34,752 bytes; pool request 282,640 bytes.
+
+The capacities are exactly those in the
+[representative matrix](requirements/PERFORMANCE-ACCEPTANCE.md#representative-execution-matrix).
+All four App owners include the 2,072-byte adapter and its 2,049-byte scratch.
+Poll (8 bytes) and Events header (40 bytes, capacity eight) are separate;
+Windows Events payload/allocator costs remain unknown. Fixed pool payloads and
+metadata are inside App; allocated pool payloads and metadata are inside the
+requested layout, not additional owners. Nested packet/body payload totals are
+4,608/0 bytes for SmallDevice, 4,608/8,192 for explicit blockwise, and
+94,208/131,072 for both Service storage choices. The allocated figure is a checked
+layout request, not allocator consumption. Separate representation backing is
+32 borrowed static bytes for SmallDevice, otherwise the selected representation
+size (64/1024/4096 or 64/1024/16384 bytes) in the fixture's process-lifetime boxed
+slice. Initialization and transient construction costs remain unresolved.
+
+The Windows baseline rows come from the #174 C1 fixture freeze at companion base
+`8b25a25`; its old candidate is failed `7c04304` and is excluded from accepted
+claims. Actual accepted `d23f93c` SmallDevice/blockwise figures are independently
+observed in #184's short compatibility cells, and Service figures in #176's CON
+receipts at base `9185c8f`. Those accepted observations match the above owners;
+they do not qualify their CPU or whole-memory requirements. Host-control pool
+requests vary with configured body capacity: 23,462 bytes for 1024-byte body
+pools versus 216,998 for 65536-byte pools. A single host row cannot cover both.
+
+On Linux/GNU, qualified run `40054024038` supplies only SmallDevice fixed:
+App 14,016 bytes, pool request zero, Poll 4 bytes and Events header 24 bytes,
+with 32 static representation bytes. Its separate 96-byte Events payload is a
+pinned-source requested-allocation bound, not measured allocator use. The next
+section records exact sources/compiler/flags. Matched Linux blockwise and both
+Service owner caps remain OPEN; Windows values do not establish them. Do not add
+nested scratch/pools again, or add stack/image residents again to their enclosing
+reservation/image. Material allocator, initialization, runtime, kernel and peak
+requirements still prevent aggregate/whole-memory acceptance.
+
+Exact source/binary/configuration mappings and raw row selectors are retained in
+`retained-owner-ledger/ledger.json`, SHA-256
+`92b10f872ad75a52579e4afda1d35fda3cd93e99ba4b7ed105ec0d0bfb2fd9ec`,
+under the existing evidence root. Parent verification reproduces all 55 source
+hashes and all 112 owner/capacity/representation observations. This consolidation
+runs no build, benchmark or new diagnostic and retains all original failures.
+
 ## First representative SmallDevice C1 result
 
 [Run 40054024038](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
@@ -533,15 +652,20 @@ Stack-resident App/local owners must not also be added to that stack reservation
 No whole-memory or CPU acceptance follows from these functional receipts.
 
 Apart from the SmallDevice 32-byte/1,000/s C1 stratum above, representative Linux
-CPU/latency cells remain open; throughput/saturation remains unqualified. The current
-runner limits clean windows to 30 seconds; each needs at least twenty server CPU
-ticks. The one global 60,000-send ceiling includes warmups, retries and controls.
+CPU/latency cells remain open; throughput/saturation remains unqualified. Default
+clean windows remain 2–30 seconds; delivered #184 adds explicitly selected
+31–1,500-second single-security partitions with the scope and bounds above.
+Each window still needs at least twenty server CPU ticks. The one global
+60,000-send ceiling includes warmups, retries and controls.
 With 20 warmups and 1,024-byte blocks, even ideal traffic permits at most 59,980
 one-block, 14,980 four-block or 3,730 sixteen-block measured operations. Additional
 traffic lowers those maxima. Extending duration alone cannot qualify a cell that
 needs more operations than that budget; pooling individually sub-floor windows
-or substituting process clocks cannot rescue it. No long-window campaign is
-scheduled, and no representative workload or failed cohort is being replaced.
+or substituting process clocks cannot rescue it. Source-frozen run `40065560596`
+was dispatched for the 500-second SmallDevice/unprotected partition recorded
+above; its result remains pending collection and verification. It covers only
+that partial matrix and must pass every pair and pooled latency guard. No
+representative workload or failed cohort is being replaced.
 
 ## Socket integration today
 

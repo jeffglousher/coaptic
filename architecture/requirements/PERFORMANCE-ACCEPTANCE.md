@@ -156,10 +156,18 @@ requires an explicit startup budget and review of its aggregate SmallDevice and
 service impact before acceptance. An unexplained ceiling overrun, or unresolved
 material allocator, stack, runtime, kernel or worker cost, keeps memory acceptance
 and the overall target open; labeling such a cost unknown does not pass it.
+Retained host-fixture App/requested-pool reference caps are now named in the
+[delivery handoff](../DELIVERY-HANDOFF.md#retained-baseline-memory-owner-caps).
+They cover Windows profiles and Linux SmallDevice only, with exact source/build
+scope; they do not fill missing matched Linux or aggregate/whole-memory ceilings.
 
 The global 60,000 outbound-datagram client transport ceiling, campaign output limits and
-twenty-tick CPU gate currently limit long efficient windows. If a representative
-cell cannot collect sufficient CPU inside those bounds, it remains ineligible.
+twenty-tick CPU gate currently limit long efficient windows. Companion #184
+supports explicit 31..1500-second single-security representative partitions with
+four pairs, unchanged send/operation/latency/eligibility limits and profiling off;
+its existence does not qualify a cell. Companion #186 lifetime memory observations
+similarly do not establish required whole-memory ceilings. If a representative
+cell cannot collect sufficient CPU inside the retained bounds, it remains ineligible.
 Any remedy needs bounded ownership and MID/nonce lifetime proof; raising a send
 ceiling or relaxing an eligibility guard is not a remedy.
 
