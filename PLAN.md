@@ -9,8 +9,8 @@ it is not silently treated as finished software work.
 ## Current work
 
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
-work, pending checks and transport choices. No child, recurring task or PR watch
-is active as of the October 23 closeout.
+work, pending checks and transport choices. One finite original-baseline core
+comparison is running; PR watches and recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -29,9 +29,12 @@ representative SmallDevice/Constrained and cloud targets.
 The [performance acceptance matrix](architecture/requirements/PERFORMANCE-ACCEPTANCE.md)
 records the retained baseline, unchanged host gates and explicit remaining
 representative cells. Missing baseline or sufficient-resolution evidence keeps a
-cell open. The current implementation batch repairs production cleanup under
-validation #169 and compares a Linux direct RX control against the same Mio loop;
-neither has a qualified performance result yet.
+cell open. Production cleanup under validation #169 is repaired and qualified.
+The bounded Linux direct RX comparison qualifies all windows and latency guards
+but shows no consistent CPU saving. Companion #172 and #173 are merged; the
+latter preserves source-specific locked builds across the syn dependency change.
+Core option reuse is reviewed in draft #675, with matched socket validation in
+progress. Neither representative CPU target is complete.
 
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
@@ -81,12 +84,24 @@ fixture plus App is 27,658,654 bytes, including all rows, metadata/padding,
 requested App heap, inline owners and a 16 KiB scratch allowance. This is below
 the 32 MiB diagnostic ceiling, not a production memory requirement or whole-RAM
 measurement. Allocator overhead and generated peak stack remain unknown. Native
-worker-death/control-EOF checks pass; production marker/error cleanup retains
-mocked coverage. Whole-tree failure cleanup remains unqualified.
+worker-death/control-EOF checks pass. Later Linux run `40042232531` also passes
+production launcher success/timeout and mixed-UID live-thread cleanup proofs for
+reserved inherited process groups. Arbitrary escaped-group containment remains
+outside that proof.
 
 ### What the measurements support
 
-The [current same-Mio comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39924741885)
+The [direct RX control](https://github.com/jeffglousher/coaptic-validation/actions/runs/40042232531)
+compares identical core `b9b83d8` using Mio versus direct Linux MSG_TRUNC receive:
+64/1024 bytes, both modes, 4,000/s, C1 CON, twelve seconds and two rotated pairs.
+All 16 windows, eight pair guards and four pooled latency guards pass; 768,000
+measured operations plus 320 warmups verify with zero operation failures.
+Direct/Mio CPU ratios are 0.93893/1.02290 unprotected and 1.01439/0.98089 OSCORE
+(64/1024 bytes). This mixed result does not justify expanding the approach or
+changing defaults. The earlier missing-Clippy setup failure `40041518786` remains
+retained with zero campaign windows. See the handoff for memory and reproduction.
+
+The [retained same-Mio comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39924741885)
 verified 1,536,000 operations plus 640 warmups with no operation failures:
 4,000/s, C1 CON, 64/1024 bytes, twelve seconds and four rotated pairs.
 Both labels use the same capacities and frozen baseline client. Sixteen of
@@ -159,12 +174,16 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   native checks and finite Linux clock/window qualification pass. Keep its
   driver scope and cleanup limits explicit; subtracting it from another run's
   socket timing cannot establish transport cost.
-- Select one bounded Linux I/O experiment against Mio, preserving the portable
-  core. Submission/completion ownership and cancellation need a concrete design
-  before an io_uring adapter; fewer App polls and a newer I/O API alone predict
-  no saving. Keep a simple batched-socket control available. Account for ring,
-  packet, runtime and kernel storage and all attributable worker CPU. Do not
-  introduce unbounded queues, hidden polling threads or automatic expansion.
+- The bounded direct RX experiment against Mio is complete. Keep it explicit;
+  its mixed result does not justify further transport complexity. Any later
+  completion/batching experiment needs a demonstrated cost and bounded ownership,
+  cancellation, kernel/worker accounting and refusal/recovery proof first.
+- Finish matched socket validation of transient validated-option reuse. Existing
+  Windows object/future checks remain unchanged; generated dispatch/poll frame
+  reservations are unchanged, but validation is now outlined with a 200-byte
+  reservation and 64 bytes of saved registers. Record that cost without claiming
+  peak-stack acceptance. The optimizer-resistant probe verifies all 161,024
+  exchanges; per-call wall clocks establish no CPU gain.
 - Optimize the largest supported cost in a coherent batch. Reuse storage and
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
@@ -182,11 +201,13 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 Count whole-system memory: configured pools, initialization, metadata, scratch,
 security, transport, runtime, stacks and kernel costs. Pools are allocated at
 startup and reused; automatic expansion stays off. Inline components and RSS
-snapshots do not establish peak or whole RAM. The latest Mio comparison has no
-server resource ledger. The lazy local scratch adds one tag byte in measured
-Windows layouts, with no persistent App field or extra payload buffer. Its
-async-future delta is unknown. Do not sum nested owners; runtime allocations,
-peak stack and whole-memory costs remain unqualified.
+snapshots do not establish peak or whole RAM. The direct RX control reports
+App-including-adapter owners of 16,008 bytes for Mio and 13,960 for direct; Poll
+and Events are separate inline owners of 4 and 24 bytes (eight event capacity).
+Heap, allocator, generated peak stacks and kernel owners remain separate or
+unknown. The lazy local scratch adds one tag byte in measured Windows layouts,
+with no persistent App field or extra payload buffer. Do not sum nested owners;
+whole-memory acceptance remains open.
 
 ### Delivered behavior and boundaries
 
