@@ -217,6 +217,12 @@ They cover Windows profiles, Linux SmallDevice and the matched Linux fixed-Servi
 configuration, with exact source/build scope. Linux SmallDevice blockwise,
 allocated Service and aggregate/whole-memory ceilings remain open.
 
+Companion #191's Service fixed/allocated complete-operation core probe and
+#192's Linux functional workflow use different transport and client owners from
+Mio. Their App/pool ledgers must retain that distinction. Supporting wall probes
+cannot qualify socket CPU or latency, replace failed cohorts, or establish
+aggregate/whole-memory ceilings.
+
 The global 60,000 outbound-datagram client transport ceiling, campaign output limits and
 twenty-tick CPU gate currently limit long efficient windows. Companion #184
 supports explicit 31..1500-second single-security representative partitions with
