@@ -231,10 +231,6 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   companion #176 with one shared context and bounded socket lanes. Actual overlap
   and fully verified service on every lane remain mandatory; concurrent NON
   cannot substitute. Functional Windows checks are not Linux CPU qualification.
-- Repair the actual blocking and staged-Mio server turns under companion #175.
-  Recover only known consumed oversized input; preserve other I/O errors, stage
-  ownership, capacities, fresh clocks and existing send/wait policies. The
-  blocking-performance proposal is not being expanded.
 - Optimize the largest supported cost in a coherent batch. Reuse storage and
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
