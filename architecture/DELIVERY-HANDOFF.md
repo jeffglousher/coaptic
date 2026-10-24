@@ -1120,6 +1120,111 @@ bench-core.exe 16 oscore
 
 ## Current cost screen
 
+### Bounded socket attribution readout proof
+
+Companion [#194](https://github.com/jeffglousher/coaptic-validation/pull/194)
+delivers source `37b9df383e245f06644c91d53d5c02bd8b26378a`, tree
+`50ae8eddf10ad2782081124b645710c58ae12f37`, equal to reviewed `bcef384`.
+It preserves the flat report and default controls, and explicitly requests two
+additional PID-filtered inline readouts for socket record captures. Each uses
+the existing post-sudo file quota, foreground timeout, reserved-group cleanup
+and disabled debuginfod. Five output owners per profile slot fit the unchanged
+whole-upload bound. Windows source validation passes 306 checks with 22 skips;
+independent general correctness/security review has no findings.
+
+The single [Linux run 40096580435](https://github.com/jeffglousher/coaptic-validation/actions/runs/40096580435),
+attempt 1, establishes **readout functionality only** under companion #193.
+Original core `b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57` and accepted
+`d23f93c0699b75ec17e692999d62ff89bb71463d` use ordinary Mio, the same
+baseline-built client, fixed Service capacities, 16,384-byte responses and C1 CON.
+This predeclared diagnostic uses 300 starts/s, ten-second clean windows, two
+rotated pairs per mode and separate five-second 997 Hz record/stat windows.
+It is not a representative CPU acceptance stratum or a replacement cohort.
+All sixteen windows verify 36,000 measured complete operations plus 320 warmups,
+with zero operation failures and resolved cleanup. The transport accepts 581,120
+client sends across the campaign; each window stays within its unchanged
+60,000-send limit, including warmups and controls.
+
+All four clean pairs fail a retained latency guard. Candidate-minus-baseline
+deltas, with zero-based repeats, are: unprotected repeat 0 median +35.839
+microseconds; unprotected repeat 1 p99 +370.780; OSCORE repeat 0 median +2.0775
+and p99 +389.349; OSCORE repeat 1 p99 +217.699. Pooled OSCORE median +3.325
+and p99 +555.641 also fail. Pooled unprotected passes and cannot erase pair
+failures. Rate, pacing, twenty-tick eligibility and cleanup checks pass.
+**All primary CPU comparisons remain withheld.** The short-run summary's
+`comparable` field covers operation/rate/tick eligibility, not these latency
+guards; retained runner arithmetic is not an accepted CPU claim.
+
+All four record captures, their flat reports and eight new caller/sample helpers
+complete successfully. Each helper returns zero below its 4,105,632-byte quota,
+with an explicit positive SUT PID, inline output, 25-second TERM/five-second KILL
+timeout and thirty-second owner deadline. Exact decimal flat headers agree with
+the unchanged strict raw reader. Total/user/kernel samples are respectively
+291/76/215 and 282/60/222 unprotected, 346/135/211 and 331/111/220 OSCORE,
+ordered baseline then candidate. Observed loss/throttle counts are zero;
+requested PID and executable mappings match. Every user total is below 200
+before App filtering. Kernel totals are not eligible App-rooted counts.
+Inline-complete App counts remain unknown, as do full operation exposure and
+coverage. Samples span about 4.98 seconds; ACK processing fences do not establish
+sampling exposure. Unknown frames and warnings are retained. **Cost nomination
+is withheld**; no percentage, transport share or optimization is selected.
+
+The host is AMD EPYC 9V45 with four assigned logical CPUs, Linux
+6.17.0-1022-azure, glibc 2.39, TSC/100 Hz accounting and perf 6.17.13; governor
+information is unavailable. Rust/Cargo 1.99.0 GNU builds use release `--locked`,
+defaults off, `std,alloc,oscore`, forced frame pointers, debug=1, strip=none,
+incremental=0, two build jobs, thin LTO and one codegen unit. Source-specific
+syn-2/syn-3 lock inputs and actual binaries are frozen before windows. Canonical
+lock restoration is verified per build; a final hosted core checkout restoration
+to its initial revision is not separately recorded. No cross-host pooling or
+socket-free subtraction is valid.
+
+Actual server App owners match at 314,856 bytes, including fixed pools and the
+2,056-byte adapter/2,049-byte scratch; requested pool heap is zero. Representation
+backing is a separate 16,384 bytes, Poll is four bytes and Events header is 24
+bytes with capacity eight. Client App is 15,448 bytes, requested core heap 37,076,
+verification 32,768, timing 24,000 clean/12,000 profiling and pending metadata
+288 bytes; its 1,473-byte scratch is nested in App. Sixty-four available lifetime,
+non-atomic process observations are supporting evidence, not peak RAM or used
+stack. Allocator, initialization, runtime, kernel and whole-memory costs remain
+open; profiler/helper CPU is not a server saving.
+
+Linux receipts pass 326 Python checks with two skips, ten endpoint and 37 staged
+tests, strict release package Clippy, and production launcher/mixed-UID cleanup
+proofs. Artifact `12561520726` is 21,844,876 compressed bytes, SHA-256
+`b92de7ce8880f64e2120fbb07f548a88e23b307298f7bbf300698174ed65d577`;
+all 128 members total 92,221,303 expanded bytes and pass streamed CRC/SHA checks.
+All 12,013,487 raw text bytes are retained; four ELF and four raw perf owners
+were inspected as data without local extraction or execution. Parent verification
+passes 712 checks over retained files, source blobs, raw arrays and readouts,
+explicitly reusing the collector's remote binary/raw-perf integrity receipts.
+Private verifier assumption failures and their corrections remain retained;
+no source, raw result, gate or benchmark attempt changed.
+
+Private evidence is retained under
+`D:/CoapticCurrent/cpu-linux-20261024/service-attribution-193-20261024/collection/`
+with `REPORT.txt`, `analysis.json`, `perf-analysis.json`, `commands.txt` and the
+complete evidence index. Its 13,449,396 bytes remain below the 56 MiB reserve
+inside the 64 MiB phase. No local archive, ELF or raw perf file was created.
+The following is the recorded reproduction shape from the exact companion
+source and locked toolchain; it does not schedule a replacement run:
+
+```sh
+python3 -B tools/benchmark/linux_cpu.py \
+  --baseline-sha b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57 \
+  --candidate-sha d23f93c0699b75ec17e692999d62ff89bb71463d \
+  --server-kind coaptic-mio --resource-profile service-fixed \
+  --sizes 16384 --rates 300 --seconds 10 --repeats 2 --perf \
+  --security-mode both --concurrency 1 --message-type con \
+  --build-lane "$BUILD_LANE" --output "$OUTPUT"
+```
+
+No replacement run, parser expansion, higher sampling rate or diagnostic
+framework is planned. Both 50% targets, whole-memory acceptance and remaining
+representative obligations stay open; all earlier failed cohorts remain intact.
+
+### Earlier cost screens
+
 An audit of eight retained `40043745872` raw captures confirms requested PID and
 executable mappings, user/kernel sample modes and zero recorded loss/throttle
 events. Unprotected user counts total only 136 for the original label and 101

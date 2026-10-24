@@ -112,6 +112,18 @@ clocks supplement ticks; they do not rescue an ineligible window or include
 descendants/unattributed kernel workers. Do not subtract empty controls or
 socket-free timings. Keep profiling separate from clean measurement.
 
+Companion #194 supplies bounded inline caller and per-sample readouts, with
+functional Linux proof in diagnostic run `40096580435`. Availability does not
+establish App ancestry, inline completeness, exposure or eligible sample counts.
+That run's user-mode counts are 76/60 unprotected and 135/111 OSCORE for
+baseline/candidate, below the 200-sample nomination floor before App filtering.
+Kernel mode totals are not eligible App-rooted counts. Every clean pair also
+fails a retained latency guard; primary CPU comparisons and cost nomination
+remain withheld. The 300/s, two-pair diagnostic is not a representative acceptance
+stratum and cannot replace any failed cohort. See the
+[handoff](../DELIVERY-HANDOFF.md#bounded-socket-attribution-readout-proof) for
+exact sources, failures and reproduction.
+
 Also require matched optimizer-resistant core probes for the changed request
 paths. Identify both source revisions, compiler, features, profile, capacities,
 payload and work count. Inspect the probe's observable inputs/results and

@@ -39,6 +39,16 @@ also passes 32 native tests, strict binary Clippy and all eight cells, verifying
 1,152 complete operations. This supplies #190's bounded functional proof.
 These wall probes cannot qualify CPU reductions or rescue failed socket guards.
 
+Companion #194 delivers bounded inline caller and per-sample readouts for socket
+record captures. Linux diagnostic run `40096580435` verifies 36,000 complete
+operations plus 320 warmups and all eight new readout helpers. Every clean pair
+fails a latency guard; primary CPU comparisons remain withheld. User samples
+are 76/60 unprotected and 135/111 OSCORE for baseline/candidate, below 200 even
+before App filtering. App-rooted inline eligibility and exposure remain
+unestablished. This closes only #193's readout functionality after reviewed
+delivery; it supplies no cost nomination or optimization gain. No replacement
+run, parser expansion or sampling-rate escalation is planned.
+
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
 views, with zero failed operations. It includes unprotected, OSCORE, DTLS and
