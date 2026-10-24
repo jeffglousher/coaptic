@@ -652,15 +652,20 @@ Stack-resident App/local owners must not also be added to that stack reservation
 No whole-memory or CPU acceptance follows from these functional receipts.
 
 Apart from the SmallDevice 32-byte/1,000/s C1 stratum above, representative Linux
-CPU/latency cells remain open; throughput/saturation remains unqualified. The current
-runner limits clean windows to 30 seconds; each needs at least twenty server CPU
-ticks. The one global 60,000-send ceiling includes warmups, retries and controls.
+CPU/latency cells remain open; throughput/saturation remains unqualified. Default
+clean windows remain 2–30 seconds; delivered #184 adds explicitly selected
+31–1,500-second single-security partitions with the scope and bounds above.
+Each window still needs at least twenty server CPU ticks. The one global
+60,000-send ceiling includes warmups, retries and controls.
 With 20 warmups and 1,024-byte blocks, even ideal traffic permits at most 59,980
 one-block, 14,980 four-block or 3,730 sixteen-block measured operations. Additional
 traffic lowers those maxima. Extending duration alone cannot qualify a cell that
 needs more operations than that budget; pooling individually sub-floor windows
-or substituting process clocks cannot rescue it. No long-window campaign is
-scheduled, and no representative workload or failed cohort is being replaced.
+or substituting process clocks cannot rescue it. Source-frozen run `40065560596`
+was dispatched for the 500-second SmallDevice/unprotected partition recorded
+above; its result remains pending collection and verification. It covers only
+that partial matrix and must pass every pair and pooled latency guard. No
+representative workload or failed cohort is being replaced.
 
 ## Socket integration today
 
