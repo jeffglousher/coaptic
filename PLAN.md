@@ -53,6 +53,14 @@ All sixteen windows and every pair/pooled latency guard pass. Server CPU/op is
 not replace failed host cohorts. See the handoff for sources, memory limits and
 reproduction; low-load, blockwise, Service, concurrency and throughput remain open.
 
+The matched original-to-accepted Windows core probe now verifies 322,048
+exchanges across sixteen windows. Its Default/Alloc 64-byte per-poll wall
+diagnostics do not establish server CPU gain or SmallDevice acceptance.
+The bounded 9970 Hz screen from companion #181 stopped at its first control's
+rounded report count; the other three controls did not run. The approach is
+ended without a retry or communication capture. Companion #182 restores the
+qualified 997 Hz source as `bff8859`. See the handoff for sources and limits.
+
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
 emitted code confirms removal of the helper return copy and the ordinary

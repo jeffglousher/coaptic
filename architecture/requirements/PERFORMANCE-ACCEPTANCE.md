@@ -77,6 +77,13 @@ including authentication in OSCORE mode. Keep client preparation/verification
 and driver overhead scopes explicit. Probe evidence accompanies real-socket
 acceptance and cannot replace it.
 
+The original-to-accepted Default/Alloc 64-byte Windows probe now verifies
+322,048 exchanges in sixteen windows with both modes and frozen matched inputs.
+Its per-poll wall samples are supporting functional/optimizer-resistant evidence;
+they establish no server CPU gain or SmallDevice equivalence. The delivery
+handoff records exact sources, compiler, verification and timing boundaries.
+Representative profile/payload/concurrency probe obligations remain open.
+
 ## Representative execution matrix
 
 Issue #650 did not freeze all representative cells or numerical overload and

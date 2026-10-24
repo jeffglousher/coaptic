@@ -120,8 +120,8 @@ Each mode's final pair has zero tick improvement. Pooled median/p99 latency is
 33.167 to 32.583 microseconds/op unprotected and 36.250 to 36.000 OSCORE.
 These small aggregate changes do not establish either 50% target, a confidence
 interval, an isolated optimization gain or a transport share. Historical failed
-cohorts remain unchanged; other representative cells and matched core probes
-remain open. No new profiling evidence was collected.
+cohorts remain unchanged; other representative cells and profile-matched core
+probes remain open. This socket run collected no profiles.
 
 The host is AMD EPYC 9V74 with four assigned logical CPUs, Ubuntu 24.04,
 Linux 6.17.0-1022-azure, glibc 2.39 and 100 Hz CPU accounting. Governor information
@@ -406,6 +406,99 @@ Use [DEVELOPMENT.md](../DEVELOPMENT.md), the registered compatible build wrapper
 and existing compiler output. Disk space is tight. Mixed shared lanes, evidence,
 credentials and device state are retained; an idle lease does not make them
 disposable. Remove only settled exclusive output with no consumer.
+
+## Matched original-to-accepted core probe
+
+The unchanged optimizer-resistant `bench-core` fixture at companion
+`0732772e94e184f454b91b958925ba7949af312b` now verifies 322,048 complete exchanges
+between original `b8f44fa` and accepted `d23f93c` on Windows. Sixteen serial
+windows use four AB/BA pairs per mode, each with 20,000 measured operations and
+128 warmups. Every response verifies metadata and its complete body; OSCORE
+responses also authenticate. Both actual binaries and source-selected lock
+inputs were frozen before measurement. Parent checks reproduce all raw counts,
+ordering and descriptive statistics, and verify all 71 retained evidence files.
+
+This is Default/Alloc, one GET route, four Calls, zero deferred rows, one
+association capacity, four request bindings, C1 CON and 64 response bytes. RX/TX
+each have four 1,472-byte datagrams, dedup eight, Observe four, one 1,024-byte RX
+body and two 1,024-byte TX bodies. It is distinct from SmallDevice. Post-run host
+inventory identifies Ryzen 7 5800X3D (eight cores/sixteen logical CPUs), Windows
+11 Pro build 26200; during-window CPU frequency and scheduler state were not
+captured. Rust 1.99.0/LLVM 23.1.1 targets `x86_64-pc-windows-msvc`, native release,
+thin LTO, one codegen unit, debug=0, incremental=0, two build jobs, features
+`std,alloc,oscore` without defaults and no RUSTFLAGS. The actual original
+binary SHA256 is `196e3091c7afa9a9cc2fa402e47ee57e67791e0ba76a532c0c6275b66e95b538`;
+accepted is `835204fcd4c3f01b40caed003a2c37fd06e6103be05ed41baf82e22418b9012a`.
+The earlier historical-PE reproduction attempt remains stopped with zero
+windows after its expected binary hash differed; this distinct proof freezes
+the actual source-matched builds and does not revise that failure.
+
+Per-poll wall intervals include fixture copies, App polling, handler and server
+cryptography; request preparation/protection and full response verification run
+outside. Optimization barriers cover inputs and observable results. Pooled
+median/p99 is 1,000/2,000 to 700/1,000 ns unprotected, and 1,900/2,500 to
+1,600/2,000 ns OSCORE. Observed 100 ns quantization and clock/barrier overhead
+limit interpretation. Each window retains 4,096 separate calibration samples;
+none are subtracted. These are wall diagnostics, not server CPU windows, socket
+latency acceptance, confidence intervals or evidence of either 50% target.
+Configured App/CoreIo storage is reused; this probe supplies no allocator, peak
+stack or whole-memory acceptance.
+
+Build the same fixture with the recorded source-specific locks and flags for
+each core source, freeze both binary identities, then run each mode in the
+recorded four-pair order with a thirty-second per-process deadline:
+
+```powershell
+bench-core.exe 20000 unprotected
+bench-core.exe 20000 oscore
+```
+
+## Current cost screen
+
+An audit of eight retained `40043745872` raw captures confirms requested PID and
+executable mappings, user/kernel sample modes and zero recorded loss/throttle
+events. Unprotected user counts total only 136 for the original label and 101
+for the unmerged option candidate, before filtering to App ancestry. They do
+not support the existing 200-App-sample nomination floor or a causal ranking.
+Offline inspection of the accepted SmallDevice Linux ELF also confirms a
+1,152-byte outer RX scratch clear followed by a filled-prefix copy. Instruction
+presence alone supplies no CPU percentage or safe material optimization.
+
+Companion [#181](https://github.com/jeffglousher/coaptic-validation/pull/181)
+introduced explicit 997/9970 Hz selection in source
+`0c2f94f82f6c97bd61ede50fdfd6fdfa6e97b251`, with the same tree as reviewed
+`b34e04aa802721924075a0ee3cdd642b60fae6c6`. It preserved requested-rate checks,
+requested-period burst validation and existing bounds. Independent general
+review had no findings, 288 distinct Python checks passed with 22 platform
+skips, both workflow checks passed, and eight retained 997 Hz raw captures
+regraded unchanged while refusing a mismatched 9970 request.
+
+The single [control run 40060666280](https://github.com/jeffglousher/coaptic-validation/actions/runs/40060666280)
+failed at its first cpu-clock continuous control: perf printed a rounded
+`Samples: 4K`, which the existing exact raw/report count check refused. The raw
+reader independently verifies 4,990 samples (2,828 user and 2,162 kernel),
+500,497,000 ns aggregate period and zero recorded loss/throttle events. Process
+CPU is 500,047,912 ns; these counts per CPU second remain descriptive, not
+coverage or an App cost nomination. The other three controls did not run.
+One continuous block exceeds the requested 100,300 ns period; continuous
+validation permits this, and no burst invariant was proved. Linux runs 79 tests
+with no failures or skips. The host is Xeon Platinum 8573C, four online CPUs,
+Linux 6.17.0-1022-azure, perf 6.17.13 and Python 3.12.3.
+
+The report already requested sample counts; the
+[Linux 6.17 header formatter](https://github.com/torvalds/linux/blob/v6.17/tools/perf/builtin-report.c#L482)
+scales its total unconditionally. The higher-rate approach is ended without
+parser expansion, rate escalation, gate changes, retries or a communication
+capture. [Companion #182](https://github.com/jeffglousher/coaptic-validation/pull/182)
+restores the qualified 997 Hz implementation, workflows and tests as
+`bff8859c3f637736b1a326f518aac8d9a3600f79`, with the same tree as reviewed
+`4ee141fc834cbec8b22298144d22170c3c404a0d`. Independent general review has no
+findings. Main is clean/pushed and the settled owned branch is removed. Its six
+restored source/workflow/test blobs match qualified `8dc65fd` exactly;
+the existing guide retains the failed experiment. The 87,961-byte archive's
+eleven members and raw result are independently checked without extraction or
+execution. Both CPU targets and representative/whole-memory qualification remain
+open. No sample count establishes CPU gain, a transport share or complete delivery.
 
 ## Independent-endpoint client memory and qualification limits
 
