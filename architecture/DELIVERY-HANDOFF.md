@@ -341,12 +341,55 @@ was corrected with its failure retained; no evidence, source, gate or benchmark
 attempt changed. Sealed output `service-fixed16384-u50-74s-40081182117` under the
 existing evidence root is 936,498 bytes within 2 MiB, with no local ZIP/ELF/perf.
 
-The first required OSCORE counterpart is
+The first required OSCORE counterpart,
 [run 40083610413](https://github.com/jeffglousher/coaptic-validation/actions/runs/40083610413),
-pending on the same declared workload and unchanged guards, with one attempt.
-It replaces no failed cohort. Both 50% targets, this unprotected acceptance cell,
-other representative cells and whole-memory acceptance remain open. Reproduce
-from clean companion `7321663`, the compiler/flags above and a compatible lane:
+attempt one, passes all eight windows on the same declared sources, workload
+and unchanged guards. All 29,600 complete responses plus 160 warmups are
+authenticated and verified by the frozen baseline-built client. Sources,
+selected locks, capacities, pacing, ticks, every pair/pooled latency guard and
+cleanup pass. Server CPU is **610.811 to 561.486 microseconds/op**, ratio
+**0.919247788 (-8.08%)**. This exceeds the required 0.5 ratio; both 50% targets
+remain open. This is original-baseline versus accepted source, not an isolated
+optimization experiment. No confidence interval or repeatability claim follows.
+
+Server user/system ticks are 332/572 to 357/474 (904 to 831 total), over 14,800
+completions per label. Separate client totals are 1,520 to 1,399 ticks. Pair
+median deltas are -83.5265/-205.9915/-28.640/-8.549 microseconds; p99 deltas
+-28.102/-50.241/-54.360/-126.542. Pooled median is 894.332 to 849.8195
+microseconds and p99 1,421.318 to 1,366.653. All starts are met, each window
+uses 59,520 sends and has 201..238 server ticks. This paced rate is not a
+saturation result. Tick quantization, scheduling and machine kernel-worker
+uncertainty remain visible; counter components identify no causal hotspot.
+
+This second host also reports EPYC 7763/four logical CPUs, Linux
+6.17.0-1022-azure/glibc 2.39/TSC/100 Hz and unavailable governor data. It remains
+a separate run/host boundary from the failed unprotected result; do not combine
+their costs or infer a security/transport-cost percentage. Compiler/build/lock
+inputs, all four actual ELF hashes and preflight coverage match those above,
+with the binary hashes freshly checked in this second artifact. Both startup
+App owners again measure 314,856 bytes with zero requested pool heap and separate
+16,384-byte representation backing. All 32 snapshots are available/PID-coherent:
+server lifetime VmHWM 5,713,920..6,045,696 bytes, VmPeak 10,301,440..10,321,920
+and VmStk 937,984..946,176. Owner nesting and all unresolved peak/runtime/kernel
+and whole-memory limits remain unchanged.
+
+The OSCORE remote archive is 21,201,183 bytes, SHA-256
+`aec1eb5acc3b599b292dd5d894bae5baab598f75f94f02b42ba1d96a1684b501`,
+sixty members and 80,220,019 uncompressed bytes. All member CRC/SHA values,
+including four streamed ELFs, are checked anew by the collector. Parent
+verification independently rehashes 56 retained text members and 24 source Git
+blobs and reproduces all 29,600 raw samples, guards, ticks, capacities and
+memory observations (617 checks); remote archive/ELF stream hashes are reused
+transparently. Sealed `service-fixed16384-os50-74s-40083610413` output is 942,484
+bytes within 2 MiB, with no local ZIP/ELF/perf. No retry or replacement occurred.
+
+Both targets, the failed unprotected acceptance cell, other representative cells
+and whole-memory acceptance remain open. Companion #190 is the bounded two-file
+Service complete-operation core-probe work; validation/delivery remain pending.
+It cannot rescue socket guards or establish a transport-cost percentage.
+Reproduce from clean companion `7321663`, the compiler/flags above and a
+compatible lane. The command below selects the unprotected cohort; select
+`--security-mode oscore` and another fresh output for its separate counterpart:
 
 ```sh
 python3 -B tools/benchmark/linux_cpu.py \
@@ -1019,7 +1062,8 @@ Stack-resident App/local owners must not also be added to that stack reservation
 No whole-memory or CPU acceptance follows from these functional receipts.
 
 The SmallDevice 32-byte C1 measurement strata at 1,000/s in both modes and at
-100/s unprotected qualify as recorded above. Their CPU ratios remain above 0.5;
+100/s unprotected, plus fixed-Service 16 KiB/C1 CON/50/s OSCORE, qualify as
+recorded above. Their CPU ratios remain above 0.5;
 both reduction targets and the remaining representative Linux CPU/latency cells
 remain open. Throughput/saturation remains unqualified. Default
 clean windows remain 2–30 seconds; delivered #184 adds explicitly selected

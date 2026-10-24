@@ -29,8 +29,11 @@ The first fixed-Service 16 KiB blockwise partition (`40081182117`) verifies
 29,600 unprotected operations plus 160 warmups. Its median guards fail in
 three pairs and the pooled stratum; CPU comparisons remain withheld. Actual
 Linux App owners match at 314,856 bytes, with separate 16,384-byte representation
-storage. The first required OSCORE counterpart is run `40083610413`, pending;
-it does not replace the failed unprotected cohort.
+storage. The first required OSCORE counterpart (`40083610413`) passes all eight
+windows and every guard: server CPU is 610.811 to 561.486 microseconds/op
+(-8.08%). That remains above the required 0.5 ratio and does not replace the
+failed unprotected cohort. Companion #190 tracks the bounded Service
+complete-operation core-probe implementation; validation and delivery are pending.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -288,10 +291,12 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   replacement cohort is planned.
   Service-fixed 16 KiB/C1 CON/50 starts/s/74-second run `40081182117` completes
   all eight windows but fails three pair median guards and the pooled median.
-  Its CPU comparisons remain withheld. Collect and independently verify the
-  first OSCORE counterpart `40083610413`; preserve both modes' original guards
-  and failed cohorts. Remaining Service storage/payload/load/concurrency and
-  complete-operation core-probe obligations stay open.
+  Its CPU comparisons remain withheld. The first OSCORE counterpart
+  `40083610413` verifies 29,600 authenticated operations plus 160 warmups and
+  passes every measurement guard, with a 0.919248 CPU ratio. Preserve both
+  modes' original guards and failed cohorts. Complete companion #190's bounded
+  Service core probe. Remaining Service storage/payload/load/concurrency,
+  throughput and the required 0.5 ratio stay open.
   Use these retained results before extending remaining plans. Companion #186's
   bounded lifetime memory/stack-limit observations pass the limited Linux proof
   in `40066937573`; they do not establish whole-memory ceilings or used stack.
