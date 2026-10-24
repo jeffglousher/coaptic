@@ -213,6 +213,54 @@ python3 -B tools/benchmark/linux_cpu.py \
   --build-lane /existing/compatible/lane --output /fresh/small-device-long
 ```
 
+### Failed low-load OSCORE partition
+
+[Run 40073484846](https://github.com/jeffglousher/coaptic-validation/actions/runs/40073484846),
+attempt one, uses companion `c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059`, original
+`b8f44fa` and accepted `5bd6f27` (protocol-identical to `d23f93c`). It selects
+the same SmallDevice fixed32/Mio/C1 CON/100 starts/s/500-second/four-pair plan
+above, with OSCORE alone and profiling, admission diagnostics and independent
+endpoints off. All eight windows verify 400,000 operations plus 160 warmups,
+zero operation failures, zero missed starts and 50,020 sends per window. Every
+window passes source, compiler, selected-lock, pacing, tick and cleanup gates.
+
+Latency acceptance fails. Zero-based repeat one has median +6.6925 microseconds
+and p99 +20.238; repeat three has median +15.931. Pooled median is +5.732 and
+p99 +5.410 microseconds. The unchanged +2/+10-microsecond guards apply to every
+pair AND pooled stratum. All CPU comparisons are withheld. Raw server ticks
+are 1,303/1,258 and separate client ticks 3,192/3,210 over 200,000 completions per
+label; these are retained accounting, not an accepted reduction. No retry,
+cohort replacement or timing-cause claim follows.
+
+The host records EPYC 7763/four assigned logical CPUs, Ubuntu 24.04/Linux
+6.17.0-1022-azure, glibc 2.39, TSC, 100 Hz accounting and unavailable governor
+data. It is a separate run/host boundary from the unprotected result, despite
+the same CPU model. Compiler/flags, source-specific locks and the actual server
+and frozen baseline-client hashes match those recorded above. Linux passes
+317 Python checks with two skips, ten endpoint tests, 37 staged tests and strict
+release/locked/all-target package Clippy, including the actual launcher and
+mixed-UID/live-thread cleanup proof. Dependency warnings remain retained.
+
+All 32 process-memory observations are available and PID-coherent. Server
+lifetime VmHWM is 4,870,144..5,210,112 bytes, VmPeak 9,605,120..9,625,600 and
+VmStk 241,664..249,856. These approximate, non-atomic observations include
+startup/warmup and do not establish used stack, minimum RAM or whole-memory
+acceptance. Startup App remains 14,016 bytes with nested adapter/scratch/fixed
+pools and zero requested pool heap; separate Poll/Events/static owners and
+unknown allocator/runtime/kernel/initialization/peak costs remain as above.
+
+The remote ZIP is 22,219,844 bytes, SHA-256
+`0f8c925dfa5a46aa7531b843159949e30503febdb35b3c993eaf328420086843`,
+uncompressed 83,124,165 bytes. The collector checks all sixty member CRC/SHA
+values, streaming four ELFs as data without saving or executing them. Parent
+verification independently checks all 56 retained text members, 24 source
+Git blobs, raw 400,000 latency samples, ticks and failed guards; it reuses the
+collector's remote archive/ELF hashes. Retained output is 3,842,623 bytes within
+8 MiB, with no third local ZIP/ELF/perf artifact. Both CPU targets, this cell and
+the remaining matrix stay open. Reproduce the preceding command from companion
+`c1fa5bf`, selecting `--security-mode oscore` and a fresh output directory; the
+recorded failed cohort remains unchanged.
+
 ### Limited Linux memory proof
 
 [Run 40066937573](https://github.com/jeffglousher/coaptic-validation/actions/runs/40066937573)
@@ -708,6 +756,67 @@ recorded four-pair order with a thirty-second per-process deadline:
 ```powershell
 bench-core.exe 20000 unprotected
 bench-core.exe 20000 oscore
+```
+
+## SmallDevice core probe
+
+Companion [#188](https://github.com/jeffglousher/coaptic-validation/pull/188)
+delivers `--small-device` in the existing `bench-core` fixture as
+`51e1d2fb3769500eb8fdc6fd8e1b67b18a68a9f8`, tree-identical to reviewed/tested
+`98eebdb701e91e5567d34e0fdfd033c1eb830541`. It constructs the exact fixed
+SmallDevice/Constrained 32-byte C1 profile: route capacity four/one GET, one Call,
+zero deferred rows, one association/four bindings, RX/TX two by 1,152 bytes,
+dedup four, Observe two and no body pools. The socket-free transport still owns
+1,472-byte input/output buffers; it is not equivalent to a Mio adapter. Legacy
+Default64 CLI/seven-field JSON and fixed batch CPU code/six tests are unchanged.
+
+Locked original `b8f44fa` and accepted `d23f93c` Windows builds each pass ten
+release tests, strict package Clippy and formatting. Rust/Cargo 1.99.0/LLVM
+23.1.1 targets MSVC with release thin LTO/one codegen unit, debug=0,
+incremental=0, two build jobs and no RUSTFLAGS; features are `std,alloc,oscore`
+with defaults disabled. Both actual executable/source/selected-lock identities
+are frozen before eight functional cells: two cores, both modes, Small32 and
+Default64, each sixteen measured operations plus 128 warmups. All 1,152 exchanges
+verify; 32,768 separate clock calibrations are retained without subtraction.
+Optimization barriers cover inputs, App and observable results. Preparation and
+full authenticated response/metadata verification are outside the timed poll;
+fixture copies and App maintenance/server crypto remain inside. No CPU gain is
+inferred from these short wall diagnostics.
+
+The Windows Small32 App is 14,936 bytes including nested CoreIo 2,976 bytes and
+its two 1,472-byte buffers; fixed pool heap requests are zero. At sixteen
+operations the separate timing/calibration payload requests are 256/65,536
+bytes, with 48 bytes of vector headers; verification scratch is 1,472 bytes,
+optional client context 368 bytes and static representation 32 bytes. Nested
+components are not additive. Allocator overhead, initialization, generated
+peak stack and whole memory remain unqualified. Parent verifies all raw cells,
+final paired executable receipts and restoration; independent general source
+review has no findings. Observed stage-boundary positive compiler-output growth
+is 24,918,637 bytes, below 128 MiB; this is not a transient peak bound.
+
+Companion [#189](https://github.com/jeffglousher/coaptic-validation/pull/189)
+delivers the opt-in `small-device-proof` mode in the existing core-cost workflow
+as `73216630df57496e50bcc53189301cb74890f2e6`, tree-identical to reviewed
+`0176259fdd222aadacc8afb468c9ecc21d02e1f6`. Default original/batch pins and
+behavior, the 25-minute job and serialized `manual-linux-cpu` group remain.
+The fixed Linux plan requires twenty actual release tests and both copied ELF
+input freezes before the same eight cells, verified cleanup/restoration and a
+128 MiB whole-upload bound. Actionlint, four heredoc AST checks and 81 tests pass;
+ten platform tests skip. The initial private harness failure is retained and
+corrected without changing frozen source. Fresh general correctness/security
+review has no findings. The single Linux run
+[`40079192247`](https://github.com/jeffglousher/coaptic-validation/actions/runs/40079192247)
+is pending execution/receipt review. Issue #187, both CPU targets, other
+profile/concurrency probe obligations and whole-memory acceptance remain open.
+
+From the recorded companion source and source-selected locked build, reproduce
+the finite functional cells for each security mode and each pinned core:
+
+```powershell
+bench-core.exe 16 unprotected --small-device
+bench-core.exe 16 oscore --small-device
+bench-core.exe 16 unprotected
+bench-core.exe 16 oscore
 ```
 
 ## Current cost screen
