@@ -6,6 +6,14 @@ successfully verified complete operation by at least 50%. An eligible host
 control, a core probe or one favorable payload cannot complete the representative
 target. EDHOC establishment is a separate workload.
 
+The separate same-core ordinary-Mio/level-readiness experiment in run
+`40130199038` fails OSCORE repeat 2's +2 us median guard (27.431 to 29.823 us).
+All 480,000 operations plus 320 warmups verify, but full-cohort CPU comparisons
+remain withheld. Pooled and p99 success cannot compensate. The implementation
+remains unmerged; no retry or replacement is planned. This adapter experiment
+uses accepted `d23f93c` on both labels and does not change the original baseline,
+acceptance matrix or targets below.
+
 ## Baselines and source matching
 
 The retained initial runtime baseline is core

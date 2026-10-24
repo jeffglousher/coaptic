@@ -8,6 +8,17 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The bounded follow-up to the eBPF counts has ended. Linux level readiness in
+companion #202 verifies all 480,000 measured operations plus 320 warmups, but
+run `40130199038` fails the OSCORE repeat-2 median guard: 27.431 to 29.823 us
+(+2.392 us against the +2 us limit). Full-cohort CPU claims are withheld; all
+p99 and pooled passes cannot rescue the failed pair. Stop expansion, retain
+the failed cohort and leave the implementation unmerged. Ordinary Mio remains
+the reference. Linux and Windows functional proofs pass, including fixed-Service
+startup and authenticated 16 KiB responses; they do not establish a CPU gain or
+peak memory. No retry, replacement cohort or further diagnostic expansion is
+planned. Both 50% targets and the remaining acceptance matrix stay open.
+
 The requested eBPF syscall benchmark now has actual Linux results in
 [companion #200](https://github.com/jeffglousher/coaptic-validation/pull/200).
 Run `40112478137` completes sixteen SmallDevice 32-byte ordinary-Mio/C1 CON
@@ -18,9 +29,8 @@ fail, so both tracing-overhead ratios remain withheld despite pooled passes.
 This is diagnostic functionality, not a CPU gain or removable transport share.
 Nine Linux loader tests (including seven command-reader regressions), 201 Python
 tests and locked builds pass. The two earlier failed attempts remain retained.
-The source-supported next hypothesis is avoiding the empty receive while
-preserving queued-packet progress, readiness semantics, fairness and deadlines;
-read-only scoping supplies no implementation or measured benefit. No replacement
+The empty-receive hypothesis was tested in the bounded follow-up above; its
+failed latency guard ends that experiment without a qualified gain. No replacement
 capture or sampling-infrastructure expansion is planned. Both 50% CPU targets,
 remaining representative cells and whole-memory acceptance stay open.
 
