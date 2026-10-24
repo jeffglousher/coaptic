@@ -158,8 +158,12 @@ material allocator, stack, runtime, kernel or worker cost, keeps memory acceptan
 and the overall target open; labeling such a cost unknown does not pass it.
 
 The global 60,000 outbound-datagram client transport ceiling, campaign output limits and
-twenty-tick CPU gate currently limit long efficient windows. If a representative
-cell cannot collect sufficient CPU inside those bounds, it remains ineligible.
+twenty-tick CPU gate currently limit long efficient windows. Companion #184
+supports explicit 31..1500-second single-security representative partitions with
+four pairs, unchanged send/operation/latency/eligibility limits and profiling off;
+its existence does not qualify a cell. Companion #186 lifetime memory observations
+similarly do not establish required whole-memory ceilings. If a representative
+cell cannot collect sufficient CPU inside the retained bounds, it remains ineligible.
 Any remedy needs bounded ownership and MID/nonce lifetime proof; raising a send
 ceiling or relaxing an eligibility guard is not a remedy.
 

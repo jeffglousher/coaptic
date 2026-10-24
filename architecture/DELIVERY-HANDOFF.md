@@ -90,6 +90,68 @@ requires separate authorization under #132.
   below remains retained. Disposition review found no supported correction; no further
   campaign is scheduled.
 
+## Delivered measurement support; Linux receipts pending
+
+Companion [#184](https://github.com/jeffglousher/coaptic-validation/pull/184) is
+merged as `430722d73818e6b23ceecc6e6edb567a20111958`, tree-identical to reviewed
+`8274bf004ee2a6b78d8610de94c165b9eea7aef8`. Explicit long partitions select one
+representative profile/payload/rate/security mode, ordinary Mio on both labels,
+C1 CON, four rotated pairs/eight clean windows, 31..1500 seconds and at most
+12,000 scheduled clean seconds. Perf, admission diagnostics and independent
+endpoints are off. Default short/both-mode operation remains. The complete
+operation deadline stays 3000 ms and the one sender counter still charges all
+warmup, measured, retry and control datagrams against 60,000. Every window,
+every pair AND pooled stratum retain their original guards. One absolute long
+measurement wait is `ceil(D/0.95)+13`, capped at 1600 seconds; default/long job
+ceilings are 60/360 minutes. A single-security partition is partial evidence.
+The 256 MiB whole-upload plan now includes actual copied binaries, bounded
+metadata/profiles and a combined 16 MiB setup-log reserve. These are retained-file
+bounds, not build-cache, transient-disk or memory peaks.
+
+Retained Windows checks reconcile 290 Python passes/22 platform skips, 33 native
+client tests, strict release package Clippy, fmt and actionlint. Native checks use
+Rust/Cargo 1.99.0, MSVC, release thin LTO/one codegen unit, debug=0, incremental=0
+and two build jobs. Locked original
+`b8f44fa` and accepted `d23f93c` builds plus eight short functional cells verify
+176 operations including warmups, using one baseline-built client. These checks
+do not qualify long Linux behavior. The focused #183 qualification remains open.
+
+Companion [#186](https://github.com/jeffglousher/coaptic-validation/pull/186) is
+merged as `c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059`, tree-identical to reviewed
+`75a37d1ee12f8c56d87cb25d12d158a567d9ff52`. Existing before/after process snapshots
+attempt Linux status/limits observations after their original CPU/memory reads:
+approximate lifetime resident/virtual high water, stack mapping, thread count and
+configured stack limits. Reads are bounded to 16 KiB and compact metadata to
+1 KiB per process snapshot; parent temporary byte payloads stay below 32 KiB,
+with Python object/allocator costs separate. No new sampler or worker is added.
+Missing/refused/malformed reads are explicit unavailable data. These non-atomic
+observations include startup/warmup and cannot prove used stack, physical peaks,
+minimum RAM or an aggregate ceiling. Boundary work can affect raw resource
+windows; all CPU/latency gates remain. Windows runs 178 unittest cases: 170 pass,
+eight skip. Independent general reviews for both PRs have no actionable findings;
+Linux #185 proof and whole-memory acceptance remain open.
+
+Two source-frozen runs were dispatched, with results awaiting independent
+verification at this handoff:
+
+- [40065560596](https://github.com/jeffglousher/coaptic-validation/actions/runs/40065560596):
+  companion `430722d`, original `b8f44fa` versus core `5bd6f27` (protocol-identical
+  to accepted `d23f93c`), SmallDevice 32 B, unprotected C1 CON at 100/s, 500 seconds
+  and four matched pairs. The plan is 400,000 measured operations plus 160
+  warmups. Its source predates #186 and contains none of the new memory fields.
+- [40066937573](https://github.com/jeffglousher/coaptic-validation/actions/runs/40066937573):
+  companion `c1fa5bf`, core `37c3389` on both labels (protocol-identical to `d23f93c`),
+  SmallDevice 32 B, both modes, C1 CON at 100/s, two seconds and two pairs. The
+  functional plan is 1,600 measured operations plus 160 warmups and 32 memory
+  snapshots. Any low-tick result remains ineligible; this identical-core control
+  establishes no optimization gain. The unchanged concurrency group serializes
+  it behind the long run.
+
+No result from either dispatch is credited here. Both 50% targets, the remaining
+representative matrix and material memory unknowns remain OPEN. Exact software
+limits and command options are in the source-identified companion
+[guide](https://github.com/jeffglousher/coaptic-validation/blob/c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059/tools/benchmark/linux_cpu.md).
+
 ## First representative SmallDevice C1 result
 
 [Run 40054024038](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)

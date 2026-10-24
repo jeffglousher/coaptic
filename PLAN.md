@@ -15,7 +15,10 @@ is delivered in companion #174 and independent-endpoint CON in #176. Staged
 fixture recovery (#175/#178) and Linux workflow integration (#177/#179) are now
 delivered and pass focused Linux proof. The first SmallDevice C1 comparison
 passes every guard, with modest CPU reductions; remaining implementation and
-representative qualification continue. PR watches and recurring tasks remain off.
+representative qualification continue. Companion #184 now delivers bounded long
+low-load partitions and #186 bounded process-memory observations. Their Linux
+qualifications are pending in two finite, serial runs; neither establishes a CPU
+gain. PR watches and recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -252,10 +255,14 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   small messages, blockwise bodies, CON concurrency, CPU-limited throughput,
   saturation, fairness, cancellation and recovery. Report client limits,
   uncertainty and instrumentation overhead with all failures retained. The
-  current runner's 30-second window limit and global 60,000 client-send ceiling
-  can leave low-load cells below the required twenty server ticks. Longer windows
-  cannot defeat the send ceiling; pooling sub-floor windows cannot qualify them.
-  Establish bounded, source-identified plans before those cells are measured.
+  default runner retains its 2..30-second windows. Delivered companion #184
+  additionally permits one representative single-security Mio C1 CON partition
+  with four rotated pairs and 31..1500 seconds per window, perf/diagnostics off.
+  All eligibility and pair/pooled latency gates remain. The global 60,000 client
+  sends can still leave cells below twenty server ticks regardless of duration;
+  pooling sub-floor windows cannot qualify them. Verify the predeclared low-load
+  run before extending remaining plans. Companion #186 adds bounded lifetime
+  memory/stack-limit observations; these do not establish whole-memory ceilings.
 
 Count whole-system memory: configured pools, initialization, metadata, scratch,
 security, transport, runtime, stacks and kernel costs. Pools are allocated at
