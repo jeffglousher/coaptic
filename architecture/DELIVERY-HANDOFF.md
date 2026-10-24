@@ -772,8 +772,10 @@ configured virtual reservation, not observed peak or a minimum requirement.
 Stack-resident App/local owners must not also be added to that stack reservation.
 No whole-memory or CPU acceptance follows from these functional receipts.
 
-Apart from the SmallDevice 32-byte/1,000/s C1 stratum above, representative Linux
-CPU/latency cells remain open; throughput/saturation remains unqualified. Default
+The SmallDevice 32-byte C1 measurement strata at 1,000/s in both modes and at
+100/s unprotected qualify as recorded above. Their CPU ratios remain above 0.5;
+both reduction targets and the remaining representative Linux CPU/latency cells
+remain open. Throughput/saturation remains unqualified. Default
 clean windows remain 2–30 seconds; delivered #184 adds explicitly selected
 31–1,500-second single-security partitions with the scope and bounds above.
 Each window still needs at least twenty server CPU ticks. The one global
