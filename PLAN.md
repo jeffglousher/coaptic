@@ -9,8 +9,9 @@ it is not silently treated as finished software work.
 ## Current work
 
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
-work, pending checks and transport choices. One finite original-baseline core
-comparison is running; PR watches and recurring tasks remain off.
+work, pending checks and transport choices. One finite option-batch comparison
+and a bounded C1 profile fixture implementation are active. PR watches and
+recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -33,8 +34,9 @@ cell open. Production cleanup under validation #169 is repaired and qualified.
 The bounded Linux direct RX comparison qualifies all windows and latency guards
 but shows no consistent CPU saving. Companion #172 and #173 are merged; the
 latter preserves source-specific locked builds across the syn dependency change.
-Core option reuse is reviewed in draft #675, with matched socket validation in
-progress. Neither representative CPU target is complete.
+Core option reuse is reviewed in draft #675. The cumulative original-baseline
+comparison retains OSCORE p99 failures; a current-main comparison is isolating
+this batch. Neither representative CPU target is complete.
 
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
@@ -90,6 +92,24 @@ reserved inherited process groups. Arbitrary escaped-group containment remains
 outside that proof.
 
 ### What the measurements support
+
+The [new original-baseline comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40043745872)
+uses accepted `b8f44fa` versus candidate `7c04304`, the same Mio adapter and the
+retained 4,000/s, C1 CON, 64/1024-byte, twelve-second, four-pair workload.
+All 32 clean windows verify 1,536,000 operations plus 640 warmups with zero
+operation failures; operation/rate/pacing/tick/cleanup gates pass. OSCORE p99
+fails two pairs (+17.861 and +15.664 microseconds) and both pooled sizes
+(+13.306 and +11.093 microseconds for 64/1024 bytes). Full-cohort CPU claims
+are withheld. All 16 separate profile windows verify 320,000 operations plus
+320 warmups; their timings do not enter clean comparisons. Sampling provides
+kernel scheduling/socket/syscall and dispatch/AES/CCM leads, with insufficient
+coverage/inline/throttle evidence for a causal hotspot ranking.
+
+This cumulative comparison does not isolate #675. The predeclared
+[incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
+uses d23f93c versus the same 7c04304 and otherwise the same clean plan, with
+profiling off. Its result is pending; the original-baseline failure remains
+retained and neither target can be completed by this local control.
 
 The [direct RX control](https://github.com/jeffglousher/coaptic-validation/actions/runs/40042232531)
 compares identical core `b9b83d8` using Mio versus direct Linux MSG_TRUNC receive:
@@ -184,6 +204,10 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   reservation and 64 bytes of saved registers. Record that cost without claiming
   peak-stack acceptance. The optimizer-resistant probe verifies all 161,024
   exchanges; per-call wall clocks establish no CPU gain.
+- Finish the bounded C1 fixture extension for unchanged SmallDevice, explicitly
+  configured SmallDevice blockwise, and fixed/allocated Service profiles using
+  the existing Mio loop/client. Keep independent-endpoint CON ownership as a
+  separate client slice; concurrent NON cannot substitute.
 - Optimize the largest supported cost in a coherent batch. Reuse storage and
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.

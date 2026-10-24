@@ -10,8 +10,9 @@ requires separate authorization under #132.
 
 - Core main includes the acceptance matrix from #674. Transient validated-option
   reuse is reviewed in draft [#675](https://github.com/jeffglousher/coaptic/pull/675),
-  measured source `7c043046097e01e8e8f9f95fc51ee70dde3ed860`, pending matched
-  socket evidence. The current host ranking measured clean core
+  measured source `7c043046097e01e8e8f9f95fc51ee70dde3ed860`. The cumulative
+  baseline comparison fails OSCORE p99 guards; incremental isolation is pending.
+  The current host ranking measured clean core
   `b9b83d8663cbdcb7a80bf143670a05019f25cf25`; subsequent `11cf5b6` updates a
   dependency and is outside that measurement.
 - [Current comparative evidence](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
@@ -26,14 +27,18 @@ requires separate authorization under #132.
 - Companion [#172](https://github.com/jeffglousher/coaptic-validation/pull/172)
   is merged as `428f906ad300ec61ad93cbedb811c80f098c67af`; #173 is merged as
   `8b25a2579fabbbb016e2798d67b076bf4022e41d`. Both squash trees match their
-  reviewed/tested source trees. The companion is clean and pushed, and both
+  reviewed/tested source trees. Delivered main was clean and pushed, and both
   settled owned branches are removed. Existing shared compiler output is retained.
-- PR watches and recurring tasks are off. Local registered Coaptic build lanes
-  are idle. One finite [Linux core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40043745872)
-  is running with one finite collector: original baseline `b8f44fa` versus
-  `7c04304`, same Mio adapter, 64/1024 bytes, 4,000/s, twelve seconds and four
-  rotated pairs, followed by separate bounded profiling. Its results remain
-  pending; it does not replace a retained failed cohort.
+- A child now owns the companion's bounded C1 profile fixture extension from
+  `8b25a25`: unchanged SmallDevice, configured SmallDevice blockwise, and
+  fixed/allocated Service on the existing Mio loop. That implementation owns
+  its source/refs/local build lane until explicit release. Independent-endpoint
+  CON remains a separate pending client slice.
+- PR watches and recurring tasks are off. One finite
+  [incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
+  has one finite collector: current main `d23f93c` versus `7c04304`, same Mio,
+  64/1024 bytes, 4,000/s, twelve seconds and four rotated pairs, profiling off.
+  It isolates #675; the original-baseline failure below remains retained.
 
 ## Completed bounded Linux I/O control
 
@@ -107,6 +112,37 @@ The linked run retains raw samples, all pair results, source/compiler/lock/binar
 identities and reproduction inputs. A new host is a new comparison; do not pool
 its results with this run or subtract socket-free App timings.
 
+## Retained original-baseline result
+
+[Run 40043745872](https://github.com/jeffglousher/coaptic-validation/actions/runs/40043745872)
+uses companion `8b25a2579fabbbb016e2798d67b076bf4022e41d`, accepted core baseline
+`b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57` and candidate `7c04304`, same Mio
+and Default/AllocMemory capacities. The source-specific Linux locked builds
+verify canonical syn-2 versus alternate syn-3 selection, clean restoration,
+compiler/flag/source/binary identities and the frozen baseline client.
+
+All 32 clean windows complete 1,536,000 operations plus 640 warmups with zero
+failed operations. Rate, pacing, twenty-tick and cleanup gates pass. OSCORE
+p99 fails the +10-microsecond limit:
+
+- 64 B repeat 1: +17.861 microseconds; pooled +13.306 microseconds.
+- 1024 B repeat 2: +15.664 microseconds; pooled +11.093 microseconds.
+
+All median guards and unprotected latency guards pass. Full-cohort CPU claims
+are withheld. Diagnostic pooled server ticks (baseline/candidate) are 226/214
+and 234/222 unprotected, 258/246 and 295/286 OSCORE, for 64/1024 bytes and
+192,000 verified operations per label/size. These raw counts do not rescue
+latency acceptance or establish either target.
+
+Sixteen separate five-second profiling windows complete 320,000 operations
+plus 320 warmups. Eight cpu-clock records have 195–320 samples each and zero
+reported lost samples; eight stat outputs are retained. Kernel scheduling,
+socket/syscall/poll and server dispatch/AES/CCM symbols are leads, with no
+causal ranking or percentages: inline coverage and throttling remain unproven,
+and cycles/instructions are unsupported. Profile timings never enter clean
+CPU/latency. This comparison spans cumulative core changes, so it does not
+attribute its latency failure to #675. The incremental control above is pending.
+
 ## Cleanup and source-matched build delivery
 
 [Validation #169](https://github.com/jeffglousher/coaptic-validation/issues/169)
@@ -158,7 +194,8 @@ across d23/7c, both modes and two rotated pairs on Windows. Per-poll wall clocks
 include measurement perturbation and establish no server CPU gain. Emission uses
 Rust 1.99.0, native release thin LTO/one codegen unit, default debug=0, no RUSTFLAGS,
 features `std,alloc,oscore`; it is separate from the Linux socket build profile.
-The original-baseline Linux comparison linked above is still pending.
+The original-baseline Linux comparison above retains its OSCORE p99 failures;
+the current-main incremental comparison remains pending. Both targets stay open.
 
 ## Current server-App CPU result
 
