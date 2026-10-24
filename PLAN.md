@@ -10,8 +10,8 @@ it is not silently treated as finished software work.
 
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
 work, pending checks and transport choices. The finite option-batch comparison
-has finished; its failed latency guard is retained. A bounded C1 profile fixture
-implementation has passed focused validation and is under independent review. PR watches and
+has finished; its failed latency guard is retained. The bounded C1 profile fixture
+is delivered in companion #174; independent-endpoint CON implementation is active. PR watches and
 recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
@@ -55,7 +55,7 @@ and the measured 17,128-byte constrained async future stay unchanged. The
 local dispatch frame grows by 16 bytes. This is a recorded stack cost, not
 a whole-memory saving or measured CPU gain.
 
-The latest clean socket comparison tests current core `7ab6949` against baseline
+The historical clean socket comparison tests core `7ab6949` against baseline
 `b8f44fa`, using companion `eea0374`. Commands, compiler settings and limits
 are in the
 [Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/eea0374b60c93098a7f0dcf24a999e49d753d624/tools/benchmark/linux_cpu.md).
@@ -212,7 +212,7 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   reservation and 64 bytes of saved registers. Record that cost without claiming
   peak-stack acceptance. The optimizer-resistant probe verifies all 161,024
   exchanges; per-call wall clocks establish no CPU gain.
-- Finish the bounded C1 fixture extension for unchanged SmallDevice, explicitly
+- Use the delivered C1 fixture extension for unchanged SmallDevice, explicitly
   configured SmallDevice blockwise, and fixed/allocated Service profiles using
   the existing Mio loop/client. Keep independent-endpoint CON ownership as a
   separate client slice; concurrent NON cannot substitute.

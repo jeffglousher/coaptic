@@ -1,7 +1,7 @@
 # Delivery handoff — October 23, 2026 (updated October 24 UTC)
 
 Accepted protocol and integration software is implemented. The remaining work
-is performance qualification and the physical checks
+is performance implementation/qualification and the physical checks
 in [PLAN.md](../PLAN.md). Both 50% server CPU targets remain open under
 [#650](https://github.com/jeffglousher/coaptic/issues/650). Release publication
 requires separate authorization under #132.
@@ -30,15 +30,20 @@ requires separate authorization under #132.
   `8b25a2579fabbbb016e2798d67b076bf4022e41d`. Both squash trees match their
   reviewed/tested source trees. Delivered main was clean and pushed, and both
   settled owned branches are removed. Existing shared compiler output is retained.
-- The companion's bounded C1 profile fixture extension from
-  `8b25a25`: unchanged SmallDevice, configured SmallDevice blockwise, and
-  fixed/allocated Service on the existing Mio loop has passed focused validation:
-  52 cells, 104 verified complete operations across baseline/current sources and
-  both modes, with refusal/recovery checks. Forty-five release server tests,
-  strict Clippy and 171 Python tests (eight platform skips) pass. Source/ref/lane
-  ownership is released; the frozen batch remains under independent review.
-  Independent-endpoint
-  CON remains a separate pending client slice.
+- The companion's bounded C1 profile fixture extension is merged in
+  [#174](https://github.com/jeffglousher/coaptic-validation/pull/174) as
+  `9185c8f297801f522f71be8fa36a479d0fec9642`, with the same tree as reviewed/tested
+  source `7ed5211950f413b762a4b9cd239d0a83c5b7a4cf`. Unchanged SmallDevice,
+  configured SmallDevice blockwise, and fixed/allocated Service share the Mio
+  loop. Focused Windows validation verifies 104 complete operations in 52 cells
+  across core `b8f44fa`/`7c04304` and both modes, with refusal/recovery checks.
+  Forty-five release server tests, strict Clippy and formatting pass; Python runs
+  171 tests with eight platform skips. Independent review has no findings. Main
+  was clean/pushed; the settled owned branch is removed. This is fixture support,
+  not representative CPU qualification of current core main.
+- A separate child owns the bounded independent-endpoint CON implementation
+  from companion `9185c8f`, including its local source/refs/junction/build lane
+  until explicit release. Retained C1 inputs and server capacities stay unchanged.
 - PR watches and recurring tasks are off. The finite
   [incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
   has completed: current main `d23f93c` versus `7c04304`, same Mio,
