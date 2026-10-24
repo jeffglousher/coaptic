@@ -16,9 +16,12 @@ fixture recovery (#175/#178) and Linux workflow integration (#177/#179) are now
 delivered and pass focused Linux proof. The first SmallDevice C1 comparison
 passes every guard, with modest CPU reductions; remaining implementation and
 representative qualification continue. Companion #184 now delivers bounded long
-low-load partitions and #186 bounded process-memory observations. Their Linux
-qualifications are pending in two finite, serial runs; neither establishes a CPU
-gain. PR watches and recurring tasks remain off.
+low-load partitions and #186 bounded process-memory observations. The first
+500-second unprotected SmallDevice partition passes every guard, with a 3.09%
+server CPU reduction. The separate identical-core memory control verifies
+complete operations and 32 available snapshots; its CPU results remain withheld
+for low ticks and one failed OSCORE median guard. Both 50% targets and whole-memory
+acceptance remain open. PR watches and recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -260,9 +263,12 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   with four rotated pairs and 31..1500 seconds per window, perf/diagnostics off.
   All eligibility and pair/pooled latency gates remain. The global 60,000 client
   sends can still leave cells below twenty server ticks regardless of duration;
-  pooling sub-floor windows cannot qualify them. Verify the predeclared low-load
-  run before extending remaining plans. Companion #186 adds bounded lifetime
-  memory/stack-limit observations; these do not establish whole-memory ceilings.
+  pooling sub-floor windows cannot qualify them. Run `40065560596` now qualifies
+  the 100/s, 500-second unprotected SmallDevice slice at 50.20 to 48.65 microseconds
+  per complete operation; it does not meet the 50% target or replace failed cells.
+  Use these retained results before extending remaining plans. Companion #186's
+  bounded lifetime memory/stack-limit observations pass the limited Linux proof
+  in `40066937573`; they do not establish whole-memory ceilings or used stack.
 
 Count whole-system memory: configured pools, initialization, metadata, scratch,
 security, transport, runtime, stacks and kernel costs. Pools are allocated at
