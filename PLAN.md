@@ -11,8 +11,9 @@ it is not silently treated as finished software work.
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
 work, pending checks and transport choices. The finite option-batch comparison
 has finished; its failed latency guard is retained. The bounded C1 profile fixture
-is delivered in companion #174; independent-endpoint CON implementation is active. PR watches and
-recurring tasks remain off.
+is delivered in companion #174 and independent-endpoint CON in #176. The next
+concrete reliability repair is companion #175: preserve staged fixture-server
+operation after consumed oversized input. PR watches and recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -214,8 +215,14 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   exchanges; per-call wall clocks establish no CPU gain.
 - Use the delivered C1 fixture extension for unchanged SmallDevice, explicitly
   configured SmallDevice blockwise, and fixed/allocated Service profiles using
-  the existing Mio loop/client. Keep independent-endpoint CON ownership as a
-  separate client slice; concurrent NON cannot substitute.
+  the existing Mio loop/client. Independent-endpoint CON is delivered in
+  companion #176 with one shared context and bounded socket lanes. Actual overlap
+  and fully verified service on every lane remain mandatory; concurrent NON
+  cannot substitute. Functional Windows checks are not Linux CPU qualification.
+- Repair the actual blocking and staged-Mio server turns under companion #175.
+  Recover only known consumed oversized input; preserve other I/O errors, stage
+  ownership, capacities, fresh clocks and existing send/wait policies. The
+  blocking-performance proposal is not being expanded.
 - Optimize the largest supported cost in a coherent batch. Reuse storage and
   parsing, preserve authentication, replay/nonce safety, cancellation, retained
   bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
@@ -228,7 +235,11 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
 - Complete representative SmallDevice/Constrained and cloud qualification:
   small messages, blockwise bodies, CON concurrency, CPU-limited throughput,
   saturation, fairness, cancellation and recovery. Report client limits,
-  uncertainty and instrumentation overhead with all failures retained.
+  uncertainty and instrumentation overhead with all failures retained. The
+  current runner's 30-second window limit and global 60,000 client-send ceiling
+  can leave low-load cells below the required twenty server ticks. Longer windows
+  cannot defeat the send ceiling; pooling sub-floor windows cannot qualify them.
+  Establish bounded, source-identified plans before those cells are measured.
 
 Count whole-system memory: configured pools, initialization, metadata, scratch,
 security, transport, runtime, stacks and kernel costs. Pools are allocated at

@@ -41,9 +41,33 @@ requires separate authorization under #132.
   171 tests with eight platform skips. Independent review has no findings. Main
   was clean/pushed; the settled owned branch is removed. This is fixture support,
   not representative CPU qualification of current core main.
-- A separate child owns the bounded independent-endpoint CON implementation
-  from companion `9185c8f`, including its local source/refs/junction/build lane
-  until explicit release. Retained C1 inputs and server capacities stay unchanged.
+- The bounded independent-endpoint CON fixture is delivered in companion
+  [#176](https://github.com/jeffglousher/coaptic-validation/pull/176), squash
+  `b5d6e9a6b2691756043028b4fef8c9856cb86aaf`. Its tree matches reviewed/tested
+  `d64e52b11bb36abaa15514823220280b6b1f88a5`. One client App owns C2?C4 socket
+  lanes, one context/nonce sequence and four request bindings. Existing C1 inputs,
+  shared-endpoint NON and server capacities stay unchanged. Each lane preserves
+  NSTART=1 to the same actual server. Reports separate lifetime traffic, measured
+  datagram deltas and fully verified per-lane completions; CPU eligibility also
+  requires observed overlap and verified service on every lane.
+- On Windows/Rust 1.99.0, #176 passes 30 client tests independently against
+  `b8f44fa` and accepted protocol source `d23f93c`, strict release package Clippy
+  and formatting. Python runs 173 tests with eight platform skips. Eight final
+  metric-functional cells verify 24 measured operations plus 24 warmups using
+  one baseline-built client. Earlier 28-cell/88-operation functionality is
+  retained for the unchanged operation path. R3 independent review has no
+  actionable findings; prior test defects and raw failures remain retained.
+  Ordinary Service GET proof has four Calls/four client RX bodies and zero
+  retained server TX bodies. Boundary tests use explicitly synthetic server
+  body occupancy plus real socket refusal/retry/cancellation/recovery; they do
+  not establish five real clients or four retained ordinary server snapshots.
+  Shared replay-window skew beyond 32 remains an explicit counterexample.
+- The #176 author released source, refs, junction and build lane after validation;
+  delivered main was clean/pushed and the settled owned branch removed. A separate
+  implementation follow-up now owns the companion for
+  [#175](https://github.com/jeffglousher/coaptic-validation/issues/175): repair
+  actual blocking/staged-Mio server recovery after consumed oversized datagrams.
+  This adds no blocking-performance experiment or transport capability.
 - PR watches and recurring tasks are off. The finite
   [incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
   has completed: current main `d23f93c` versus `7c04304`, same Mio,
@@ -286,6 +310,31 @@ Use [DEVELOPMENT.md](../DEVELOPMENT.md), the registered compatible build wrapper
 and existing compiler output. Disk space is tight. Mixed shared lanes, evidence,
 credentials and device state are retained; an idle lease does not make them
 disposable. Remove only settled exclusive output with no consumer.
+
+## Independent-endpoint client memory and qualification limits
+
+The #176 Windows C4/16,384-byte client reports 15,720 bytes App inline,
+91,656 requested core-pool heap bytes and 32,768 verification bytes. Its
+four-operation functional window requests 32 timing bytes. The 1,768-byte adapter,
+its 1,473-byte scratch and socket handles are nested in App. Window metadata is
+368 bytes; the counter snapshot, peer keys and pending rows are separate
+64/112/288-byte local owners. Five RX/five TX slots are specific to this client
+mode; server pools and legacy client capacities remain unchanged. Socket buffers,
+allocator overhead, initialization and peak stack remain unknown. The exact
+Windows executables reserve a 1 MiB main stack with 4 KiB initial commit; this is
+configured virtual reservation, not observed peak or a minimum requirement.
+Stack-resident App/local owners must not also be added to that stack reservation.
+No whole-memory or CPU acceptance follows from these functional receipts.
+
+Representative Linux CPU/latency/throughput cells remain open. The current
+runner limits clean windows to 30 seconds; each needs at least twenty server CPU
+ticks. The one global 60,000-send ceiling includes warmups, retries and controls.
+With 20 warmups and 1,024-byte blocks, even ideal traffic permits at most 59,980
+one-block, 14,980 four-block or 3,730 sixteen-block measured operations. Additional
+traffic lowers those maxima. Extending duration alone cannot qualify a cell that
+needs more operations than that budget; pooling individually sub-floor windows
+or substituting process clocks cannot rescue it. No long-window campaign is
+scheduled, and no representative workload or failed cohort is being replaced.
 
 ## Socket integration today
 
