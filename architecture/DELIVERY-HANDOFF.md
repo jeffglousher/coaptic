@@ -90,7 +90,7 @@ requires separate authorization under #132.
   below remains retained. Disposition review found no supported correction; no further
   campaign is scheduled.
 
-## Delivered measurement support; Linux receipts pending
+## Delivered measurement support and Linux qualification
 
 Companion [#184](https://github.com/jeffglousher/coaptic-validation/pull/184) is
 merged as `430722d73818e6b23ceecc6e6edb567a20111958`, tree-identical to reviewed
@@ -113,8 +113,8 @@ client tests, strict release package Clippy, fmt and actionlint. Native checks u
 Rust/Cargo 1.99.0, MSVC, release thin LTO/one codegen unit, debug=0, incremental=0
 and two build jobs. Locked original
 `b8f44fa` and accepted `d23f93c` builds plus eight short functional cells verify
-176 operations including warmups, using one baseline-built client. These checks
-do not qualify long Linux behavior. The focused #183 qualification remains open.
+176 operations including warmups, using one baseline-built client. These Windows
+checks do not qualify long Linux behavior; the first finite Linux result follows.
 
 Companion [#186](https://github.com/jeffglousher/coaptic-validation/pull/186) is
 merged as `c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059`, tree-identical to reviewed
@@ -128,27 +128,148 @@ Missing/refused/malformed reads are explicit unavailable data. These non-atomic
 observations include startup/warmup and cannot prove used stack, physical peaks,
 minimum RAM or an aggregate ceiling. Boundary work can affect raw resource
 windows; all CPU/latency gates remain. Windows runs 178 unittest cases: 170 pass,
-eight skip. Independent general reviews for both PRs have no actionable findings;
-Linux #185 proof and whole-memory acceptance remain open.
+eight skip. Independent general reviews for both PRs have no actionable findings.
+The limited Linux proof follows; whole-memory acceptance remains open.
 
-Two source-frozen runs were dispatched, with results awaiting independent
-verification at this handoff:
+### Qualified low-load SmallDevice result
 
-- [40065560596](https://github.com/jeffglousher/coaptic-validation/actions/runs/40065560596):
-  companion `430722d`, original `b8f44fa` versus core `5bd6f27` (protocol-identical
-  to accepted `d23f93c`), SmallDevice 32 B, unprotected C1 CON at 100/s, 500 seconds
-  and four matched pairs. The plan is 400,000 measured operations plus 160
-  warmups. Its source predates #186 and contains none of the new memory fields.
-- [40066937573](https://github.com/jeffglousher/coaptic-validation/actions/runs/40066937573):
-  companion `c1fa5bf`, core `37c3389` on both labels (protocol-identical to `d23f93c`),
-  SmallDevice 32 B, both modes, C1 CON at 100/s, two seconds and two pairs. The
-  functional plan is 1,600 measured operations plus 160 warmups and 32 memory
-  snapshots. Any low-tick result remains ineligible; this identical-core control
-  establishes no optimization gain. The unchanged concurrency group serializes
-  it behind the long run.
+[Run 40065560596](https://github.com/jeffglousher/coaptic-validation/actions/runs/40065560596),
+attempt one, uses companion `430722d73818e6b23ceecc6e6edb567a20111958`, original
+`b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57` and candidate
+`5bd6f272cc2b3dc993e1eaa2d34eee025f918773` (protocol-identical to accepted
+`d23f93c`). Both labels use ordinary Mio and the fixed SmallDevice configuration
+specified below: one populated GET/four route capacity, one Call, zero deferred,
+one association/four request bindings, RX/TX each two by 1,152 bytes, dedup four,
+Observe two and no body pools. Responses are 32 bytes, unprotected C1 CON,
+100 starts/s, 500 seconds and four rotated pairs. Perf, admission diagnostics
+and independent endpoints are off.
 
-No result from either dispatch is credited here. Both 50% targets, the remaining
-representative matrix and material memory unknowns remain OPEN. Exact software
+All eight windows verify 400,000 measured operations plus 160 warmups, with zero
+operation failures. Every window, pair AND pooled guard passes. Each window has
+243..252 server ticks at 100 Hz, zero missed starts and exactly 50,020 total
+client sends including warmups, within the unchanged 60,000 ceiling. Achieved
+rate is 100.001949..100.001964 operations/s. This paced rate does not establish
+saturation or CPU-limited throughput.
+
+Baseline/candidate server ticks are 1,004/973 over 200,000 completions per label:
+**50.20 to 48.65 microseconds/op**, ratio 0.969123506 (-3.09%). User/system
+components are 273/731 to 284/689 ticks; these counters do not nominate a causal
+hotspot. Client CPU is separately 123.3 to 121.9 microseconds/op. Pooled median is
+100.869 to 99.476 microseconds and p99 131.937 to 128.790. Pair median deltas are
+-1.532/-1.172/-1.885/-1.282 microseconds; pair p99 deltas are
+-2.144/-2.234/-6.522/+0.951. Process-clock sidecars have separate boundaries and
+do not rescue eligibility or replace ticks. No optimization or transport-cost
+percentage is inferred from socket-free App timings.
+
+The host is AMD EPYC 7763, four assigned logical CPUs, Ubuntu 24.04/Linux
+6.17.0-1022-azure, glibc 2.39, TSC and 100 Hz accounting; governor data is
+unavailable. This differs from the EPYC 9V74 of the 1,000/s result below. Do not
+combine their costs, gains or clocks, or infer a load curve across hosts.
+Rust/Cargo 1.99.0/LLVM 23.1.1 build release `--locked` for
+`x86_64-unknown-linux-gnu`, thin LTO/one codegen unit, debug=1, strip=none,
+forced frame pointers, incremental=0 and two build jobs; core features remain
+`std,alloc,oscore` with defaults disabled. Source-specific syn-2/syn-3 lock inputs,
+compiler/flags and clean restoration match.
+
+The frozen baseline-built client SHA-256 is
+`c61bb04ca2de20424274a13a67f8c95066137f415fa5e6087f06a270ada337f2`.
+The actual baseline/candidate server hashes are the same as the retained
+`40054024038` ELFs below; this equality does not make the hosts or workloads
+equivalent. Linux setup runs 312 Python tests: 310 pass/two skip. Ten selected
+endpoint and 37 staged tests, strict release/locked/all-target package Clippy,
+mixed-UID/live-thread cleanup and real launcher success/timeout proofs pass.
+This does not claim a whole-client test run or new long-window unit execution.
+
+Startup App is 14,016 bytes including the 2,056-byte adapter and its 2,049-byte
+scratch; fixed requested-pool heap is zero. Poll 4 bytes, Events header 24 bytes,
+the pinned-source 96-byte Events payload request and 32 static representation
+bytes are separate as described below. Snapshot RSS spans 4,702,208..5,103,616
+bytes, not a peak requirement. No server worker or pending kernel operation is
+introduced; attributable process user/system CPU is included, while machine
+kernel-worker cost remains unmeasured. Allocator, initialization, runtime,
+kernel owners and peak stack still prevent whole-memory acceptance.
+
+The retained ZIP is 22,089,530 bytes, SHA-256
+`50b7fa3282f7ecefa052fe008618bdda3507339d2a50eb31240572b37c1dafe7`.
+Parent verification independently reproduces all 60 member hashes/CRCs, 24
+source-file/Git-blob matches, raw counts/ticks and all latency guards. Four ELFs
+are streamed as data, never extracted or executed. Uncompressed upload is
+82,940,019 bytes within the 256 MiB whole-upload bound; retained partition output
+is about 23.2 MB within its existing 30 MiB cap. The initial SHA-ref dispatch
+refusal created no job and remains retained; the corrected verified-main request
+created the sole measured attempt. This qualifies one unprotected slice, fails
+the required 0.5 CPU ratio, and replaces no historical failed cohort.
+
+Reproduce from clean companion `430722d` with the pinned compiler/flags above,
+`psutil==7.0.0`, an existing compatible lane and fresh bounded output:
+
+```sh
+python3 -B tools/benchmark/linux_cpu.py \
+  --baseline-sha b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57 \
+  --candidate-sha 5bd6f272cc2b3dc993e1eaa2d34eee025f918773 \
+  --server-kind coaptic-mio --resource-profile small-device \
+  --sizes 32 --rates 100 --seconds 500 --repeats 4 \
+  --long-window --security-mode unprotected --concurrency 1 --message-type con \
+  --build-lane /existing/compatible/lane --output /fresh/small-device-long
+```
+
+### Limited Linux memory proof
+
+[Run 40066937573](https://github.com/jeffglousher/coaptic-validation/actions/runs/40066937573)
+uses companion `c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059` and identical core
+`37c3389bd560638e92b0b76243428246a4b54d76` on both labels (protocol-identical to
+`d23f93c`). It ran after the long partition in the unchanged serial concurrency
+group. Ordinary Mio, fixed SmallDevice 32 B, both modes, C1 CON, 100/s, two
+seconds and two pairs verify 1,600 measured operations plus 160 warmups, zero
+operation failures and resolved cleanup. This is a functional control, not an
+optimization experiment.
+
+All 32 actual `coaptic-proc-memory/1` objects have available status/limits data,
+strict numeric/unit fields and PIDs coherent with the recorded owned server/client
+identities. Server approximate lifetime VmHWM is 4,833,280..5,038,080 bytes,
+VmPeak 9,601,024..9,613,312 and VmStk 237,568..249,856. Client values are
+2,871,296..3,026,944, 3,997,696 and 139,264 bytes respectively. All snapshots report
+one thread and configured stack soft limit 16,777,216 bytes/hard `unlimited`.
+These non-atomic observations include startup/warmup. VmStk is a virtual stack
+mapping, not used stack; limits are configuration, not allocation. One stable
+functional path does not fully prove dynamic-thread, exit, permission or race
+behavior, physical peaks or whole-memory ceilings.
+
+All eight server tick deltas are zero and fail the twenty-tick floor. Rate/pacing
+guards pass with no missed starts, but OSCORE repeat zero median rises 6.0445
+microseconds, failing the +2-microsecond guard. All pair p99 and pooled latency
+guards pass; they do not erase that failure. All CPU comparisons and gains are
+withheld. The separate process clocks do not rescue the floor, and identical
+core labels establish no optimization even if timing guards were to pass.
+
+This host is EPYC 9V45 with four assigned logical CPUs, Linux 6.17.0-1022-azure,
+glibc 2.39 and 100 Hz accounting; governor data is unavailable. Compiler, build
+flags and capacities match the declared fixture, not the hardware of the long
+run. Linux setup runs 319 Python tests: 317 pass/two skip; ten endpoint and 37
+staged tests and strict release/locked/all-target package Clippy pass. Dependency
+warnings remain retained. Both labels build server hash
+`48b0432fa03cf14beadcc54db271848c9482c0903ee659409a9881f17481d1a2` and client
+`97dd6b1baa2b40466e8acd08e171dddce2c4c82bfc23783ed37167d8d9f3956f`.
+
+All 253,877 bytes of raw nonbinary artifact text are retained locally with source,
+build, snapshot and failure receipts. The remote archive is 21,086,753 bytes,
+SHA-256 `e91e09b68c2c38fe615be131cd28c54115a663cefe8a025f8eaeee77cb8095d8`;
+all 60 members were streamed for CRC/SHA verification. No local ZIP/ELF/perf is
+saved for this proof; executable bytes remain only in the remote artifact's
+fourteen-day retention. Collector archive byte payloads are bounded to
+three times 26 MiB plus a 1 MiB chunk, with Python/JSON/runtime overhead separate.
+Those offline collection bounds do not measure server RAM or CPU. Total retained
+proof metadata is under 2 MiB, inside the unchanged 64 MiB evidence phase.
+The older long run predates #186 and contains none of these new memory fields.
+
+Reproduce this functional control from clean companion `c1fa5bf`, using the same
+setup as above, both core SHA arguments set to `37c3389bd560638e92b0b76243428246a4b54d76`,
+`--sizes 32 --rates 100 --seconds 2 --repeats 2 --concurrency 1 --message-type con`,
+the same Mio/SmallDevice options and fresh output. Omit `--long-window` and
+`--security-mode unprotected`; default `both` is required for this proof.
+
+Both 50% targets, the remaining representative matrix and material memory
+unknowns remain OPEN. Exact software
 limits and command options are in the source-identified companion
 [guide](https://github.com/jeffglousher/coaptic-validation/blob/c1fa5bf8e08a0811e187cefb61ee1dc1b1db5059/tools/benchmark/linux_cpu.md).
 
@@ -662,9 +783,9 @@ one-block, 14,980 four-block or 3,730 sixteen-block measured operations. Additio
 traffic lowers those maxima. Extending duration alone cannot qualify a cell that
 needs more operations than that budget; pooling individually sub-floor windows
 or substituting process clocks cannot rescue it. Source-frozen run `40065560596`
-was dispatched for the 500-second SmallDevice/unprotected partition recorded
-above; its result remains pending collection and verification. It covers only
-that partial matrix and must pass every pair and pooled latency guard. No
+now passes the 500-second SmallDevice/unprotected partition and every pair and
+pooled latency guard recorded above. It covers only that partial matrix and
+does not meet the required 50% CPU reduction. No
 representative workload or failed cohort is being replaced.
 
 ## Socket integration today

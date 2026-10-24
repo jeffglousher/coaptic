@@ -26,6 +26,22 @@ and 0.968586 OSCORE. This cell does not meet the required 0.5 ratio, qualify the
 remaining matrix or replace the failed host cohort. The delivery handoff records
 its exact sources, host, capacities, memory limits and reproduction command.
 
+The separate low-load SmallDevice 32-byte/C1 CON/100/s partition in
+[run 40065560596](https://github.com/jeffglousher/coaptic-validation/actions/runs/40065560596)
+uses companion `430722d`, original `b8f44fa` versus `5bd6f27` (protocol-identical
+to accepted `d23f93c`), the same Mio and a frozen baseline-built client. All eight
+500-second unprotected windows, four rotated pairs and pooled guards pass:
+400,000 verified operations plus 160 warmups; 50.20 to 48.65 microseconds/op,
+ratio 0.969124. This remains above 0.5 and covers only that slice. Its EPYC 7763
+host differs from the EPYC 9V74 used by `40054024038`; do not pool their costs,
+multiply ratios or infer a load curve from them.
+
+The separate identical-core memory functional control `40066937573` verifies
+1,600 measured operations, 160 warmups and 32 available process snapshots.
+All eight CPU windows miss the twenty-tick floor and one OSCORE pair median
+guard fails. CPU comparisons remain withheld; approximate lifetime high-water,
+stack mappings and configured limits do not establish whole-memory acceptance.
+
 Historical run `39924741885` used Ubuntu 24.04, Linux 6.17.0-1022-azure, Xeon Platinum 8370C,
 four assigned logical CPUs, glibc 2.39, performance governor and 100 Hz process
 accounting. A fresh comparison must build both labels on the same recorded host;
