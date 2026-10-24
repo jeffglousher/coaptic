@@ -217,7 +217,10 @@ the current-main incremental comparison also fails its latency guard.
 
 Run `40045613509` uses the same companion source, Linux build flags, host-control
 capacities, payloads, rate, duration and four-pair plan, with profiling and
-diagnostics off. Both labels select the verified syn-3 lock and restore canonical
+diagnostics off. Its host is Intel Xeon 6973P-C with four assigned logical CPUs,
+Ubuntu 24.04, Linux 6.17.0-1022-azure, glibc 2.39 and 100 Hz accounting; it is a
+separate host from the original-baseline run. Both labels select the verified
+syn-3 lock and restore canonical
 bytes before recording clean identities. All 32 windows verify 1,536,000 measured
 operations plus 640 warmups with zero failures; source, lock, rate, pacing, tick
 and cleanup gates pass. The second OSCORE 1024-byte pair has baseline p99 50.112
