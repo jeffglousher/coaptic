@@ -155,6 +155,9 @@ include full App polls, copies, clocks and loop/gate work; client preparation,
 authenticated verification and sockets are outside. These observations establish
 neither improvement nor transport share.
 
-Production cleanup proof remains separately required by
-[validation #169](https://github.com/jeffglousher/coaptic-validation/issues/169).
+Production cleanup identity and settlement proof is delivered under
+[validation #169](https://github.com/jeffglousher/coaptic-validation/issues/169),
+closed by companion #172 after Linux run `40042232531`. It covers reserved
+inherited groups in the same visible PID namespace with one owner/waiter;
+arbitrary escaped-group or namespace containment is not claimed.
 Physical #333/#365/#341 and publication authorization #132 stay separate.
