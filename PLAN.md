@@ -277,7 +277,10 @@ whole-memory acceptance remains open.
 The retained SmallDevice Linux ELF inspection now identifies the declared load
 image and its nested 32-byte representation/24-byte metadata statics in the
 handoff. Image extents and TLS headers do not establish resident, dynamic TLS or
-peak requirements; keep the remaining enclosing-owner ceilings open.
+peak requirements; keep the remaining enclosing-owner ceilings open. The handoff
+now freezes source-identified host App/requested-pool owner caps from retained
+startup ledgers. Linux blockwise/Service and aggregate/whole-memory caps remain
+open; the Windows host figures do not establish device RAM requirements.
 
 ### Delivered behavior and boundaries
 
