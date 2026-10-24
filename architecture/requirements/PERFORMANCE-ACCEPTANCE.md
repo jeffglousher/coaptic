@@ -36,6 +36,15 @@ ratio 0.969124. This remains above 0.5 and covers only that slice. Its EPYC 7763
 host differs from the EPYC 9V74 used by `40054024038`; do not pool their costs,
 multiply ratios or infer a load curve from them.
 
+The first OSCORE partition at that 100/s, 500-second SmallDevice configuration,
+[run 40073484846](https://github.com/jeffglousher/coaptic-validation/actions/runs/40073484846),
+uses companion `c1fa5bf`, the same original/accepted core pair, ordinary Mio and
+frozen baseline client. All eight windows verify 400,000 operations plus 160
+warmups, but zero-based repeat one fails median (+6.6925 microseconds) and p99
+(+20.238), repeat three fails median (+15.931), and pooled median fails (+5.732).
+CPU comparisons are withheld. The cell remains open; this failed cohort is
+retained without replacement or relaxed guards.
+
 The separate identical-core memory functional control `40066937573` verifies
 1,600 measured operations, 160 warmups and 32 available process snapshots.
 All eight CPU windows miss the twenty-tick floor and one OSCORE pair median
@@ -99,6 +108,18 @@ Its per-poll wall samples are supporting functional/optimizer-resistant evidence
 they establish no server CPU gain or SmallDevice equivalence. The delivery
 handoff records exact sources, compiler, verification and timing boundaries.
 Representative profile/payload/concurrency probe obligations remain open.
+
+Companion #188 adds the explicit fixed SmallDevice 32-byte C1 probe and preserves
+the Default64 seven-field output and batch CPU fixture. Exact b8/d23 Windows
+builds pass twenty native tests and eight functional cells verify 1,152 exchanges
+with optimization barriers and full response verification. Companion #189 adds
+the fixed Linux proof to the existing workflow; run `40079192247` passes twenty
+native tests and eight cells with 1,152 verified exchanges and 32,768 separate
+calibrations. Actual Linux SmallDevice App is 14,936 bytes including its nested
+2,976-byte CoreIo; this is a different fixture from Mio. The narrow SmallDevice32
+C1 probe obligation is now proved, with a Default64 regression control.
+Neither wall samples nor this functional proof qualify socket
+CPU, latency, remaining profiles/concurrency or whole memory.
 
 ## Representative execution matrix
 

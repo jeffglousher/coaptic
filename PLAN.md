@@ -20,8 +20,10 @@ low-load partitions and #186 bounded process-memory observations. The first
 500-second unprotected SmallDevice partition passes every guard, with a 3.09%
 server CPU reduction. The separate identical-core memory control verifies
 complete operations and 32 available snapshots; its CPU results remain withheld
-for low ticks and one failed OSCORE median guard. Both 50% targets and whole-memory
-acceptance remain open. PR watches and recurring tasks remain off.
+for low ticks and one failed OSCORE median guard. The first 500-second OSCORE
+SmallDevice partition verifies 400,000 operations but fails pair and pooled
+latency guards; its CPU comparisons are withheld. Both 50% targets and
+whole-memory acceptance remain open. PR watches and recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -62,6 +64,13 @@ reproduction; low-load, blockwise, Service, concurrency and throughput remain op
 The matched original-to-accepted Windows core probe now verifies 322,048
 exchanges across sixteen windows. Its Default/Alloc 64-byte per-poll wall
 diagnostics do not establish server CPU gain or SmallDevice acceptance.
+Companion #188 adds the explicit fixed SmallDevice 32-byte mode without changing
+the legacy Default64 schema or batch CPU mode. Locked b8/d23 Windows checks and
+eight functional cells verify 1,152 exchanges. Companion #189 delivers its
+bounded opt-in Linux workflow; run `40079192247` passes twenty native tests and
+all eight Linux functional cells, verifying another 1,152 exchanges. This completes
+the narrow SmallDevice32 C1 probe proof under #187, with Default64 regression.
+These wall probes do not establish either CPU target or whole-memory acceptance.
 The bounded 9970 Hz screen from companion #181 stopped at its first control's
 rounded report count; the other three controls did not run. The approach is
 ended without a retry or communication capture. Companion #182 restores the
@@ -266,6 +275,10 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   pooling sub-floor windows cannot qualify them. Run `40065560596` now qualifies
   the 100/s, 500-second unprotected SmallDevice slice at 50.20 to 48.65 microseconds
   per complete operation; it does not meet the 50% target or replace failed cells.
+  OSCORE run `40073484846` completes all eight equivalent low-load windows but
+  fails repeat-one median/p99, repeat-three median and pooled median guards.
+  Keep its CPU comparisons withheld and that acceptance cell open; no retry or
+  replacement cohort is planned.
   Use these retained results before extending remaining plans. Companion #186's
   bounded lifetime memory/stack-limit observations pass the limited Linux proof
   in `40066937573`; they do not establish whole-memory ceilings or used stack.
