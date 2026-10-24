@@ -384,9 +384,10 @@ transparently. Sealed `service-fixed16384-os50-74s-40083610413` output is 942,48
 bytes within 2 MiB, with no local ZIP/ELF/perf. No retry or replacement occurred.
 
 Both targets, the failed unprotected acceptance cell, other representative cells
-and whole-memory acceptance remain open. Companion #190 is the bounded two-file
-Service complete-operation core-probe work; validation/delivery remain pending.
-It cannot rescue socket guards or establish a transport-cost percentage.
+and whole-memory acceptance remain open. The bounded Service core probe is now
+delivered in companion #191 and its explicit Linux workflow in #192; the
+functional proof and its limits are recorded below. It cannot rescue socket
+guards or establish a transport-cost percentage.
 Reproduce from clean companion `7321663`, the compiler/flags above and a
 compatible lane. The command below selects the unprotected cohort; select
 `--security-mode oscore` and another fresh output for its separate counterpart:
@@ -400,6 +401,124 @@ python3 -B tools/benchmark/linux_cpu.py \
   --long-window --security-mode unprotected --concurrency 1 --message-type con \
   --build-lane /existing/compatible/lane --output /fresh/service-fixed-long
 ```
+
+### Service complete-operation core probe
+
+Companion [#191](https://github.com/jeffglousher/coaptic-validation/pull/191)
+delivers explicit fixed/allocated Service modes in the existing `bench-core`
+executable. Merge `c7887f6b56fe37cbc8d25ad9402a02a34c9a22ea` matches reviewed
+tree `6b721c7986272ef147e29eae5d775d183abe5451`. Companion
+[#192](https://github.com/jeffglousher/coaptic-validation/pull/192) delivers the
+opt-in `service-proof` Linux workflow as
+`7a3214e311c0e63949e9514a4d2e2ed4f17b2e75`, matching reviewed tree
+`31982ab7c91899b05010703c0330dcd797a806ae`. Both independent general reviews
+have no findings. Probe Git blob `dbffc02293898336087a640cd4b61cca5eb70d5e`
+has Linux LF SHA-256
+`5ff878db5d1f0eadc0e85da789cb12fe1e5508146874d5440f07d60f147051c6`.
+The earlier #187 proof remains pinned to its original probe and suite.
+
+Two real Apps exchange complete C1 CON representations through two bounded
+single-packet ports. Server capacities retain Service's 32 routes/one GET,
+four Calls, eight deferred rows, one association/four bindings, RX/TX each
+32 x 1,472 bytes, dedup 64, Observe 32 and RX/TX bodies each 4 x 16,384 bytes.
+The separate allocated client has four Calls/one active, zero deferred rows,
+one association/four bindings, RX/TX each 4 x 1,472 bytes, dedup eight, Observe
+four, one 16,384-byte RX body and one 1,024-byte TX body. Each App owns its
+OSCORE state; contexts are not cloned between operations.
+
+Optimization barriers and observable full-body results protect the probe.
+Each wire ACK, MID and Token is checked against its request. Assembled Block2
+metadata retains the first fragment's header/MID; final collection is checked
+against that snapshot, including authenticated content, code, format and ETag.
+The operation has an absolute three-second deadline and at most 32 rounds.
+Both ports share the 60,000 accepted-send ceiling, including 128 warmups,
+continuations, retransmissions and control. At 16 KiB the measured-operation
+ceiling is 1,747; configured storage is allocated at startup and reused.
+
+The measured quantity is the sum of every server `App::poll` wall interval per
+verified complete operation. Server fixture receive/send copies, dispatch,
+maintenance, body work and cryptography are inside. Bridging, client preparation,
+polling, protection, authentication, assembly and verification are outside.
+The 4,096 clock calibrations per process remain separate and are never subtracted.
+These intervals are not process CPU, socket latency or a transport-cost share.
+
+Both pinned Windows builds (`b8f44fa`/`d23f93c`, Rust 1.99.0, locked release)
+pass sixteen native tests and strict binary-target Clippy each. Both actual
+executables and their inputs freeze before eight cells: both sources and modes
+with fixed/allocated 16 KiB storage, sixteen measured operations and 128 warmups
+per cell. All 1,152 exchanges verify, with 32,768 separate calibrations. Formatting
+passes. Legacy Default64/Small32 and batch code/tests retain their recorded
+source regions; the earlier proof is not retroactively repinned.
+
+[Linux run 40090187411](https://github.com/jeffglousher/coaptic-validation/actions/runs/40090187411),
+attempt one, passes all eight cells with no operation failures or NOT RUN cells:
+128 measured operations plus 1,024 warmups, 32,768 separate calibrations,
+18,432 server polls and 36,864 combined accepted sends. Both cores pass sixteen
+unfiltered native release tests and strict binary-target Clippy. Python runs
+eighty tests: 75 passes and five skips. Both actual copied ELF/compiler/input/
+selected-lock identities freeze before cells. Captured records and immutable
+control flow establish that order, without an independently timestamped trace.
+All eight owned-process settlement receipts and source/lock restoration pass.
+Arbitrary escaped groups and abrupt-job-death restoration are outside that proof.
+
+Linux uses the same pinned b8/d23 pair, Rust/Cargo 1.99.0/LLVM 23.1.1 and GNU
+target with locked release, thin LTO, one codegen unit, debug=1, strip=none,
+forced frame pointers, incremental=0 and two build jobs; features are
+`std,alloc,oscore`, defaults off. CPU model, kernel and affinity are not captured
+by this functional workflow and must not be inferred from another host. Original
+ELF SHA-256 is `2df1c00a2bbbb9aa049fb9fa7a01bfbb0eff62b1d81e331158725eba6dd39560`
+(7,778,576 bytes); accepted is
+`b946498bb6c27b9954b4fcc58b416b24c8b8603139e1443949fb7ab6d044835e`
+(7,792,264 bytes). No cross-build binary-reproduction assumption is needed.
+
+Actual GNU owners match across both cores and security modes for each storage
+choice. Fixed server App is 315,784 bytes with zero requested pool heap;
+allocated App is 35,664 bytes plus 282,640 requested pool bytes. The client App
+is 16,936 bytes plus 37,076 requested pool bytes. Each App includes a 2,984-byte
+port containing 1,472-byte input and output buffers: four nested packet buffers
+in total. Server pool payload 225,280 bytes and client payload 29,184 bytes
+are already inside their App or requested-heap owners and must not be added.
+Separate owners are static representation 16,384 bytes, verification request
+16,384, timing request 256, poll counts 64, calibration request 65,536, Vec
+headers 96, pending state 80 and clock 16. Requested pool heap includes pool
+metadata/alignment, with allocator overhead unresolved. These are this fixture's
+actual GNU owners, not Mio equivalence, aggregate RAM requirements or peaks.
+
+The 4,456,645-byte remote archive has fifty members and SHA-256
+`ec59556f38c73f6805da43c912cf84721e362836328520e5dfea16b3fe22a0dd`.
+The collector checks every member CRC/SHA, including both streamed ELFs as data.
+Parent verification independently rehashes all 48 retained text members and
+twenty source blobs and reproduces raw counts, scopes, owner matching,
+restoration and descriptive wall statistics (483 checks); remote archive/ELF
+stream hashes are reused transparently. No binaries are extracted or executed
+during receipt review. Sealed output `linux-service190-40090187411` retains
+980,393 bytes within its 2 MiB budget; whole-upload and existing phase bounds
+pass. Software/workflow evidence remains in `service-core-probe-190-20261024`
+and `linux-service-probe190-integration` under the existing evidence root.
+
+This completes the narrow Windows/Linux functional probe obligation in #190.
+Fault/cancellation tests use allocated 16 KiB fixtures; identical fixed-mode
+fault coverage and actual continuation deadline expiry remain unproved.
+Finite no-growth observations do not establish generated peak stack, allocator,
+initialization or runtime bounds. Both CPU targets, whole-memory acceptance and
+failed socket cohorts are unchanged. No CPU ratio, gain, transport share or
+socket guard is established by these short wall diagnostics.
+
+From the recorded source-specific locked build, run each command for both cores:
+
+```sh
+bench-core 16 unprotected --service-fixed 16384
+bench-core 16 oscore --service-fixed 16384
+bench-core 16 unprotected --service-allocated 16384
+bench-core 16 oscore --service-allocated 16384
+```
+
+For hosted functional reproduction, select a branch at recorded companion
+`7a3214e311c0e63949e9514a4d2e2ed4f17b2e75` and pass its branch name to
+`gh workflow run core-cost-probe.yml --repo jeffglousher/coaptic-validation --ref BRANCH -f mode=service-proof`.
+The original dispatch used `main` at that exact commit. Record the actual run
+SHA; a later `main` is a different input. This selects the frozen eight-cell
+functional plan, without replacing any failed acceptance cohort.
 
 ### Limited Linux memory proof
 

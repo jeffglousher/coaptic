@@ -32,8 +32,12 @@ Linux App owners match at 314,856 bytes, with separate 16,384-byte representatio
 storage. The first required OSCORE counterpart (`40083610413`) passes all eight
 windows and every guard: server CPU is 610.811 to 561.486 microseconds/op
 (-8.08%). That remains above the required 0.5 ratio and does not replace the
-failed unprotected cohort. Companion #190 tracks the bounded Service
-complete-operation core-probe implementation; validation and delivery are pending.
+failed unprotected cohort. Companion #191 delivers the bounded Service
+complete-operation core probe and #192 its explicit Linux functional workflow.
+Windows validates both pinned cores and eight cells. Linux run `40090187411`
+also passes 32 native tests, strict binary Clippy and all eight cells, verifying
+1,152 complete operations. This supplies #190's bounded functional proof.
+These wall probes cannot qualify CPU reductions or rescue failed socket guards.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -294,8 +298,9 @@ Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
   Its CPU comparisons remain withheld. The first OSCORE counterpart
   `40083610413` verifies 29,600 authenticated operations plus 160 warmups and
   passes every measurement guard, with a 0.919248 CPU ratio. Preserve both
-  modes' original guards and failed cohorts. Complete companion #190's bounded
-  Service core probe. Remaining Service storage/payload/load/concurrency,
+  modes' original guards and failed cohorts. Reuse companion #190's delivered,
+  source-matched Service complete-operation core probes for the applicable paths.
+  Remaining Service storage/payload/load/concurrency,
   throughput and the required 0.5 ratio stay open.
   Use these retained results before extending remaining plans. Companion #186's
   bounded lifetime memory/stack-limit observations pass the limited Linux proof
