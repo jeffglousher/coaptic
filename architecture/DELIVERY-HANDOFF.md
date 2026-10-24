@@ -120,6 +120,10 @@ uses companion `8b25a2579fabbbb016e2798d67b076bf4022e41d`, accepted core baselin
 and Default/AllocMemory capacities. The source-specific Linux locked builds
 verify canonical syn-2 versus alternate syn-3 selection, clean restoration,
 compiler/flag/source/binary identities and the frozen baseline client.
+This is an Intel Xeon Platinum 8573C host with four assigned logical CPUs,
+Ubuntu 24.04/Linux 6.17.0-1022-azure, glibc 2.39, performance governor, TSC and
+100 Hz process accounting. Rust/Cargo 1.99.0 and the Linux release flags listed
+above apply. It is a separate host from the direct RX and server-App runs.
 
 All 32 clean windows complete 1,536,000 operations plus 640 warmups with zero
 failed operations. Rate, pacing, twenty-tick and cleanup gates pass. OSCORE
@@ -142,6 +146,18 @@ causal ranking or percentages: inline coverage and throttling remain unproven,
 and cycles/instructions are unsupported. Profile timings never enter clean
 CPU/latency. This comparison spans cumulative core changes, so it does not
 attribute its latency failure to #675. The incremental control above is pending.
+
+Reproduce from companion `8b25a25` with the same setup as the CPU guide, preserving
+all required windows and failures:
+
+```sh
+python3 tools/benchmark/linux_cpu.py \
+  --baseline-sha b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57 \
+  --candidate-sha 7c043046097e01e8e8f9f95fc51ee70dde3ed860 \
+  --server-kind coaptic-mio --sizes 64,1024 --rates 4000 \
+  --seconds 12 --repeats 4 --perf \
+  --build-lane /existing/compatible/lane --output /fresh/core-evidence
+```
 
 ## Cleanup and source-matched build delivery
 
