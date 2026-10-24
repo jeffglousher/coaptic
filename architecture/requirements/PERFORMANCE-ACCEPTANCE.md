@@ -9,7 +9,7 @@ target. EDHOC establishment is a separate workload.
 ## Baselines and source matching
 
 The retained initial runtime baseline is core
-`b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57`. The last comparison against that
+`b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57`. A retained historical comparison against that
 source used candidate `7ab6949d9604133c7f8ed8904e424b8657630d50`, companion
 `eea0374b60c93098a7f0dcf24a999e49d753d624`, the same Mio adapter on both labels,
 64/1024-byte responses, C1 CON, 4,000 offered operations/s, twelve seconds and
@@ -155,6 +155,9 @@ include full App polls, copies, clocks and loop/gate work; client preparation,
 authenticated verification and sockets are outside. These observations establish
 neither improvement nor transport share.
 
-Production cleanup proof remains separately required by
-[validation #169](https://github.com/jeffglousher/coaptic-validation/issues/169).
+Production cleanup identity and settlement proof is delivered under
+[validation #169](https://github.com/jeffglousher/coaptic-validation/issues/169),
+closed by companion #172 after Linux run `40042232531`. It covers reserved
+inherited groups in the same visible PID namespace with one owner/waiter;
+arbitrary escaped-group or namespace containment is not claimed.
 Physical #333/#365/#341 and publication authorization #132 stay separate.
