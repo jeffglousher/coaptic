@@ -29,7 +29,7 @@ failures. Both server arms use CPU0 and identical frozen native binaries.
 OFF has no tracing helper or attached programs. ON attaches disabled before
 warmup, enables before CPU/run, and disables/detaches after measured snapshots
 before client report formatting. Capacities remain routes four/one GET, Call
-one, deferred zero, association one, bindings four, RX/TX two ? 1,152 bytes,
+one, deferred zero, association one, bindings four, RX/TX two x 1,152 bytes,
 dedup four, Observe two and no body pools; each window sends 30,020 datagrams
 under the unchanged 60,000 ceiling.
 
@@ -40,8 +40,8 @@ captured. Other bins and both anomaly counters are zero. Independent gated
 entry/exit counts do not imply syscall durations, vDSO-clock coverage, removable
 kernel cost or a transport percentage. The window totals match the empty-receive path in source; removing it still needs a safe source design and matched evidence.
 
-Unprotected repeat 3 fails the +2 ?s median guard by a delta of +2.084 ?s;
-OSCORE repeats 0/1/2 have +2.875/+16.642/+2.514 ?s deltas. All pair p99 and both
+Unprotected repeat 3 fails the +2 us median guard by a delta of +2.084 us;
+OSCORE repeats 0/1/2 have +2.875/+16.642/+2.514 us deltas. All pair p99 and both
 pooled guards pass; pooled success cannot rescue failed pairs. Both overhead
 ratios are withheld. Every diagnostic row vetoes primary CPU acceptance. No
 replacement cohort or gate relaxation is planned; both 50% targets stay open.
@@ -60,14 +60,14 @@ The EPYC 7763 host has four assigned logical CPUs, Ubuntu 24.04/Linux
 unavailable. Native Rust/Cargo 1.99.0 GNU release uses locked std/alloc/oscore,
 defaults off, thin LTO, one codegen unit, frame pointers, debug=1/strip=none,
 incremental=0/jobs2. BPF nightly-2026-10-13 and linker 0.12.0 are separate
-pinned inputs. Actual native syn3 lock input is `cb9a96e1?`, canonical restored
-input `3ed89aed?`. Exact compiler/lock/binary receipts and reproduction are in
+pinned inputs. Actual native syn3 lock input is `cb9a96e1...`, canonical restored
+input `3ed89aed...`. Exact compiler/lock/binary receipts and reproduction are in
 the [companion evidence report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/ebpf-syscalls-20261024).
 
 Map values total 2,632 bytes across four possible CPUs; both programs together
 report 8,192 bytes memlock (JIT/translated lengths are nested, not additive).
 Map/link metadata remains unknown. Separate helper lifetime CPU is
-53,721?56,762 ?s and maximum RSS 49,220?51,852 KiB through its pre-final-format
+53,721 to 56,762 us and maximum RSS 49,220 to 51,852 KiB through its pre-final-format
 snapshot, including setup/warmup/wait/control. Its 1 MiB stack limit is within
 the 128 MiB address-space ceiling. These are not native-window overhead or
 whole-memory requirements; global prefilter callback and kernel worker CPU

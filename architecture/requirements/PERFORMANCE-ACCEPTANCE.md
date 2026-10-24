@@ -94,8 +94,8 @@ It completes 480,000 verified SmallDevice/32-byte/C1 CON operations plus 320
 warmups across sixteen 30-second, 1,000/s windows. The eight ON snapshots each
 record one successful send, one successful receive plus one EAGAIN receive,
 and one epoll wait per operation; anomalies are zero. This proves counts only.
-Unprotected repeat 3 median is +2.084 ?s; OSCORE repeats 0/1/2 are
-+2.875/+16.642/+2.514 ?s. Those pair failures withhold both overhead ratios even
+Unprotected repeat 3 median is +2.084 us; OSCORE repeats 0/1/2 are
++2.875/+16.642/+2.514 us. Those pair failures withhold both overhead ratios even
 though all pair p99 and both pooled guards pass. Every syscall-diagnostic row
 permanently vetoes primary CPU acceptance. Counts are not durations, a CPU share
 or an optimization gain; helper lifetime CPU has a different scope and global
