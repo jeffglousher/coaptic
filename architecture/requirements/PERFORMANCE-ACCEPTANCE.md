@@ -17,6 +17,15 @@ four rotated pairs. Run `39924741885` retains 16 pacing failures in 32 windows;
 all four CPU ratios are withheld. Two pair latency failures remain. This cohort
 must not be replaced by a passing rerun or a lower offered load.
 
+The separately declared SmallDevice 32-byte/C1 CON/1,000/s stratum in
+[run 40054024038](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
+compares that original baseline with accepted `d23f93c`, same Mio, companion
+`8dc65fd`, thirty-second windows and four rotated pairs per mode. All sixteen
+windows and pair/pooled guards pass; server CPU ratios are 0.953488 unprotected
+and 0.968586 OSCORE. This cell does not meet the required 0.5 ratio, qualify the
+remaining matrix or replace the failed host cohort. The delivery handoff records
+its exact sources, host, capacities, memory limits and reproduction command.
+
 That run used Ubuntu 24.04, Linux 6.17.0-1022-azure, Xeon Platinum 8370C,
 four assigned logical CPUs, glibc 2.39, performance governor and 100 Hz process
 accounting. A fresh comparison must build both labels on the same recorded host;

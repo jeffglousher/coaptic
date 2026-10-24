@@ -63,11 +63,25 @@ requires separate authorization under #132.
   not establish five real clients or four retained ordinary server snapshots.
   Shared replay-window skew beyond 32 remains an explicit counterexample.
 - The #176 author released source, refs, junction and build lane after validation;
-  delivered main was clean/pushed and the settled owned branch removed. A separate
-  implementation follow-up now owns the companion for
-  [#175](https://github.com/jeffglousher/coaptic-validation/issues/175): repair
-  actual blocking/staged-Mio server recovery after consumed oversized datagrams.
-  This adds no blocking-performance experiment or transport capability.
+  delivered main was clean/pushed and the settled owned branch removed.
+  [#178](https://github.com/jeffglousher/coaptic-validation/pull/178) delivers
+  [#175](https://github.com/jeffglousher/coaptic-validation/issues/175) as
+  `4d5e81af85a4401c8b2af717ef3dd74f599a0217`, with reviewed/tested tree matching
+  `b87b808a4acc5dd2ce8f3898ac7d8605dad548b5`. Blocking/staged-Mio driver turns
+  recover only from consumed oversized-input refusal; unrelated receive/send
+  errors retain priority. No packet pool, worker or transport capability is added.
+  Stage remains 32 bytes on Windows, with one transient 32-byte prior-stage
+  snapshot per poll; generated peak stack remains unknown. Windows passes six
+  focused and 53 full server tests, strict release Clippy and formatting.
+- [#179](https://github.com/jeffglousher/coaptic-validation/pull/179) delivers
+  [#177](https://github.com/jeffglousher/coaptic-validation/issues/177) as
+  `8dc65fd4e09b4f9440b307085c5b9848174fe4fd`, matching reviewed
+  `a79e3984434001e0a9c660a55d2677e722e82ffe`. The existing manual Linux workflow
+  exposes independent-endpoint CON and runs focused endpoint/staged tests plus
+  strict native Clippy before measurement. Default C1 behavior and all gates
+  remain unchanged. Actionlint and exact input-validation cases pass. Both batches
+  have no actionable independent review findings, are pushed, and their settled
+  owned branches are removed. Linux proof is recorded below.
 - PR watches and recurring tasks are off. The finite
   [incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
   has completed: current main `d23f93c` versus `7c04304`, same Mio,
@@ -75,6 +89,88 @@ requires separate authorization under #132.
   It isolates #675 and fails one pair p99 guard; the original-baseline failure
   below remains retained. Disposition review found no supported correction; no further
   campaign is scheduled.
+
+## First representative SmallDevice C1 result
+
+[Run 40054024038](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
+uses companion `8dc65fd4e09b4f9440b307085c5b9848174fe4fd`, original baseline
+`b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57` and accepted protocol source
+`d23f93c0699b75ec17e692999d62ff89bb71463d`. Later core main changes through
+`907fb72` are documentation only. Both labels use Mio and the baseline-built
+client `fe46f5e0ee2737441cb9b925064d6806dcca5c87064f085a796c09b64a3a6baf`.
+Source-specific syn-2/syn-3 locked builds and clean restoration pass.
+
+The unchanged fixed SmallDevice/Constrained configuration has route capacity four
+(one GET), one Call, zero deferred rows, one association/four request bindings,
+RX/TX each two by 1,152 bytes, dedup four, Observe two and no body pools. Complete
+32-byte responses use C1 CON at 1,000 starts/s, thirty seconds and four rotated
+pairs per mode, with profiling/admission diagnostics off. All sixteen windows
+verify 480,000 measured operations plus 320 warmups with zero failures. Every
+operation, source, rate, pacing, twenty-tick, cleanup and pair/pooled latency guard
+passes. Missed starts range from zero to two and server ticks from forty to
+forty-nine per window. Achieved throughput is 1,000.0301–1,000.0305 operations/s;
+this paced workload does not establish CPU-limited throughput or saturation.
+
+Unprotected server CPU is 172 to 164 pooled ticks over 120,000 completions per
+label: 14.333 to 13.667 microseconds/op, ratio 0.953488 (-4.65%). OSCORE is
+191 to 185 ticks: 15.917 to 15.417 microseconds/op, ratio 0.968586 (-3.14%).
+Each mode's final pair has zero tick improvement. Pooled median/p99 latency is
+25.677/35.262 to 24.896/35.172 microseconds unprotected and 28.812/39.939 to
+27.851/42.032 OSCORE. All individual pair guards also pass. Client CPU is separate:
+33.167 to 32.583 microseconds/op unprotected and 36.250 to 36.000 OSCORE.
+These small aggregate changes do not establish either 50% target, a confidence
+interval, an isolated optimization gain or a transport share. Historical failed
+cohorts remain unchanged; other representative cells and matched core probes
+remain open. No new profiling evidence was collected.
+
+The host is AMD EPYC 9V74 with four assigned logical CPUs, Ubuntu 24.04,
+Linux 6.17.0-1022-azure, glibc 2.39 and 100 Hz CPU accounting. Governor information
+is unavailable. Rust/Cargo 1.99.0 uses release, thin LTO, one codegen unit,
+debug=1, strip=none, forced frame pointers, incremental=0 and two build jobs;
+core features are `std,alloc,oscore`, defaults disabled. Do not pool this host
+with other runs or subtract socket-free App timings.
+
+Linux preflight passes ten endpoint and 37 staged tests, including both actual
+oversized-driver-turn recovery tests, plus strict locked release all-target
+native-package Clippy. Python runs 301 tests with two skips (299 passes).
+Mixed-UID/live-thread cleanup and actual production launcher success/timeout
+proofs pass. This closes the focused Linux proof obligations in #175/#177;
+it does not qualify representative concurrent performance.
+
+Every server startup reports 14,016 bytes App inline, including the 2,056-byte
+adapter and its 2,049-byte scratch. Fixed pools are nested in App; requested App
+heap is zero. Borrowed static representation storage is 32 bytes; Poll and Events
+are separate four- and 24-byte inline owners. Pinned Linux Mio 1.2.4/libc 0.2.191
+source gives a requested Events payload of eight packed twelve-byte `epoll_event`
+entries, 96 bytes, separate from the Events header. This is a source-derived
+allocation request, not measured allocator consumption. No added worker or
+pending kernel operation exists. Snapshot RSS spans 4,874,240–5,292,032 bytes;
+it is neither peak RAM nor an additive owner. Allocator overhead, initialization,
+peak stack, runtime and socket/epoll kernel costs remain unknown. Do not count
+stack-resident owners again inside a stack reservation. Whole-memory acceptance
+remains open; the 96-byte Linux bound does not apply to Windows Mio.
+
+Private evidence is retained at
+`D:/CoapticCurrent/cpu-linux-20261024/representative-small-c1-20261024` under its
+declared 64 MiB phase ceiling; earlier evidence retains its separate 128 MiB
+ceiling. The 22,183,226-byte archive SHA-256 is
+`941861f93320394ebf35e3f7a73086b65f02e11848f554eb4b06930e789c2ff7`.
+Raw window/latency math and all 100 member hashes were independently checked;
+four ELFs were stream-hashed without extraction or execution. Source/compiler,
+locks, binary manifests, startup ledgers and exact commands accompany the run.
+
+Reproduce on an idle Linux host from companion `8dc65fd` with the pinned compiler,
+`psutil==7.0.0`, existing compatible build lane and fresh output, following its
+[CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/8dc65fd4e09b4f9440b307085c5b9848174fe4fd/tools/benchmark/linux_cpu.md):
+
+```sh
+python3 tools/benchmark/linux_cpu.py \
+  --baseline-sha b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57 \
+  --candidate-sha d23f93c0699b75ec17e692999d62ff89bb71463d \
+  --server-kind coaptic-mio --resource-profile small-device \
+  --sizes 32 --rates 1000 --seconds 30 --repeats 4 \
+  --build-lane /existing/compatible/lane --output /fresh/small-device-c1
+```
 
 ## Completed bounded Linux I/O control
 
@@ -326,7 +422,8 @@ configured virtual reservation, not observed peak or a minimum requirement.
 Stack-resident App/local owners must not also be added to that stack reservation.
 No whole-memory or CPU acceptance follows from these functional receipts.
 
-Representative Linux CPU/latency/throughput cells remain open. The current
+Apart from the SmallDevice 32-byte/1,000/s C1 stratum above, representative Linux
+CPU/latency cells remain open; throughput/saturation remains unqualified. The current
 runner limits clean windows to 30 seconds; each needs at least twenty server CPU
 ticks. The one global 60,000-send ceiling includes warmups, retries and controls.
 With 20 warmups and 1,024-byte blocks, even ideal traffic permits at most 59,980

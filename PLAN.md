@@ -11,9 +11,11 @@ it is not silently treated as finished software work.
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
 work, pending checks and transport choices. The finite option-batch comparison
 has finished; its failed latency guard is retained. The bounded C1 profile fixture
-is delivered in companion #174 and independent-endpoint CON in #176. The next
-concrete reliability repair is companion #175: preserve staged fixture-server
-operation after consumed oversized input. PR watches and recurring tasks remain off.
+is delivered in companion #174 and independent-endpoint CON in #176. Staged
+fixture recovery (#175/#178) and Linux workflow integration (#177/#179) are now
+delivered and pass focused Linux proof. The first SmallDevice C1 comparison
+passes every guard, with modest CPU reductions; remaining implementation and
+representative qualification continue. PR watches and recurring tasks remain off.
 
 The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
 contains 348,000 verified complete operations across 2,610 cells and 90 workload
@@ -40,6 +42,16 @@ Core option reuse was reviewed in #675 and closed without merging. The cumulativ
 comparison and current-main isolation both retain OSCORE p99 failures. The batch
 was ended after an independent disposition review found no evidence-supported
 correction; no further campaign is scheduled. Neither CPU target is complete.
+
+The [SmallDevice C1 run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
+compares original baseline `b8f44fa` with accepted `d23f93c`, using companion
+`8dc65fd`, the same Mio adapter and frozen baseline client. Its 32-byte, C1 CON,
+1,000/s, thirty-second, four-pair cells verify 480,000 operations plus 320 warmups.
+All sixteen windows and every pair/pooled latency guard pass. Server CPU/op is
+14.333 to 13.667 microseconds unprotected (-4.65%) and 15.917 to 15.417 OSCORE
+(-3.14%). This one representative stratum leaves both 50% targets open and does
+not replace failed host cohorts. See the handoff for sources, memory limits and
+reproduction; low-load, blockwise, Service, concurrency and throughput remain open.
 
 Dispatch constructs responses directly and applies Observe updates in place.
 Local Inner scratch initializes only after protected input is selected. Windows
