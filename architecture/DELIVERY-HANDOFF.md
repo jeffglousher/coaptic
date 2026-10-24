@@ -8,6 +8,13 @@ requires separate authorization under #132.
 
 ## Saved work
 
+The bounded Linux level-readiness experiment has ended without integration.
+Companion #202 retains the implementation at
+`4f7869be939292b0fce340c58dc6729c0a2faf4c` for exact reconstruction; it is unmerged.
+The [retained result](https://github.com/jeffglousher/coaptic-validation/tree/e28a52c075dcffc0b4343bdaefe82a8dff6440c8/tools/benchmark/evidence/level-readiness-20261024)
+records the failed guard and full source/host/owner identities. No retry,
+replacement cohort or further transport expansion is planned from this result.
+
 The eBPF syscall implementation and two concrete prerequisite/control repairs
 are delivered in companion #197/#198/#199 (latest squash
 `35a86de963503cd93cd0a579f0fcfbec85ce0b00`, tree equal reviewed `4d5a211`).
@@ -15,6 +22,49 @@ are delivered in companion #197/#198/#199 (latest squash
 records the completed measurement, failed overhead guards and retained earlier
 failures.
 The diagnostic is opt-in; protocol Rust remains identical to accepted `d23f93c`.
+
+## Ended level-readiness comparison
+
+[Run 40130199038, attempt 1](https://github.com/jeffglousher/coaptic-validation/actions/runs/40130199038)
+uses the same accepted core `d23f93c0699b75ec17e692999d62ff89bb71463d` on both
+labels, ordinary Mio versus the Linux `ppoll` receive-credit control, and one
+frozen native client. SmallDevice fixed/Constrained, 32-byte GET, C1 CON,
+1,000 starts/s, thirty seconds and four rotated pairs per security mode:
+sixteen windows verify 480,000 measured operations plus 320 warmups, zero
+operation failures. Existing offered/matched-rate, pacing, tick and cleanup
+gates pass. OSCORE zero-based repeat 2 median rises from 27.431 to 29.823 us:
++2.392 us exceeds +2 us. All p99 and both pooled guards pass; they do not rescue
+the failed pair. **Full-cohort CPU comparisons are withheld.** OSCORE pair tick
+directions are also mixed. The predeclared stop rule ends expansion; ordinary
+Mio stays the reference. This same-core adapter experiment does not replace
+original `b8f44fa` acceptance or the earlier failed cohorts.
+
+The AMD EPYC 9V74 host has four assigned logical CPUs, Linux 6.17.0-1022-azure,
+glibc 2.39 and 100 Hz CPU accounting; governor unavailable. Locked Rust/Cargo
+1.99.0 GNU release uses std/alloc/oscore, defaults off, thin LTO/one codegen unit,
+frame pointers, debug=1/strip=none, incremental=0/jobs2. Tracing and profiling are
+off. Each window has 30,020 sends including warmup; ticks span 39 to 47 and
+achieved rates 1,000.0302 to 1,000.0306/s. This is paced load, not saturation.
+
+Both Linux Apps are 14,016 bytes, including their nested adapters/scratch and
+the level credit. The ordinary adapter is 2,056 bytes; the level adapter 2,060.
+Ordinary Poll four bytes/Events header 24 bytes and its capacity-eight backing
+are separate; the level control instead uses a separate temporary eight-byte
+borrowed pollfd and adds no selector, worker or pending kernel operation. The
+32-byte representation is separate. Fixed App requested heap zero is not total
+heap zero. Allocator, initialization, peak stack, runtime/kernel and whole-memory
+acceptance remain open; no CPU share is inferred from prior syscall counts.
+
+Functional evidence is retained separately: Linux `40127468237` passes 104
+native tests, 207 Python tests, formatting, strict Clippy, release builds and
+six cells (12 measured operations plus six warmups). Windows `40129245779`
+passes 96 native tests, 199 Python tests/eight skips, formatting, strict Clippy,
+release builds and four cells (eight plus four), including ordinary fixed-Service
+startup and authenticated 16 KiB responses. Windows App sizes are 14,032 bytes
+SmallDevice and 314,872 bytes fixed Service, with separate Service representation
+16,384 bytes. Earlier compile, Clippy and Windows sampler failures remain
+retained. Finite proof establishes neither all kernel EINTR behavior nor peak
+stack, whole memory or CPU acceptance. Both 50% targets remain open.
 
 ## eBPF syscall counts and withheld overhead
 
