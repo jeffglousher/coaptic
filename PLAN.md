@@ -8,6 +8,23 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The requested eBPF syscall benchmark now has actual Linux results in
+[companion #200](https://github.com/jeffglousher/coaptic-validation/pull/200).
+Run `40112478137` completes sixteen SmallDevice 32-byte ordinary-Mio/C1 CON
+windows: 480,000 verified operations plus 320 warmups. Every ON capture records
+one successful send, one successful receive plus one EAGAIN receive, and one
+epoll wait per operation; anomaly counters are zero. Four pair median guards
+fail, so both tracing-overhead ratios remain withheld despite pooled passes.
+This is diagnostic functionality, not a CPU gain or removable transport share.
+Nine Linux loader tests (including seven command-reader regressions), 201 Python
+tests and locked builds pass. The two earlier failed attempts remain retained.
+The source-supported next hypothesis is avoiding the empty receive while
+preserving queued-packet progress, readiness semantics, fairness and deadlines;
+read-only scoping supplies no implementation or measured benefit. No replacement
+capture or sampling-infrastructure expansion is planned. Both 50% CPU targets,
+remaining representative cells and whole-memory acceptance stay open.
+
+
 The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
 work, pending checks and transport choices. The finite option-batch comparison
 has finished; its failed latency guard is retained. The bounded C1 profile fixture

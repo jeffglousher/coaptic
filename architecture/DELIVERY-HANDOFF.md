@@ -8,6 +8,87 @@ requires separate authorization under #132.
 
 ## Saved work
 
+The eBPF syscall implementation and two concrete prerequisite/control repairs
+are delivered in companion #197/#198/#199 (latest squash
+`35a86de963503cd93cd0a579f0fcfbec85ce0b00`, tree equal reviewed `4d5a211`).
+[Companion #200](https://github.com/jeffglousher/coaptic-validation/pull/200)
+records the completed measurement, failed overhead guards and retained earlier
+failures.
+The diagnostic is opt-in; protocol Rust remains identical to accepted `d23f93c`.
+
+## eBPF syscall counts and withheld overhead
+
+[Run 40112478137, attempt 1](https://github.com/jeffglousher/coaptic-validation/actions/runs/40112478137)
+uses native core `d23f93c0699b75ec17e692999d62ff89bb71463d`, BPF build core
+`1b93171035fa4b9506ec5e798ccef5d0773e1109` and companion
+`35a86de963503cd93cd0a579f0fcfbec85ce0b00` (tree `3265cb3a972aef3258826c8eda56d217bf61b63e`).
+It completes all sixteen SmallDevice fixed/Constrained 32-byte, ordinary-Mio,
+C1 CON windows at 1,000 starts/s for thirty seconds, four rotated OFF/ON pairs
+per security mode: 480,000 verified operations plus 320 warmups, zero operation
+failures. Both server arms use CPU0 and identical frozen native binaries.
+OFF has no tracing helper or attached programs. ON attaches disabled before
+warmup, enables before CPU/run, and disables/detaches after measured snapshots
+before client report formatting. Capacities remain routes four/one GET, Call
+one, deferred zero, association one, bindings four, RX/TX two x 1,152 bytes,
+dedup four, Observe two and no body pools; each window sends 30,020 datagrams
+under the unchanged 60,000 ceiling.
+
+All eight ON captures, normalized by verified completions, record `sendto` one
+entry/success, `recvfrom` two entries with one success and one EAGAIN, and
+`epoll_wait` one entry/success per operation. No individual event order was
+captured. Other bins and both anomaly counters are zero. Independent gated
+entry/exit counts do not imply syscall durations, vDSO-clock coverage, removable
+kernel cost or a transport percentage. The window totals match the empty-receive path in source; removing it still needs a safe source design and matched evidence.
+
+Unprotected repeat 3 fails the +2 us median guard by a delta of +2.084 us;
+OSCORE repeats 0/1/2 have +2.875/+16.642/+2.514 us deltas. All pair p99 and both
+pooled guards pass; pooled success cannot rescue failed pairs. Both overhead
+ratios are withheld. Every diagnostic row vetoes primary CPU acceptance. No
+replacement cohort or gate relaxation is planned; both 50% targets stay open.
+
+Actual Linux validation passes 201 Python tests, three classifier tests, all
+nine loader tests (seven new real-pipe regressions), strict loader Clippy and
+locked helper/BPF/native builds. The workflow does not run native Rust tests or
+native Clippy. Retained ACK/counter/detach and process-group settlement support
+normal cleanup, without a separate system-wide final link census. Earlier
+`40107158379` stopped at the undersized archive guard with zero windows;
+`40109321826` verified one OFF window, then failed ON enable ACK with fourteen
+later windows NOT RUN. Both failures and their reviewed repairs remain retained.
+
+The EPYC 7763 host has four assigned logical CPUs, Ubuntu 24.04/Linux
+6.17.0-1022-azure, glibc 2.39, TSC and 100 Hz process accounting; governor
+unavailable. Native Rust/Cargo 1.99.0 GNU release uses locked std/alloc/oscore,
+defaults off, thin LTO, one codegen unit, frame pointers, debug=1/strip=none,
+incremental=0/jobs2. BPF nightly-2026-10-13 and linker 0.12.0 are separate
+pinned inputs. Actual native syn3 lock input is `cb9a96e1...`, canonical restored
+input `3ed89aed...`. Exact compiler/lock/binary receipts and reproduction are in
+the [companion evidence report](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/ebpf-syscalls-20261024).
+
+Map values total 2,632 bytes across four possible CPUs; both programs together
+report 8,192 bytes memlock (JIT/translated lengths are nested, not additive).
+Map/link metadata remains unknown. Separate helper lifetime CPU is
+53,721 to 56,762 us and maximum RSS 49,220 to 51,852 KiB through its pre-final-format
+snapshot, including setup/warmup/wait/control. Its 1 MiB stack limit is within
+the 128 MiB address-space ceiling. These are not native-window overhead or
+whole-memory requirements; global prefilter callback and kernel worker CPU
+remain unassigned. App is 14,016 bytes, including adapter 2,056/scratch 2,049
+and fixed pools, pool heap zero; representation 32/Poll 4/Events header 24
+(capacity eight) are separate. Events heap, allocator/init/peak-stack/runtime
+and kernel costs remain open. Client owners and non-atomic process observations
+are retained without adding nested scratch or treating RSS as minimum RAM.
+
+Artifact `12566918509` contains 141 text members, 3,667,819 expanded bytes,
+SHA-256 `997f2065b5ac53545ebeffa814946105fb8978edeb4bb18bdc9b22e617aff9c1`.
+All member CRC/SHA and immutable source records are checked; binaries are not
+uploaded, so captured build hashes/control-flow freezes do not constitute fresh
+collector ELF rehashes. Hosted embedded late-step states remained inconsistent;
+original API responses/refusals are retained. Completed-success job/log, final
+artifact, raw sixteen-window campaign and quotas corroborate completion; no
+terminal API step states are invented. Whole-memory acceptance remains open.
+
+## Earlier delivered work
+
+
 - Core main includes the acceptance matrix from #674. Transient validated-option
   reuse was reviewed in [#675](https://github.com/jeffglousher/coaptic/pull/675),
   measured source `7c043046097e01e8e8f9f95fc51ee70dde3ed860`. The cumulative
