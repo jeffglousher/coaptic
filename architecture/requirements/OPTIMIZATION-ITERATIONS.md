@@ -44,12 +44,14 @@ replacement run of the same rejected candidate.
 
 ## Fast development feedback and full qualification
 
-The next companion deliverable, [validation #204](https://github.com/jeffglousher/coaptic-validation/issues/204),
-is a single-command development screen using
+[Validation #204](https://github.com/jeffglousher/coaptic-validation/issues/204)
+is implemented in [companion #205](https://github.com/jeffglousher/coaptic-validation/pull/205)
+as a prepared development screen using
 prebuilt, source-identified binaries and existing verification paths. Target
 about one minute for a complete warm run on the declared host. Setup, compilation
 and first-build costs are reported separately. This duration is a development
-target, not an existing measured guarantee or a promise of #650 qualification.
+target, not a promise of #650 qualification. Two complete Windows revision runs
+measured 8.03 and 7.86 seconds; preparation/build costs are separate.
 
 Start from four existing resource configurations:
 
@@ -79,17 +81,25 @@ keep it out of production dependencies. Inspect generated code when optimization
 elision or stack movement is plausible. Statistical wall-time samples, instruction
 counts and server CPU/op are different metrics; none substitutes for the others.
 
-The existing short core probes use `black_box`; the requested combined fast suite
-and Criterion comparisons are not yet delivered. Existing `small_device_quick.py`
-is a narrower six-cell Python-client/library comparison, not this revision suite.
-Reuse `native_profiles.py`, `native_check.py` and the existing native verification
-paths. The profile-specific socket checks already cover both security modes.
-SmallDevice blockwise currently lacks a socket-free core probe: report that cell
-as unsupported initially rather than implying complete core coverage. The current
-`native_diagnostic.py` CLI also needs profile selection and profile-derived RX/
-startup-ledger handling; it must not keep a hardcoded 1,472-byte capacity for every
-configuration. Reliability checks precede performance interpretation. Record setup,
-build, process startup, warmup, measurement, cleanup and total durations separately.
+The combined suite reuses existing `black_box` probes and native verification.
+One prepared run performs independent response corruption/security recovery,
+profile-specific oversize/refusal/recovery, eight socket cells and six supported
+core cells. SmallDevice blockwise still lacks a socket-free core probe and is
+reported unsupported. Profile selection now drives RX dimensions and startup
+ledger validation. Exact source/build/binary/configuration identities and a frozen
+client are required for revision comparison; hidden Cargo build settings are
+refused. Preparation settles owned compiler auxiliaries before accepting artifacts;
+benchmark workers retain fatal descendant and cleanup checks.
+
+The [suite guide](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/benchmark/development_suite.md)
+contains preparation, run and comparison commands. Windows custody and paired
+runs are validated; real Linux execution of this new wrapper remains unverified.
+Short samples establish functionality and routine duration, not qualified CPU
+savings or extreme tails. Socket startup, combined client startup/warmup,
+measurement and cleanup are recorded; core startup/warmup/calibration remain
+combined at worker level. Criterion has no nominated isolated cost to measure yet
+and remains optional. Existing `small_device_quick.py` remains a distinct six-peer
+Python-client screen.
 
 Keep eBPF opt-in in a separate Linux diagnostic lane, with tracing-off controls,
 bounded ownership and explicit overhead accounting. Counts do not establish time

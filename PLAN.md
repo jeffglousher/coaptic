@@ -15,7 +15,11 @@ Compare fixed configurations across library revisions; resource/concurrency
 tradeoffs remain explicit implementer choices. The
 [iteration plan and salvage dispositions](architecture/requirements/OPTIMIZATION-ITERATIONS.md)
 define the next small development-suite slice and separate it from full acceptance.
-The one-minute warm-run target is not yet implemented or measured. Direct RX's
+The prepared fixed-profile suite is implemented in companion #205; two complete
+Windows revision runs take 8.03 and 7.86 seconds after preparation. It keeps
+eight socket cells and six existing core cells, with SmallDevice-blockwise core
+cells explicitly unsupported. These are development regression signals; Linux
+qualification and the 50% targets remain separate. Direct RX's
 historical 2,048-byte enclosing-App saving is already retained in the companion;
 it is not a whole-memory result or justification for default promotion. The
 adversarial sanity pass found no supported correction warranting revival of the
