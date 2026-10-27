@@ -8,6 +8,20 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The October 27 direction is reliability first, performance second, ease of use
+third. Deliver independently proven memory, stack, code-size, CPU or reliability
+improvements without requiring each to meet the separate 50% CPU objective.
+Compare fixed configurations across library revisions; resource/concurrency
+tradeoffs remain explicit implementer choices. The
+[iteration plan and salvage dispositions](architecture/requirements/OPTIMIZATION-ITERATIONS.md)
+define the next small development-suite slice and separate it from full acceptance.
+The one-minute warm-run target is not yet implemented or measured. Direct RX's
+historical 2,048-byte enclosing-App saving is already retained in the companion;
+it is not a whole-memory result or justification for default promotion. The
+adversarial sanity pass found no supported correction warranting revival of the
+old ppoll or option-return batches. Preserve their useful ideas and exact failure
+records, rather than restarting those experiments unchanged.
+
 The bounded follow-up to the eBPF counts has ended. Linux level readiness in
 companion #202 verifies all 480,000 measured operations plus 320 warmups, but
 run `40130199038` fails the OSCORE repeat-2 median guard: 27.431 to 29.823 us

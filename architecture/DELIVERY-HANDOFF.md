@@ -8,6 +8,16 @@ requires separate authorization under #132.
 
 ## Saved work
 
+The October 27 user direction and quick adversarial salvage pass are recorded in
+[Reliable optimization across library revisions](requirements/OPTIMIZATION-ITERATIONS.md).
+Useful direct-receive, borrowed-maintenance and lazy-scratch mechanisms are already
+retained; the unsuccessful aggregate option-return and level-readiness candidates
+remain unmerged. The next implementation should make fixed-configuration revision
+comparisons easy, targeting a one-minute warm developer screen while keeping full
+acceptance and optional Linux/eBPF diagnosis separate. No new benchmark result is
+claimed by this planning update. Reliability, bounded resources and original
+failed cohorts remain controlling constraints.
+
 The bounded Linux level-readiness experiment has ended without integration.
 Companion #202 retains the implementation at
 `4f7869be939292b0fce340c58dc6729c0a2faf4c` for exact reconstruction; it is unmerged.
