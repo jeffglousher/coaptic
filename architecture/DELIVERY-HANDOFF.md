@@ -12,15 +12,28 @@ The October 27 user direction and quick adversarial salvage pass are recorded in
 [Reliable optimization across library revisions](requirements/OPTIMIZATION-ITERATIONS.md).
 Useful direct-receive, borrowed-maintenance and lazy-scratch mechanisms are already
 retained; the unsuccessful aggregate option-return and level-readiness candidates
-remain unmerged. Companion #205 now implements the fixed-configuration prepared
-revision suite: reliability checks precede eight socket and six supported core
-cells, with two SmallDevice-blockwise core cells explicitly unsupported. The two
-Windows source-matched runs take 8.03 and 7.86 seconds after preparation;
-setup/build costs remain separate. Exact receipts and limitations are linked in
-the companion's `tools/benchmark/evidence/development-suite-20261027` report.
-Linux execution of the new wrapper is unverified. No new qualified CPU or
-whole-memory result is claimed; both 50% targets, original failed cohorts and
-remaining qualification stay open.
+remain unmerged. Companion #205 delivered the original four-profile screen,
+whose Windows runs took 8.03/7.86 seconds after preparation. That version-1
+evidence remains unchanged. Companion #207 expands coverage to eight fixed
+configurations, sixteen socket cells in both modes, actual C2/C4 independent
+endpoints and a constrained blockwise/Observe lifecycle proof. Six existing C1
+core cells remain separately scoped; ten other core cells are unsupported.
+The expanded Windows proof passes in 14.27/14.23 seconds after preparation;
+preparation takes 96.66/98.09 seconds separately. Nine reliability phases, both
+Observe lifecycles, 512 measured socket operations plus 64 warmups and six core
+cells pass per run. The
+[expanded receipt](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/eight-profile-suite-20261027)
+identifies companion `cc6edfb` and cores `b9b83d8` / `f4810d7`; both actual bundles
+were frozen before cells, with one baseline-built loopback client. Python passes
+248/257 with nine skips; 123 native tests per core combine 17 current Observe
+tests with 106 unchanged core/client/server tests reused from valid receipts.
+Formatting and strict all-target release Clippy pass. The initial author-toolchain
+check and incorrect Observe-proof outer-code guard failures remain retained;
+the latter left all sixteen timing cells NOT RUN. The guard repair adds exact
+Observe-dependent code and real protected-lifecycle regressions; library protocol
+source is unchanged. Linux execution of the suite ownership wrapper, whole memory
+and both 50% CPU targets remain open. Original
+failed cohorts and separate physical qualification remain intact.
 
 The bounded Linux level-readiness experiment has ended without integration.
 Companion #202 retains the implementation at
