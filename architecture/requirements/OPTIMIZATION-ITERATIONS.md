@@ -44,29 +44,36 @@ replacement run of the same rejected candidate.
 
 ## Fast development feedback and full qualification
 
-[Validation #204](https://github.com/jeffglousher/coaptic-validation/issues/204)
-is implemented in [companion #205](https://github.com/jeffglousher/coaptic-validation/pull/205)
-as a prepared development screen using
-prebuilt, source-identified binaries and existing verification paths. Target
-about one minute for a complete warm run on the declared host. Setup, compilation
-and first-build costs are reported separately. This duration is a development
-target, not a promise of #650 qualification. Two complete Windows revision runs
-measured 8.03 and 7.86 seconds; preparation/build costs are separate.
+The prepared development screen is implemented in companion #205 and expanded
+by [validation #206](https://github.com/jeffglousher/coaptic-validation/issues/206)
+and [companion #207](https://github.com/jeffglousher/coaptic-validation/pull/207).
+Keep about one minute as the full warm-run target; setup/build are separate.
+The original four-profile Windows runs took 8.03/7.86 seconds; preserve that
+version-1 evidence separately from the expanded version-2 configuration.
 
-Start from four existing resource configurations:
+Eight unchanged configurations cover constrained and capable implementations:
 
-- SmallDevice fixed/Constrained, no body pools, 32-byte response, C1 CON.
-- SmallDevice with blockwise explicitly selected, one RX and one TX 4 KiB body,
-  4 KiB response, C1 CON.
-- Service fixed, four RX and four TX 16 KiB bodies, 16 KiB response, C1 CON.
-- The bounded allocated equivalent of Service with identical logical capacities,
-  payload and concurrency.
+- SmallDevice fixed/Constrained: 32 bytes, blockwise/body pools off, C1.
+- SmallDevice blockwise: 4 KiB, one RX and one TX body, C1.
+- SmallDevice blockwise/Observe: the same body bounds, one Observe entry, C1.
+- Device fixed/Default: 4 KiB, two RX/TX bodies, C2.
+- Gateway fixed: 8 KiB, two RX/TX bodies, C2.
+- Service fixed without blockwise: 1 KiB, no body pools, C4.
+- Service fixed blockwise: 16 KiB, four RX/TX bodies, C4.
+- Service allocated: identical Service capacities and 16 KiB workload, C4.
 
-Run unprotected and established OSCORE separately. Preserve exact route, Call,
-deferred, security-binding, packet and body dimensions from the full acceptance
-matrix. Host runs of Constrained storage do not establish physical-device timing.
-Independent-endpoint CON, saturation and refusal/recovery remain focused extended
-checks; finite C1 success does not establish their coverage or peak throughput.
+All run unprotected and established volatile OSCORE separately. Preset route,
+Call, deferred, security, packet, dedup and Observe dimensions remain explicit;
+these are implementer choices, not a ranking of unequal memory configurations.
+C2/C4 require distinct actual client socket pairs, observed overlap and per-lane
+complete-body verification while preserving one nonce owner and NSTART=1 per
+endpoint. Host runs do not establish physical-device timing or saturation.
+
+Observe coverage requires a separate real-UDP proof at the constrained one-interest
+server bounds: full registration and changed notification, explicit deregistration,
+Call refusal and recovery. Local cancellation controls one deliberately undelivered
+registration; it does not establish reversal of an already delivered registration
+or server Observe-overflow behavior. Ordinary GET timing is not notification timing.
 
 Use optimizer-resistant core probes and native Windows loopback as distinct
 measurements, with Linux loopback in its own platform lane. Keep verified counts,
@@ -83,17 +90,25 @@ counts and server CPU/op are different metrics; none substitutes for the others.
 
 The combined suite reuses existing `black_box` probes and native verification.
 One prepared run performs independent response corruption/security recovery,
-profile-specific oversize/refusal/recovery, eight socket cells and six supported
-core cells. SmallDevice blockwise still lacks a socket-free core probe and is
-reported unsupported. Profile selection now drives RX dimensions and startup
+profile-specific oversize/refusal/recovery, sixteen socket cells and six existing
+C1 core cells. Core probes remain separate C1 supporting measurements for the three
+matching storage configurations; ten other core cells are unsupported. Profile
+selection now drives RX dimensions and startup
 ledger validation. Exact source/build/binary/configuration identities and a frozen
 client are required for revision comparison; hidden Cargo build settings are
 refused. Preparation settles owned compiler auxiliaries before accepting artifacts;
 benchmark workers retain fatal descendant and cleanup checks.
 
 The [suite guide](https://github.com/jeffglousher/coaptic-validation/blob/main/tools/benchmark/development_suite.md)
-contains preparation, run and comparison commands. Windows custody and paired
-runs are validated; real Linux execution of this new wrapper remains unverified.
+contains preparation, run and comparison commands. Windows custody was validated
+in #205. The expanded paired proof passes in
+14.27/14.23 seconds after preparation: nine reliability phases, both Observe
+lifecycles, sixteen socket cells (512 measured plus 64 warmups) and six C1 core
+cells per run. Preparation takes 96.66/98.09 seconds separately. The
+[expanded receipt](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/eight-profile-suite-20261027)
+identifies tested companion `cc6edfb`, before core `b9b83d8` and after core
+`f4810d7`, with both bundles frozen before cells and one baseline-built socket
+client. Real Linux execution of this wrapper remains unverified.
 Short samples establish functionality and routine duration, not qualified CPU
 savings or extreme tails. Socket startup, combined client startup/warmup,
 measurement and cleanup are recorded; core startup/warmup/calibration remain

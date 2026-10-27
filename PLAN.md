@@ -15,11 +15,18 @@ Compare fixed configurations across library revisions; resource/concurrency
 tradeoffs remain explicit implementer choices. The
 [iteration plan and salvage dispositions](architecture/requirements/OPTIMIZATION-ITERATIONS.md)
 define the next small development-suite slice and separate it from full acceptance.
-The prepared fixed-profile suite is implemented in companion #205; two complete
-Windows revision runs take 8.03 and 7.86 seconds after preparation. It keeps
-eight socket cells and six existing core cells, with SmallDevice-blockwise core
-cells explicitly unsupported. These are development regression signals; Linux
-qualification and the 50% targets remain separate. Direct RX's
+Companion #207 expands the prepared development suite to eight fixed rows:
+SmallDevice datagrams, blockwise and blockwise/Observe; Device and Gateway;
+Service without blockwise; and fixed/allocated Service blockwise. All run
+unprotected and established OSCORE. Device/Gateway demonstrate C2 and Service
+C4 over independent endpoints; Observe has a separate complete lifecycle proof.
+The sixteen socket cells and six separately scoped C1 core cells preserve exact
+capacities and mark ten unavailable core cells unsupported. The original
+four-profile #205 timings (8.03/7.86 seconds) remain historical evidence, not the
+expanded suite's duration. The expanded Windows proof passes in 14.27/14.23
+seconds after preparation, with protected Observe and all sixteen socket cells
+verified on both selected revisions. This is a development regression screen.
+Full CPU, memory and physical qualification remain separate. Direct RX's
 historical 2,048-byte enclosing-App saving is already retained in the companion;
 it is not a whole-memory result or justification for default promotion. The
 adversarial sanity pass found no supported correction warranting revival of the
