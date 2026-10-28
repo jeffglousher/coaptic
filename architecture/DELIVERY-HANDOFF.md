@@ -6,6 +6,48 @@ in [PLAN.md](../PLAN.md). Both 50% server CPU targets remain open under
 [#650](https://github.com/jeffglousher/coaptic/issues/650). Release publication
 requires separate authorization under #132.
 
+## Bounded memory iteration, October 27
+
+Core #693 tests source `e1e27f1` against retained `f4810d7` using the unchanged
+`cc6edfb` benchmark fixtures and frozen `b9b83d8`-built socket client. The baseline
+protocol, crate and Cargo inputs are identical to accepted `ba8d085`; its actual
+`f4810d7` identity is retained. Device App is 57,192 to 57,184 bytes, Gateway
+96,312 to 96,280, fixed Service datagram 174,088 to 173,960, and fixed Service
+blockwise 314,872 to 314,744. All configured dimensions remain fixed. SmallDevice
+App owners and allocated Service (34,752 inline plus 282,640 requested pool
+bytes) are unchanged. The private AAD object is 72 to 40 bytes on this x64 build;
+its 32-byte backing accommodates the 31-byte maximum supported encoding. This
+is neither a peak-stack nor whole-memory measurement.
+
+Release validation passes 217 fixed-storage, 136 OSCORE, 259 allocated-storage,
+23 affected integration and two std-only/no-allocation test executions. These
+are feature-dependent executions, not 637 distinct tests. Formatting, strict
+Clippy for no-default and std/alloc/OSCORE all-targets, alloc-only checking, and
+MSRV 1.89 checks without defaults and with OSCORE pass. The old const/pool pin
+behavior, authentication, nonce/replay and capacities remain unchanged.
+
+One prepared candidate suite passes in 15.40422 seconds after 122.57 seconds of
+preparation: nine reliability phases, both Observe lifecycles, sixteen socket
+cells and six C1 core cells. Ten exact core cells remain unsupported. The next
+attempt fails common protected startup in 0.369 seconds, leaving all sixteen
+cells NOT RUN. Its server log was discarded, so its cause cannot be assigned;
+source inspection separately identifies a readiness bind probe racing server
+startup, repaired in validation #208. The passive Mio-ledger repair passes finite
+checks with both frozen actual server binaries and the same client; 91 focused
+Python tests pass with one platform skip. This changes only the common proof
+fixture and does not replace the old failed attempt or its timing cells. No blind
+suite rerun or CPU/latency gain is claimed. The original 128 MiB compiler-output guard also refused the first MSRV
+phase; that failure is retained before a documented 256 MiB aggregate continuation.
+Observed phase growth totals 203,625,528 bytes; this is sampled logical growth,
+not a physical/transient peak guarantee. One new prepared bundle contains
+9,699,840 binary bytes. No new target/cache or dependency download was used.
+
+The [iteration receipt](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/bounded-memory-overhead-20261027)
+retains exact build/source identities, descriptive timing differences and the
+failed attempt. SmallDevice alignment erases its table-field saving; no constrained
+whole-App reduction is claimed. Both 50% CPU targets, emitted stack, whole memory,
+remaining Linux/representative and physical qualification remain open.
+
 ## Saved work
 
 The October 27 user direction and quick adversarial salvage pass are recorded in
