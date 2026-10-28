@@ -6,6 +6,46 @@ in [PLAN.md](../PLAN.md). Both 50% server CPU targets remain open under
 [#650](https://github.com/jeffglousher/coaptic/issues/650). Release publication
 requires separate authorization under #132.
 
+## Allocated-table iteration, October 27
+
+Core #695 tests `f4585c6` against accepted `7ee2734` with identical companion
+`1841076` fixtures and one frozen baseline-built socket client. Both actual
+bundles are frozen before cells. Service requested pool heap is 282,640 to
+282,512 bytes, with unchanged 34,752-byte inline App. Separate C1 core-client
+requested storage is 37,076 to 37,060; separate Observe-client storage is 13,746
+to 13,739. Do not combine different configurations or nested owners. Fixed Apps
+retain the prior #693 sizes. Real pool pins, capacities, security and growth
+policy stay unchanged; only three unused allocated row-pin backings are omitted.
+
+Fault-allocator checks observe Constrained/Default startup request counts of
+16/20 without bodies and 24/30 with bodies. Old counts 19/23 and 27/33 are
+source-derived, not new baseline observations. Every actual failure position,
+partial rollback, exact requested layouts, budget refusal and recovery passes.
+263 storage plus 57 integration executions, strict release Clippy, formatting
+and MSRV1.89 alloc/OSCORE checks pass. The independently reviewed actual diff is
+separate from an earlier malformed private digest, caught before application.
+
+AB Windows development runs pass in 14.69558/14.76390 seconds; a single
+predeclared reversed BA pair passes in 14.27606/14.11815 seconds in execution
+order. Every run covers nine reliability phases, both Observe lifecycles,
+sixteen socket and six separate C1 core cells; ten exact core cells remain
+unsupported. AB fixed-Service median changes are -522.750/+620.200 us for
+unprotected/OSCORE; BA changes are +45.200/-247.350 us. Preserve each observation:
+the signs do not repeat and no causal performance verdict follows. No replacement
+cohort or CPU/latency acceptance is claimed. Preparation takes 123.13/108.48
+seconds separately. The candidate four-binary set grows 2,048 file bytes.
+
+The [allocated iteration receipt](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/allocated-table-startup-20261027)
+retains arrays, owners, exact sources and both finite pairs. The original 64 MiB
+compiler-output guard refusal is retained, including its inherited misleading
+128 MiB error label; the script threshold is authoritative. An explicit manual
+revision bounds source plus prepared copies to 128 MiB. Sampled phase-positive
+release growth is 88,497,988 bytes and two bundles occupy 19,816,508 bytes; private
+proof has a separate 2 MiB cap. These are not physical/transient peak guarantees.
+The source/lock restore and idle-lane checks pass. Allocator/kernel/runtime costs,
+emitted/peak stack, whole memory, Linux wrapper and physical checks remain open.
+Both #650 CPU targets and their original acceptance gates remain unchanged.
+
 ## Bounded memory iteration, October 27
 
 Core #693 tests source `e1e27f1` against retained `f4810d7` using the unchanged

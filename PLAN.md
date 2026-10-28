@@ -26,9 +26,19 @@ all sixteen timing cells. Validation #208 repairs a concrete active-bind readine
 race separately and passes finite checks on both frozen server binaries; the
 observed failure's discarded server log leaves its cause unestablished. Retain
 both receipts. These are bounded memory and functional
-results, with no CPU or latency acceptance. Allocated table-pin removal is scoped
-as a separate next batch; the simple dedup replay enum is rejected because it
+results, with no CPU or latency acceptance. Allocated table-pin removal is validated
+separately in #695; the simple dedup replay enum is rejected because it
 would discard bytes observable through existing equality and hashing.
+
+Core #695 preserves that fixed implementation and omits unused allocated table
+pin backing. Matched Service requested pool heap falls 282,640 to 282,512 bytes;
+its inline App remains unchanged. Fault injection verifies exact allocation
+requests, partial cleanup, refusal and recovery. Both AB and a predeclared reverse
+BA development pair pass complete operations in about 14 to 15 seconds per run.
+Large opposite fixed-Service timing shifts do not repeat their signs; retain all
+four observations and make no CPU/latency acceptance claim. Startup allocation
+request counts are measured separately from operation timing. Both CPU targets
+and whole memory remain open; the original source baseline is unchanged.
 
 Companion #207 expands the prepared development suite to eight fixed rows:
 SmallDevice datagrams, blockwise and blockwise/Observe; Device and Gateway;
