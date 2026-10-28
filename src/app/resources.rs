@@ -86,6 +86,101 @@ impl<
         }
     }
 
+    /// Set fixed RX datagram slot count and bytes per slot.
+    ///
+    /// The RX scratch buffer uses the same byte capacity. Other dimensions are unchanged.
+    /// Binding an App requires at least two RX slots for packet headroom.
+    #[must_use]
+    pub const fn rx_datagram<const SLOTS: usize, const BYTES: usize>(
+        self,
+    ) -> Resources<
+        crate::profiles::WithRxDatagram<P, SLOTS, BYTES>,
+        N,
+        B,
+        D,
+        C,
+        Fixed,
+        REQUESTS,
+        ASSOCIATIONS,
+    > {
+        Resources {
+            storage: Fixed,
+            _profile: PhantomData,
+        }
+    }
+
+    /// Set fixed TX datagram slot count and bytes per slot.
+    ///
+    /// The TX scratch buffer uses the same byte capacity; the outstanding-exchange
+    /// table uses the same slot count. Calls remain independently bounded.
+    /// Binding an App requires at least two TX slots for packet headroom.
+    #[must_use]
+    pub const fn tx_datagram<const SLOTS: usize, const BYTES: usize>(
+        self,
+    ) -> Resources<
+        crate::profiles::WithTxDatagram<P, SLOTS, BYTES>,
+        N,
+        B,
+        D,
+        C,
+        Fixed,
+        REQUESTS,
+        ASSOCIATIONS,
+    > {
+        Resources {
+            storage: Fixed,
+            _profile: PhantomData,
+        }
+    }
+
+    /// Set fixed RX complete-body slot count and bytes per slot.
+    ///
+    /// This preserves the selected block-wise mode. Bodies occupy no storage when
+    /// disabled; when enabled, bytes must be a positive multiple of 1024 and
+    /// the slot count must be positive. Other dimensions are unchanged.
+    #[must_use]
+    pub const fn rx_body<const SLOTS: usize, const BYTES: usize>(
+        self,
+    ) -> Resources<
+        crate::profiles::WithRxBody<P, SLOTS, BYTES>,
+        N,
+        B,
+        D,
+        C,
+        Fixed,
+        REQUESTS,
+        ASSOCIATIONS,
+    > {
+        Resources {
+            storage: Fixed,
+            _profile: PhantomData,
+        }
+    }
+
+    /// Set fixed TX complete-body slot count and bytes per slot.
+    ///
+    /// This preserves the selected block-wise mode. Bodies occupy no storage when
+    /// disabled; when enabled, bytes must be a positive multiple of 1024 and
+    /// the slot count must be positive. Other dimensions are unchanged.
+    #[must_use]
+    pub const fn tx_body<const SLOTS: usize, const BYTES: usize>(
+        self,
+    ) -> Resources<
+        crate::profiles::WithTxBody<P, SLOTS, BYTES>,
+        N,
+        B,
+        D,
+        C,
+        Fixed,
+        REQUESTS,
+        ASSOCIATIONS,
+    > {
+        Resources {
+            storage: Fixed,
+            _profile: PhantomData,
+        }
+    }
+
     /// Set the shared client/server Observe-interest capacity before binding.
     ///
     /// Both roles consume this table; this does not reserve slots for either role.
