@@ -1,6 +1,7 @@
 //! Observe real allocation requests and inject refusal on this test thread only.
 #![cfg(feature = "alloc")]
 
+use coaptic::message::{OwnedToken, Token};
 use coaptic::storage::{AllocMemory, Capacities, Storage};
 use coaptic::{App, BuildError, profiles};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -84,10 +85,10 @@ fn track<R>(fail_at: Option<usize>, run: impl FnOnce() -> R) -> (R, Record) {
     (result, record)
 }
 
-fn exercise(c: Capacities) {
-    let required = AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
+fn exercise<T: OwnedToken>(c: Capacities, attempts: usize) {
+    let required = AllocMemory::<T>::required_heap_bytes(c).unwrap();
     let (result, baseline) = track(None, || {
-        let mut memory = AllocMemory::<coaptic::message::Token>::try_new(c, required)?;
+        let mut memory = AllocMemory::<T>::try_new(c, required)?;
         // Exhaustion and recovery operate without growing any pool.
         let id = memory.rx_datagram().acquire().unwrap();
         for _ in 1..c.rx_datagram_slots {
@@ -105,9 +106,10 @@ fn exercise(c: Capacities) {
         "metadata accounting must match actual layouts"
     );
     assert_eq!(baseline.live, 0);
+    assert_eq!(baseline.attempts, attempts, "startup allocation requests");
 
     let (error, record) = track(None, || {
-        AllocMemory::<coaptic::message::Token>::try_new(c, required - 1).unwrap_err()
+        AllocMemory::<T>::try_new(c, required - 1).unwrap_err()
     });
     assert_eq!(
         error,
@@ -123,7 +125,7 @@ fn exercise(c: Capacities) {
 
     for index in 1..=baseline.attempts {
         let (error, record) = track(Some(index), || {
-            AllocMemory::<coaptic::message::Token>::try_new(c, required).unwrap_err()
+            AllocMemory::<T>::try_new(c, required).unwrap_err()
         });
         assert_eq!(error, BuildError::AllocationFailed, "allocation {index}");
         assert_eq!(record.attempts, index);
@@ -131,9 +133,7 @@ fn exercise(c: Capacities) {
             record.live, 0,
             "partial construction leaked at allocation {index}"
         );
-        let (recovered, record) = track(None, || {
-            AllocMemory::<coaptic::message::Token>::try_new(c, required).map(drop)
-        });
+        let (recovered, record) = track(None, || AllocMemory::<T>::try_new(c, required).map(drop));
         assert_eq!(recovered, Ok(()));
         assert_eq!(record.live, 0);
         assert_eq!(record.requested, required);
@@ -142,29 +142,44 @@ fn exercise(c: Capacities) {
 
 #[test]
 fn exact_budget_and_every_allocation_failure_without_bodies() {
-    exercise(Capacities::from_profile::<profiles::Constrained>());
-    exercise(Capacities::from_profile::<profiles::Default>());
+    exercise::<Token>(Capacities::from_profile::<profiles::Constrained>(), 16);
+    exercise::<Token>(Capacities::from_profile::<profiles::Default>(), 20);
 }
 
 #[test]
 fn exact_budget_and_every_allocation_failure_with_bodies() {
-    exercise(
+    exercise::<Token>(
         Capacities::from_profile::<profiles::Constrained>()
             .with_block_wise::<profiles::Constrained>(),
+        24,
     );
-    exercise(
+    exercise::<Token>(
         Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>(),
+        30,
     );
 }
 
 #[test]
 fn impossible_layout_and_aggregate_overflow_refuse_without_allocating() {
     let base = Capacities::from_profile::<profiles::Default>();
-    let mut cases = [base; 3];
+    let mut cases = [base; 10];
     cases[0].rx_datagram_slots = usize::MAX;
     cases[1].rx_datagram_bytes = usize::MAX;
     // Each payload layout fits, but four such payloads exceed usize.
     cases[2].rx_datagram_bytes = isize::MAX as usize;
+    cases[3].dedup_entries = usize::MAX;
+    cases[4].observe_entries = usize::MAX;
+    cases[5].tx_datagram_slots = usize::MAX;
+    cases[6] = base.with_block_wise::<profiles::Default>();
+    cases[6].rx_body_slots = Some(usize::MAX);
+    cases[7] = base.with_block_wise::<profiles::Default>();
+    cases[7].tx_body_slots = Some(usize::MAX);
+    cases[8] = base.with_block_wise::<profiles::Default>();
+    cases[8].rx_body_bytes = Some(isize::MAX as usize & !1023);
+    cases[8].rx_body_slots = Some(4);
+    cases[9] = base.with_block_wise::<profiles::Default>();
+    cases[9].tx_body_bytes = Some(isize::MAX as usize & !1023);
+    cases[9].tx_body_slots = Some(4);
     for c in cases {
         let (error, record) = track(None, || {
             AllocMemory::<coaptic::message::Token>::try_new(c, usize::MAX).unwrap_err()
@@ -381,4 +396,48 @@ fn scratch_limit_refuses_before_entropy_and_recovers_at_exact_limit() {
                 .is_ok()
         );
     }
+}
+
+#[test]
+fn zero_and_asymmetric_tables_have_exact_requests_and_recover() {
+    let mut c = Capacities::from_profile::<profiles::Default>();
+    c.rx_datagram_slots = 1;
+    // One RX owner needs metadata, occupied, pin and one payload request (4).
+    // Each nonempty table adds exactly metadata + occupancy (2).
+    for (dedup, observe, tx, attempts) in [
+        (0, 0, 0, 4),
+        (1, 0, 0, 6),
+        (0, 2, 0, 6),
+        (0, 0, 3, 12),
+        (1, 2, 3, 16),
+        (3, 1, 1, 14),
+    ] {
+        c.dedup_entries = dedup;
+        c.observe_entries = observe;
+        c.tx_datagram_slots = tx;
+        exercise::<Token>(c, attempts);
+        // Asymmetric real body pools retain both pin arrays: 4 + 6 requests.
+        let mut bodies = c.with_block_wise::<profiles::Default>();
+        bodies.rx_body_slots = Some(1);
+        bodies.tx_body_slots = Some(3);
+        exercise::<Token>(bodies, attempts + 10);
+    }
+    c.rx_datagram_slots = 0;
+    c.tx_datagram_slots = 0;
+    c.dedup_entries = 0;
+    c.observe_entries = 0;
+    assert_eq!(AllocMemory::<Token>::required_heap_bytes(c), Ok(0));
+    let (result, record) = track(None, || AllocMemory::<Token>::try_new(c, 0).map(drop));
+    assert_eq!(result, Ok(()));
+    assert_eq!(record.attempts, 0);
+    assert_eq!(record.requested, 0);
+    assert_eq!(record.live, 0);
+}
+
+#[test]
+fn selected_token_layout_has_exact_requests_and_failure_recovery() {
+    exercise::<coaptic::message::extended::Token<32>>(
+        Capacities::from_profile::<profiles::Default>().with_block_wise::<profiles::Default>(),
+        30,
+    );
 }

@@ -19,9 +19,14 @@ descriptive; no CPU or latency acceptance follows from these small runs.
 Keep the complete 15.40-second candidate run and its second startup-failed attempt.
 Repair the concrete readiness bind race independently under validation #208;
 the missing server log prevents assigning the observed failure's cause. Do not
-replace that failure with a passing cohort. The next allocated-table counterpart
-has a bounded separate scope: omit only unused startup pin arrays and account
-for real pool pins. Reject the simple lazy dedup replay enum: retained inactive
+replace that failure with a passing cohort. The separate allocated-table
+counterpart in #695 omits only unused startup pin
+arrays and retains real pool pins. Matched Service requested heap is 128 bytes
+smaller; inline owners stay unchanged. Fault-injection/startup-request checks and
+four complete development runs pass. The extra reversed pair was predeclared
+because large fixed-Service timing shifts raised a concern; their signs do not
+repeat, and every observation remains visible without a performance verdict.
+Reject the simple lazy dedup replay enum: retained inactive
 bytes are observable through current equality/hashing, so discarding them changes
 behavior. These dispositions preserve useful work without reviving failed batches.
 

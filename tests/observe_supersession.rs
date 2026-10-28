@@ -647,7 +647,7 @@ fn metadata_accounting() {
         coaptic::storage::AllocMemory::<coaptic::message::Token>::required_heap_bytes(c).unwrap();
     assert_eq!(
         full - empty,
-        4 * (core::mem::size_of::<Option<coaptic::storage::ObserveInterest>>() + 2)
+        4 * (core::mem::size_of::<Option<coaptic::storage::ObserveInterest>>() + 1)
     );
     println!(
         "ObserveInterest={} OptionObserveInterest={} DefaultRequestedHeap={full}",
