@@ -2693,15 +2693,21 @@ where
     // Q-Block recovery. Return the receive error after progressing work.
     // Local deadlines must progress even if receiving the next packet fails.
     deferred.expire(engine, now_ms);
-    for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
-        let id = SlotId::from_index(index);
-        if engine
-            .tx_body_transfer(id)
-            .and_then(|t| t.terminal_deadline())
-            .is_some_and(|due| now_ms >= due)
-        {
-            // Advanced caller pins defer reclamation until their release.
-            let _ = engine.release_tx_body(id);
+    if engine
+        .storage_mut()
+        .tx_body()
+        .is_some_and(|pool| pool.occupied_count() != 0)
+    {
+        for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+            let id = SlotId::from_index(index);
+            if engine
+                .tx_body_transfer(id)
+                .and_then(|t| t.terminal_deadline())
+                .is_some_and(|due| now_ms >= due)
+            {
+                // Advanced caller pins defer reclamation until their release.
+                let _ = engine.release_tx_body(id);
+            }
         }
     }
     expire_request_dedup(engine, dedup_closed, now_ms);
