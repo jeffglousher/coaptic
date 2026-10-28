@@ -168,11 +168,12 @@ impl HeapSize {
 
     fn table<T>(&mut self, count: usize) -> Result<(), BuildError> {
         self.array::<T>(count, 1)?;
-        self.array::<bool>(count, 2)
+        self.array::<bool>(count, 1)
     }
 
     fn pool<T>(&mut self, count: usize, bytes: usize) -> Result<(), BuildError> {
-        self.table::<T>(count)?;
+        self.array::<T>(count, 1)?;
+        self.array::<bool>(count, 2)?;
         self.array::<u8>(bytes, count)
     }
 }
@@ -1626,7 +1627,7 @@ impl AllocDedupTable {
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
-            occ: HeapOccupancy::new(entries)?,
+            occ: HeapOccupancy::new_unpinned(entries)?,
         })
     }
 
@@ -1681,7 +1682,7 @@ impl<T: OwnedToken> AllocExchangeTable<T> {
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
-            occ: HeapOccupancy::new(entries)?,
+            occ: HeapOccupancy::new_unpinned(entries)?,
         })
     }
 
@@ -1804,7 +1805,7 @@ impl<T: OwnedToken> AllocObserveTable<T> {
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
-            occ: HeapOccupancy::new(entries)?,
+            occ: HeapOccupancy::new_unpinned(entries)?,
         })
     }
 
@@ -1900,5 +1901,155 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
 
     fn cursor(&self) -> usize {
         self.occ.cursor()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocated_tables_saturate_rotate_and_reset_without_pins() {
+        let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+        for n in [0, 1, 3] {
+            let mut dedup = AllocDedupTable::new(n).unwrap();
+            let mut observe = AllocObserveTable::<Token>::new(n).unwrap();
+            let mut exchange = AllocExchangeTable::<Token>::new(n).unwrap();
+            let row = |i| DedupEntry::new(MessageId::new(i as u16), ep).with_replay(&[7]);
+            let interest = |i| ObserveInterest::new(Token::new(&[i as u8]).unwrap(), ep);
+            let request = |i| {
+                ExchangeEntry::new(
+                    Token::new(&[i as u8]).unwrap(),
+                    ep,
+                    MessageId::new(i as u16),
+                    SlotId::from_index(i),
+                )
+            };
+            // Move each independent cursor before filling and refilling.
+            for round in 0..3 {
+                dedup.advance(2);
+                observe.advance(2);
+                exchange.advance(2);
+                let start = dedup.cursor();
+                for i in 0..n {
+                    let id = SlotId::from_index((start + i) % n);
+                    assert_eq!(dedup.insert(row(i)), Some(id));
+                    assert_eq!(observe.insert(interest(i)), Some(id));
+                    assert_eq!(exchange.insert(request(i)), Some(id));
+                    assert_eq!(dedup.insert(row(i).with_due_ms(99)), Some(id));
+                    assert_eq!(observe.insert(interest(i)), Some(id));
+                    assert_eq!(exchange.insert(request(i)), Some(id));
+                    assert_eq!(dedup.entry_ref(id), Some(&row(i)));
+                    assert_eq!(observe.entry(id), Some(interest(i)));
+                    assert_eq!(exchange.entry(id), Some(request(i)));
+                    assert!(!dedup.is_pinned(id));
+                    assert!(!observe.is_pinned(id));
+                    assert!(!exchange.is_pinned(id));
+                }
+                assert_eq!(dedup.occupied_count(), n);
+                assert_eq!(observe.occupied_count(), n);
+                assert_eq!(exchange.occupied_count(), n);
+                assert_eq!(dedup.insert(row(n)), None);
+                assert_eq!(observe.insert(interest(n)), None);
+                assert_eq!(exchange.insert(request(n)), None);
+                assert_eq!(dedup.cursor(), start);
+                assert_eq!(observe.cursor(), start);
+                assert_eq!(exchange.cursor(), start);
+                for i in 0..n {
+                    assert!(dedup.remove(row(i).key()));
+                    assert!(!dedup.remove(row(i).key()));
+                    if round == 1 {
+                        assert!(observe.remove(interest(i).key()));
+                    } else {
+                        assert_eq!(observe.take(interest(i).key()), Some(interest(i)));
+                    }
+                    assert_eq!(observe.take(interest(i).key()), None);
+                    assert_eq!(exchange.take(request(i).key()), Some(request(i)));
+                    assert_eq!(exchange.take(request(i).key()), None);
+                }
+                assert_eq!(dedup.occupied_count(), 0);
+                assert_eq!(observe.occupied_count(), 0);
+                assert_eq!(exchange.occupied_count(), 0);
+                // Raw acquire/release must also clear payload before reuse.
+                for _ in 0..n {
+                    let d = dedup.acquire().unwrap();
+                    let o = observe.acquire().unwrap();
+                    let x = exchange.acquire().unwrap();
+                    assert_eq!(dedup.entry_ref(d), None);
+                    assert_eq!(observe.entry(o), None);
+                    assert_eq!(exchange.entry(x), None);
+                    dedup.release(d).unwrap();
+                    observe.release(o).unwrap();
+                    exchange.release(x).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn allocated_pool_access_keeps_real_pins_and_drop_releases_them() {
+        // Both real pool owners expose Access; the tables never do.
+        macro_rules! check_pool {
+            ($pool:expr) => {{
+                let mut pool = $pool;
+                let id = pool.acquire().unwrap();
+                {
+                    let mut access = pool.access_mut(id).unwrap();
+                    assert!(access.is_pinned());
+                    access.bytes_mut()[0] = 7;
+                    access.set_len(1).unwrap();
+                }
+                assert!(!pool.is_pinned(id));
+                {
+                    let access = pool.access(id).unwrap();
+                    assert!(access.is_pinned());
+                    assert_eq!(access.as_bytes(), &[7]);
+                }
+                assert!(!pool.is_pinned(id));
+                // Forget only to end the borrow while leaving the real pin set.
+                for mutable in [false, true] {
+                    if mutable {
+                        core::mem::forget(pool.access_mut(id).unwrap());
+                    } else {
+                        core::mem::forget(pool.access(id).unwrap());
+                    }
+                    assert!(pool.is_pinned(id));
+                    assert_eq!(pool.release(id), Err(SlotError::Pinned));
+                    assert_eq!(pool.occupied_count(), 1);
+                    assert!(matches!(pool.access(id), Err(SlotError::Pinned)));
+                    assert!(matches!(pool.access_mut(id), Err(SlotError::Pinned)));
+                    // Test-only recovery of the deliberately forgotten guard.
+                    *pool.occ.pin_flag_mut(id).unwrap() = false;
+                }
+                pool.release(id).unwrap();
+                assert_eq!(pool.acquire(), Some(id));
+                assert_eq!(pool.payload(id), Some(&[][..]));
+                pool.release(id).unwrap();
+            }};
+        }
+        check_pool!(AllocDatagramPool::new(1, 16).unwrap());
+        check_pool!(AllocBodyPool::<Token>::new(1, 1024).unwrap());
+    }
+
+    #[test]
+    fn allocated_exchange_survives_tx_release_and_reuse() {
+        let c = Capacities::from_profile::<crate::storage::profiles::Constrained>();
+        let mut memory = AllocMemory::<Token>::try_new(c, usize::MAX).unwrap();
+        let tx = memory.tx.acquire().unwrap();
+        let row = ExchangeEntry::new(
+            Token::EMPTY,
+            Endpoint::v4([192, 0, 2, 1], 5683),
+            MessageId::new(1),
+            tx,
+        );
+        let id = memory.exchange.insert(row).unwrap();
+        memory.tx.release(tx).unwrap();
+        for _ in 0..c.tx_datagram_slots {
+            let reused = memory.tx.acquire().unwrap();
+            assert_eq!(memory.exchange.entry(id), Some(row));
+            memory.tx.release(reused).unwrap();
+        }
+        assert_eq!(memory.exchange.take(row.key()), Some(row));
+        assert_eq!(memory.exchange.occupied_count(), 0);
     }
 }

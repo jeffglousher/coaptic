@@ -458,7 +458,7 @@ fn dedup_metadata_is_exact_and_other_storage_is_unchanged() {
                 .required_heap_bytes()
                 .unwrap()
         };
-        let per_entry = size_of::<Option<DedupEntry>>() + 2 * size_of::<bool>();
+        let per_entry = size_of::<Option<DedupEntry>>() + size_of::<bool>();
         assert_eq!(bytes(1) - bytes(0), per_entry);
         assert_eq!(bytes(12) - bytes(0), 12 * per_entry);
     }

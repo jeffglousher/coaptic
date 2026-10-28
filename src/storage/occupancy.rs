@@ -216,6 +216,17 @@ pub(crate) struct HeapOccupancy {
 
 #[cfg(feature = "alloc")]
 impl HeapOccupancy {
+    /// Tables have no Access/pin path; pool references remain payload state.
+    /// Keep the empty Vec header inline, omitting only its unused backing array.
+    pub(crate) fn new_unpinned(n: usize) -> Result<Self, crate::error::BuildError> {
+        Ok(Self {
+            occupied: super::alloc_memory::try_array(n, || Ok(false))?,
+            pinned: alloc::vec::Vec::new(),
+            cursor: 0,
+            count: 0,
+        })
+    }
+
     pub(crate) fn new(n: usize) -> Result<Self, crate::error::BuildError> {
         Ok(Self {
             occupied: super::alloc_memory::try_array(n, || Ok(false))?,
@@ -483,6 +494,63 @@ mod tests {
                 }
                 flags[hole] = true;
             }
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn heap_unpinned_churn_matches_independent_model() {
+        for n in [0, 1, 31, 32, 33, 131] {
+            let mut occ = super::HeapOccupancy::new_unpinned(n).unwrap();
+            let mut model = alloc::vec![false; n];
+            let mut cursor = 0;
+            assert_eq!(occ.slot_count(), n);
+            assert_eq!(occ.pinned.capacity(), 0);
+            for round in 0..(2 * n + 3) {
+                let steps = round * 5 + 1;
+                occ.advance(steps);
+                if n != 0 {
+                    cursor = (cursor + steps % n) % n;
+                }
+                for _ in 0..=n {
+                    // Scalar old-model oracle, independent of occupancy helpers.
+                    let expected = (0..n)
+                        .map(|offset| (cursor + offset) % n)
+                        .find(|&i| !model[i]);
+                    assert_eq!(occ.acquire().map(SlotId::index), expected);
+                    if let Some(i) = expected {
+                        model[i] = true;
+                        cursor = (i + 1) % n;
+                        let id = SlotId::from_index(i);
+                        assert_eq!(occ.try_pin(id), Err(SlotError::InvalidSlot));
+                        assert!(occ.pin_flag_mut(id).is_none());
+                    }
+                    assert_eq!(occ.cursor(), cursor);
+                    assert_eq!(occ.occupied_count(), model.iter().filter(|&&v| v).count());
+                }
+                for i in [n, usize::MAX] {
+                    let id = SlotId::from_index(i);
+                    assert_eq!(occ.release(id), Err(SlotError::InvalidSlot));
+                    assert_eq!(occ.try_pin(id), Err(SlotError::InvalidSlot));
+                    assert_eq!(occ.occupied_count(), n);
+                }
+                for (i, used) in model.iter_mut().enumerate() {
+                    let id = SlotId::from_index(i);
+                    if (i + round).is_multiple_of(2) || round == 2 * n + 2 {
+                        let count = occ.occupied_count();
+                        assert_eq!(occ.release(id), Ok(()));
+                        *used = false;
+                        assert_eq!(occ.release(id), Err(SlotError::NotOccupied));
+                        assert_eq!(occ.try_pin(id), Err(SlotError::NotOccupied));
+                        assert_eq!(occ.occupied_count(), count - 1);
+                    }
+                    assert_eq!(occ.is_occupied(id), *used);
+                    assert!(!occ.is_pinned(id));
+                }
+                assert_eq!(occ.occupied_count(), model.iter().filter(|&&v| v).count());
+                assert_eq!(occ.cursor(), cursor);
+            }
+            assert_eq!(occ.occupied_count(), 0);
         }
     }
 
