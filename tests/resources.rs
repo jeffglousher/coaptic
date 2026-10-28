@@ -345,6 +345,268 @@ fn observe_override_preserves_other_dimensions_and_body_selection() {
     assert!(!disabled.pool_capacities().has_body_pools());
 }
 
+#[test]
+fn fixed_pool_overrides_preserve_unrelated_dimensions() {
+    let base = resources::Resources::<Custom>::new().block_wise::<true>();
+    let mut expected = base.pool_capacities();
+    expected.rx_datagram_slots = 1;
+    expected.rx_datagram_bytes = 256;
+    assert_eq!(base.rx_datagram::<1, 256>().pool_capacities(), expected);
+
+    let base = resources::Resources::<Custom>::new().block_wise::<true>();
+    let mut expected = base.pool_capacities();
+    expected.tx_datagram_slots = 5;
+    expected.tx_datagram_bytes = 768;
+    assert_eq!(base.tx_datagram::<5, 768>().pool_capacities(), expected);
+
+    let base = resources::Resources::<Custom>::new().block_wise::<true>();
+    let mut expected = base.pool_capacities();
+    expected.rx_body_slots = Some(3);
+    expected.rx_body_bytes = Some(1024);
+    assert_eq!(base.rx_body::<3, 1024>().pool_capacities(), expected);
+
+    let base = resources::Resources::<Custom>::new().block_wise::<true>();
+    let mut expected = base.pool_capacities();
+    expected.tx_body_slots = Some(2);
+    expected.tx_body_bytes = Some(3072);
+    assert_eq!(base.tx_body::<2, 3072>().pool_capacities(), expected);
+}
+
+#[test]
+fn fixed_pool_overrides_compose_and_preserve_app_bounds() {
+    let config = resources::Device::new()
+        .routes::<3>()
+        .client_calls::<2>()
+        .deferred::<1>()
+        .security_requests::<3>()
+        .associations::<2>()
+        .rx_datagram::<7, 1024>()
+        .observe_entries::<1>()
+        .tx_body::<2, 2048>()
+        .tx_datagram::<3, 768>()
+        .dedup_entries::<5>()
+        .rx_body::<1, 1024>()
+        .rx_datagram::<2, 256>();
+    let expected = Capacities {
+        rx_datagram_slots: 2,
+        rx_datagram_bytes: 256,
+        tx_datagram_slots: 3,
+        tx_datagram_bytes: 768,
+        dedup_entries: 5,
+        observe_entries: 1,
+        rx_body_slots: Some(1),
+        rx_body_bytes: Some(1024),
+        tx_body_slots: Some(2),
+        tx_body_bytes: Some(2048),
+    };
+    assert_eq!(core::mem::size_of_val(&config), 0);
+    assert_eq!(config.pool_capacities(), expected);
+    assert_eq!(config.route_capacity(), 3);
+    assert_eq!(config.client_capacity(), 2);
+    assert_eq!(config.deferred_capacity(), 1);
+    assert_eq!(config.security_request_capacity(), 3);
+    assert_eq!(config.association_capacity(), 2);
+    let mut app = App::with_resources(config)
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    assert_eq!(app.engine().capacities(), expected);
+    app.poll(0).unwrap();
+}
+
+#[test]
+fn fixed_datagram_overrides_resize_storage_scratch_and_exchanges() {
+    use coaptic::profiles::{WithRxDatagram, WithTxDatagram};
+    use coaptic::storage::{Memory, MemoryProfile, SlotPool};
+
+    type P = WithTxDatagram<WithRxDatagram<Custom, 1, 193>, 5, 769>;
+    let _: resources::Resources<P> = resources::Resources::<Custom>::new()
+        .rx_datagram::<1, 193>()
+        .tx_datagram::<5, 769>();
+    let mut memory = Memory::<P>::new();
+    assert_eq!(memory.rx_datagram().slot_count(), 1);
+    assert_eq!(memory.rx_datagram().slot_bytes(), 193);
+    assert_eq!(memory.tx_datagram().slot_count(), 5);
+    assert_eq!(memory.tx_datagram().slot_bytes(), 769);
+    let rx = <P as MemoryProfile>::RxScratch::default();
+    let mut tx = <P as MemoryProfile>::TxScratch::default();
+    assert_eq!(rx.as_ref().len(), 193);
+    assert_eq!(tx.as_mut().len(), 769);
+    // The last byte must be usable, independently of RX and the base profile.
+    tx.as_mut()[768] = 42;
+    assert_eq!(tx.as_ref()[768], 42);
+    let exchanges = memory.exchange_mut();
+    assert_eq!(exchanges.slot_count(), 5);
+    let first = exchanges.acquire().unwrap();
+    for _ in 1..5 {
+        assert!(exchanges.acquire().is_some());
+    }
+    assert!(exchanges.acquire().is_none());
+    exchanges.release(first).unwrap();
+    assert!(exchanges.acquire().is_some());
+
+    // RX resizing alone must preserve the original TX scratch and table.
+    type RxOnly = WithRxDatagram<Custom, 1, 193>;
+    assert_eq!(
+        <RxOnly as MemoryProfile>::TxScratch::default()
+            .as_ref()
+            .len(),
+        512
+    );
+    assert_eq!(Memory::<RxOnly>::new().exchange().slot_count(), 3);
+    type TxOnly = WithTxDatagram<Custom, 5, 769>;
+    assert_eq!(
+        <TxOnly as MemoryProfile>::RxScratch::default()
+            .as_ref()
+            .len(),
+        512
+    );
+    assert_eq!(
+        App::with_resources(resources::Resources::<Custom>::new().rx_datagram::<1, 193>())
+            .allow_unprotected()
+            .deterministic_for_tests()
+            .bind(Idle)
+            .err(),
+        Some(BuildError::PacketHeadroom)
+    );
+    assert_eq!(
+        App::with_resources(resources::Resources::<Custom>::new().tx_datagram::<1, 769>())
+            .allow_unprotected()
+            .deterministic_for_tests()
+            .bind(Idle)
+            .err(),
+        Some(BuildError::PacketHeadroom)
+    );
+    let mut app = App::with_resources(
+        resources::Resources::<Custom>::new()
+            .rx_datagram::<2, 193>()
+            .tx_datagram::<5, 769>(),
+    )
+    .allow_unprotected()
+    .deterministic_for_tests()
+    .bind(Idle)
+    .unwrap();
+    app.poll(0).unwrap();
+}
+
+#[test]
+fn fixed_body_overrides_preserve_typestate_omission_and_reenable() {
+    use coaptic::profiles::{WithRxBody, WithTxBody};
+    use coaptic::storage::{Memory, SlotPool};
+
+    type P = WithTxBody<WithRxBody<Custom, 2, 1024>, 3, 3072>;
+    assert_eq!(
+        core::mem::size_of::<Memory<P>>(),
+        core::mem::size_of::<Memory<Custom>>()
+    );
+    let disabled = resources::Resources::<Custom>::new()
+        .rx_body::<2, 1024>()
+        .block_wise::<true>()
+        .tx_body::<3, 3072>()
+        .block_wise::<false>();
+    assert!(!disabled.pool_capacities().has_body_pools());
+    let disabled_app = App::with_resources(disabled)
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    assert!(!disabled_app.engine().capacities().has_body_pools());
+    let enabled = resources::Resources::<Custom>::new()
+        .rx_body::<2, 1024>()
+        .tx_body::<3, 3072>()
+        .block_wise::<true>();
+    let mut memory = Memory::<P>::with_block_wise();
+    assert_eq!(memory.rx_body().slot_count(), 2);
+    assert_eq!(memory.rx_body().slot_bytes(), 1024);
+    assert_eq!(memory.tx_body().slot_count(), 3);
+    assert_eq!(memory.tx_body().slot_bytes(), 3072);
+    let slot = memory.tx_body_mut().acquire().unwrap();
+    memory.tx_body_mut().set_len(slot, 3072).unwrap();
+    assert!(memory.tx_body_mut().set_len(slot, 3073).is_err());
+    memory.tx_body_mut().release(slot).unwrap();
+    assert!(memory.tx_body_mut().acquire().is_some());
+    let expected = enabled.pool_capacities();
+    let app = App::with_resources(enabled)
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    assert_eq!(app.engine().capacities(), expected);
+}
+
+type ResourceToken = coaptic::message::extended::Token<32>;
+coaptic::memory_profile! {
+    WideResources {
+        token: ResourceToken,
+        rx_datagram: (2, 256), tx_datagram: (3, 512),
+        rx_body: (1, 1024), tx_body: (1, 1024),
+        dedup: 2, observe: 1,
+    }
+}
+
+#[test]
+fn fixed_pool_overrides_preserve_custom_token_in_every_pool() {
+    use coaptic::profiles::{
+        WithDedup, WithObserve, WithRxBody, WithRxDatagram, WithTxBody, WithTxDatagram,
+    };
+    use coaptic::storage::{
+        BodyPool, ExchangeEntry, ExchangeTable, Memory, ObserveTable, SlotPool,
+    };
+
+    type P = WithObserve<
+        WithDedup<
+            WithTxBody<
+                WithRxBody<WithTxDatagram<WithRxDatagram<WideResources, 2, 192>, 4, 640>, 2, 2048>,
+                1,
+                3072,
+            >,
+            3,
+        >,
+        2,
+    >;
+    let config: resources::Resources<P, 8, true> = resources::Resources::<WideResources>::new()
+        .rx_datagram::<2, 192>()
+        .tx_datagram::<4, 640>()
+        .rx_body::<2, 2048>()
+        .tx_body::<1, 3072>()
+        .dedup_entries::<3>()
+        .observe_entries::<2>()
+        .block_wise::<true>();
+    let mut memory = Memory::<P>::with_block_wise();
+    let _: &BodyPool<2, 2048, ResourceToken> = memory.rx_body();
+    let _: &BodyPool<1, 3072, ResourceToken> = memory.tx_body();
+    let _: &ObserveTable<2, ResourceToken> = memory.observe();
+    let exchanges: &mut ExchangeTable<4, ResourceToken> = memory.exchange_mut();
+    let mut bytes = [7; 32];
+    bytes[31] = 91;
+    let token = ResourceToken::new(&bytes).unwrap();
+    let mut tx = coaptic::storage::DatagramPool::<1, 64>::new();
+    let tx_slot = tx.acquire().unwrap();
+    let entry = ExchangeEntry::new(
+        token,
+        Endpoint::v4([192, 0, 2, 1], 5683),
+        coaptic::message::MessageId::new(1),
+        tx_slot,
+    );
+    let exchange = exchanges.insert(entry).unwrap();
+    assert_eq!(exchanges.entry(exchange).unwrap().token().as_bytes(), bytes);
+    let mut app = App::with_resources(config)
+        .token_length(32)
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .bind(Idle)
+        .unwrap();
+    let call = app
+        .get("wide")
+        .to(Endpoint::v4([192, 0, 2, 1], 5683))
+        .send(0)
+        .unwrap();
+    assert_eq!(call.token().len(), 32);
+    assert!(app.cancel(call));
+    assert!(app.take_response(call).is_some());
+}
+
 #[cfg(feature = "alloc")]
 #[test]
 fn allocated_observe_override_preserves_custom_pool_dimensions() {

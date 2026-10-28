@@ -71,6 +71,134 @@ impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithDedup<P, ENTR
     type TxScratch = P::TxScratch;
 }
 
+/// A profile with only its RX datagram pool and its scratch resized.
+///
+/// Usually selected through [`crate::resources::Resources::rx_datagram`].
+/// Other dimensions and the owned token representation are unchanged.
+pub struct WithRxDatagram<P, const SLOTS: usize, const BYTES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
+    for WithRxDatagram<P, SLOTS, BYTES>
+{
+    type Token = P::Token;
+    const RX_DATAGRAM_SLOTS: usize = SLOTS;
+    const RX_DATAGRAM_BYTES: usize = BYTES;
+    const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    const DEDUP_ENTRIES: usize = P::DEDUP_ENTRIES;
+    const OBSERVE_ENTRIES: usize = P::OBSERVE_ENTRIES;
+    const RX_BODY_SLOTS: usize = P::RX_BODY_SLOTS;
+    const RX_BODY_BYTES: usize = P::RX_BODY_BYTES;
+    const TX_BODY_SLOTS: usize = P::TX_BODY_SLOTS;
+    const TX_BODY_BYTES: usize = P::TX_BODY_BYTES;
+
+    type RxDatagram = DatagramPool<SLOTS, BYTES>;
+    type TxDatagram = P::TxDatagram;
+    type RxBody = P::RxBody;
+    type TxBody = P::TxBody;
+    type Dedup = P::Dedup;
+    type Observe = P::Observe;
+    type Exchange = P::Exchange;
+    type RxScratch = DatagramScratch<BYTES>;
+    type TxScratch = P::TxScratch;
+}
+
+/// A profile with only its TX datagram pool, its scratch and exchange table resized.
+///
+/// Usually selected through [`crate::resources::Resources::tx_datagram`].
+/// Other dimensions and the owned token representation are unchanged.
+pub struct WithTxDatagram<P, const SLOTS: usize, const BYTES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
+    for WithTxDatagram<P, SLOTS, BYTES>
+{
+    type Token = P::Token;
+    const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_SLOTS: usize = SLOTS;
+    const TX_DATAGRAM_BYTES: usize = BYTES;
+    const DEDUP_ENTRIES: usize = P::DEDUP_ENTRIES;
+    const OBSERVE_ENTRIES: usize = P::OBSERVE_ENTRIES;
+    const RX_BODY_SLOTS: usize = P::RX_BODY_SLOTS;
+    const RX_BODY_BYTES: usize = P::RX_BODY_BYTES;
+    const TX_BODY_SLOTS: usize = P::TX_BODY_SLOTS;
+    const TX_BODY_BYTES: usize = P::TX_BODY_BYTES;
+
+    type RxDatagram = P::RxDatagram;
+    type TxDatagram = DatagramPool<SLOTS, BYTES>;
+    type RxBody = P::RxBody;
+    type TxBody = P::TxBody;
+    type Dedup = P::Dedup;
+    type Observe = P::Observe;
+    type Exchange = ExchangeTable<SLOTS, P::Token>;
+    type RxScratch = P::RxScratch;
+    type TxScratch = DatagramScratch<BYTES>;
+}
+
+/// A profile with only its RX body pool resized.
+///
+/// Usually selected through [`crate::resources::Resources::rx_body`].
+/// Other dimensions and the owned token representation are unchanged.
+pub struct WithRxBody<P, const SLOTS: usize, const BYTES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
+    for WithRxBody<P, SLOTS, BYTES>
+{
+    type Token = P::Token;
+    const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    const DEDUP_ENTRIES: usize = P::DEDUP_ENTRIES;
+    const OBSERVE_ENTRIES: usize = P::OBSERVE_ENTRIES;
+    const RX_BODY_SLOTS: usize = SLOTS;
+    const RX_BODY_BYTES: usize = BYTES;
+    const TX_BODY_SLOTS: usize = P::TX_BODY_SLOTS;
+    const TX_BODY_BYTES: usize = P::TX_BODY_BYTES;
+
+    type RxDatagram = P::RxDatagram;
+    type TxDatagram = P::TxDatagram;
+    type RxBody = BodyPool<SLOTS, BYTES, P::Token>;
+    type TxBody = P::TxBody;
+    type Dedup = P::Dedup;
+    type Observe = P::Observe;
+    type Exchange = P::Exchange;
+    type RxScratch = P::RxScratch;
+    type TxScratch = P::TxScratch;
+}
+
+/// A profile with only its TX body pool resized.
+///
+/// Usually selected through [`crate::resources::Resources::tx_body`].
+/// Other dimensions and the owned token representation are unchanged.
+pub struct WithTxBody<P, const SLOTS: usize, const BYTES: usize>(core::marker::PhantomData<P>);
+
+impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
+    for WithTxBody<P, SLOTS, BYTES>
+{
+    type Token = P::Token;
+    const RX_DATAGRAM_SLOTS: usize = P::RX_DATAGRAM_SLOTS;
+    const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
+    const TX_DATAGRAM_SLOTS: usize = P::TX_DATAGRAM_SLOTS;
+    const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
+    const DEDUP_ENTRIES: usize = P::DEDUP_ENTRIES;
+    const OBSERVE_ENTRIES: usize = P::OBSERVE_ENTRIES;
+    const RX_BODY_SLOTS: usize = P::RX_BODY_SLOTS;
+    const RX_BODY_BYTES: usize = P::RX_BODY_BYTES;
+    const TX_BODY_SLOTS: usize = SLOTS;
+    const TX_BODY_BYTES: usize = BYTES;
+
+    type RxDatagram = P::RxDatagram;
+    type TxDatagram = P::TxDatagram;
+    type RxBody = P::RxBody;
+    type TxBody = BodyPool<SLOTS, BYTES, P::Token>;
+    type Dedup = P::Dedup;
+    type Observe = P::Observe;
+    type Exchange = P::Exchange;
+    type RxScratch = P::RxScratch;
+    type TxScratch = P::TxScratch;
+}
+
 macro_rules! impl_profile {
     (
         $name:ident
