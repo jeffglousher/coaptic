@@ -6,6 +6,25 @@ proven memory, stack, code-size, CPU or reliability improvement can be delivered
 independently of the open 50% CPU objective in [#650](https://github.com/jeffglousher/coaptic/issues/650).
 The [full acceptance requirements](PERFORMANCE-ACCEPTANCE.md) remain unchanged.
 
+## First bounded memory iteration
+
+Core #693 keeps two isolated reductions: unused fixed-table row-pin backing and
+local OSCORE AAD backing. The exact eight-profile Windows comparison records
+8/32/128-byte enclosing-App reductions for Device/Gateway/fixed Service; smaller
+SmallDevice owners and allocated Service do not shrink. AAD object layout falls
+72 to 40 bytes, separately from generated stack. Configured capacities, actual
+pool pins and protocol behavior stay fixed. Source-specific timing arrays remain
+descriptive; no CPU or latency acceptance follows from these small runs.
+
+Keep the complete 15.40-second candidate run and its second startup-failed attempt.
+Repair the concrete readiness bind race independently under validation #208;
+the missing server log prevents assigning the observed failure's cause. Do not
+replace that failure with a passing cohort. The next allocated-table counterpart
+has a bounded separate scope: omit only unused startup pin arrays and account
+for real pool pins. Reject the simple lazy dedup replay enum: retained inactive
+bytes are observable through current equality/hashing, so discarding them changes
+behavior. These dispositions preserve useful work without reviving failed batches.
+
 ## Compare implementations without changing the workload
 
 Keep a small, versioned set of configurations. Compare each configuration across

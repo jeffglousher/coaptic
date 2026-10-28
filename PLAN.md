@@ -15,6 +15,21 @@ Compare fixed configurations across library revisions; resource/concurrency
 tradeoffs remain explicit implementer choices. The
 [iteration plan and salvage dispositions](architecture/requirements/OPTIMIZATION-ITERATIONS.md)
 define the next small development-suite slice and separate it from full acceptance.
+Core [#693](https://github.com/jeffglousher/coaptic/pull/693) removes unused
+pin arrays from three fixed table owners and bounds local OSCORE AAD backing.
+The unchanged eight-profile Windows configuration measures enclosing-App savings
+of 8 bytes for Device, 32 for Gateway and 128 for each fixed Service row;
+SmallDevice and allocated Service remain unchanged. The local AAD object is
+40 rather than 72 bytes, without an emitted-stack claim. One full candidate
+run passes in 15.40 seconds; a second fails during common proof startup before
+all sixteen timing cells. Validation #208 repairs a concrete active-bind readiness
+race separately and passes finite checks on both frozen server binaries; the
+observed failure's discarded server log leaves its cause unestablished. Retain
+both receipts. These are bounded memory and functional
+results, with no CPU or latency acceptance. Allocated table-pin removal is scoped
+as a separate next batch; the simple dedup replay enum is rejected because it
+would discard bytes observable through existing equality and hashing.
+
 Companion #207 expands the prepared development suite to eight fixed rows:
 SmallDevice datagrams, blockwise and blockwise/Observe; Device and Gateway;
 Service without blockwise; and fixed/allocated Service blockwise. All run

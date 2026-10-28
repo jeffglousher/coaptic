@@ -57,6 +57,26 @@ fn server_c1() -> SecurityContext {
     .unwrap()
 }
 
+fn contexts_with_maximum_ids(id_context: &[u8]) -> (SecurityContext, SecurityContext) {
+    let client_id = [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
+    let server_id = [0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87];
+    assert_eq!(client_id.len(), super::MAX_ID_LEN);
+    let derive = |sender_id, recipient_id| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &MASTER_SECRET,
+            master_salt: &MASTER_SALT,
+            sender_id,
+            recipient_id,
+            id_context,
+        })
+        .unwrap()
+    };
+    (
+        derive(&client_id, &server_id),
+        derive(&server_id, &client_id),
+    )
+}
+
 #[derive(Default)]
 struct Loopback {
     inbox: Option<(Endpoint, [u8; 256], usize)>,
@@ -307,6 +327,147 @@ fn c8_protected_response_with_piv() {
     let (expected, en) =
         hex_n("64445d1f00003974920100ff4d4c13669384b67354b2b6175ff4b8658c666a6cf88e");
     assert_eq!(&out[..n], slice(&expected, en));
+}
+
+#[test]
+fn maximum_ids_and_partial_ivs_round_trip_both_response_forms() {
+    let id_context = [0x53; 16];
+    assert_eq!(id_context.len(), super::MAX_ID_CONTEXT_LEN);
+    for id_context in [&[][..], &id_context[..]] {
+        for seq in [0, (1u64 << 40) - 1] {
+            for response_with_piv in [false, true] {
+                let (mut client, mut server) = contexts_with_maximum_ids(id_context);
+                client.set_sender_seq(seq).unwrap();
+                // With a zero request PIV, keep the response PIV distinct so
+                // opening must still bind its AAD to the request's PIV.
+                let response_piv = PartialIv::from_seq((1u64 << 40) - 1).unwrap();
+                server.set_sender_seq(response_piv.seq()).unwrap();
+                let request = Message::new(Type::Confirmable, Code::POST, MessageId::new(1))
+                    .with_token(Token::from_checked(&[1]))
+                    .with_payload(b"maximum request AAD");
+                let mut wire = [0u8; 128];
+                let n = client.protect_request(&request, &mut wire).unwrap();
+                let original = wire;
+                let outer = decode(&wire[..n]).unwrap();
+                let header = OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
+                assert_eq!(header.kid, Some(client.sender_id()));
+                assert_eq!(header.piv, Some(PartialIv::from_seq(seq).unwrap()));
+                assert_eq!(header.kid_context.unwrap_or(&[]), id_context);
+
+                let mut corrupted = wire;
+                corrupted[n - 1] ^= 1;
+                let corrupted_original = corrupted;
+                let mut scratch = [0xcc; 128];
+                assert_eq!(
+                    server.unprotect_request(&decode(&corrupted[..n]).unwrap(), &mut scratch),
+                    Err(Error::Decrypt)
+                );
+                assert_eq!(corrupted, corrupted_original);
+                assert_eq!(scratch, [0xcc; 128]);
+                assert!(server.replay_fresh(seq));
+                let (opened, binding) = server.unprotect_request(&outer, &mut scratch).unwrap();
+                assert_eq!(opened.code(), request.code());
+                assert_eq!(opened.payload(), request.payload());
+                assert_eq!(binding.kid(), client.sender_id());
+                assert_eq!(binding.piv(), header.piv.unwrap());
+                assert_eq!(wire, original);
+                assert!(!server.replay_fresh(seq));
+
+                let response =
+                    Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(1))
+                        .with_token(request.token())
+                        .with_payload(b"maximum response AAD");
+                let n = if response_with_piv {
+                    server.protect_response_with_piv(&response, binding, &mut wire)
+                } else {
+                    server.protect_response(&response, binding, &mut wire)
+                }
+                .unwrap();
+                let original = wire;
+                let outer = decode(&wire[..n]).unwrap();
+                let response_header = OscoreHeader::parse(outer.oscore().unwrap()).unwrap();
+                assert_eq!(
+                    response_header.piv,
+                    response_with_piv.then_some(response_piv)
+                );
+                let mut corrupted = wire;
+                corrupted[n - 1] ^= 1;
+                let corrupted_original = corrupted;
+                scratch.fill(0xcc);
+                assert_eq!(
+                    client.unprotect_response(
+                        &decode(&corrupted[..n]).unwrap(),
+                        binding,
+                        &mut scratch
+                    ),
+                    Err(Error::Decrypt)
+                );
+                assert_eq!(corrupted, corrupted_original);
+                assert_eq!(scratch, [0xcc; 128]);
+                let opened = client
+                    .unprotect_response(&outer, binding, &mut scratch)
+                    .unwrap();
+                assert_eq!(opened.code(), response.code());
+                assert_eq!(opened.payload(), response.payload());
+                assert_eq!(wire, original);
+            }
+        }
+    }
+}
+
+#[test]
+fn oversized_incoming_kid_is_refused_before_aad_and_preserves_original_request() {
+    let (mut client, mut server) = contexts_with_maximum_ids(&[]);
+    let seq = (1u64 << 40) - 1;
+    client.set_sender_seq(seq).unwrap();
+    let plain = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(Token::from_checked(&[1]));
+    let mut wire = [0u8; 128];
+    let n = client.protect_request(&plain, &mut wire).unwrap();
+    let original = wire;
+    let protected = decode(&wire[..n]).unwrap();
+    let option = protected.oscore().unwrap();
+    // Preserve the complete valid recipient ID as a prefix; matching must not
+    // truncate the received kid. Parsing alone does not impose the Id bound.
+    let mut oversized = [0xa1; 15];
+    oversized[..option.len()].copy_from_slice(option);
+    let parsed = OscoreHeader::parse(&oversized).unwrap();
+    assert_eq!(parsed.kid.unwrap().len(), 9);
+    assert_eq!(
+        RequestRef::from_kid(parsed.kid.unwrap(), parsed.piv.unwrap()),
+        Err(Error::Id)
+    );
+    let mut reference = [0xa5; 64];
+    assert_eq!(
+        cbor::encode_aad(
+            &mut reference,
+            parsed.kid.unwrap(),
+            parsed.piv.unwrap().as_bytes(),
+            &[]
+        ),
+        Ok(33)
+    );
+    let options = [Opt::oscore(&oversized)];
+    let wrong_context = Message::new(protected.ty(), protected.code(), protected.message_id())
+        .with_token(protected.token())
+        .with_options(&options)
+        .with_payload(protected.payload());
+    let mut rejected = [0u8; 128];
+    let rejected_len = wrong_context.encode(&mut rejected).unwrap();
+    let rejected_original = rejected;
+    let mut scratch = [0xcc; 128];
+    assert_eq!(
+        server.unprotect_request(&decode(&rejected[..rejected_len]).unwrap(), &mut scratch),
+        Err(Error::Context)
+    );
+    assert_eq!(rejected, rejected_original);
+    assert_eq!(scratch, [0xcc; 128]);
+    assert!(server.replay_fresh(seq));
+    let (opened, binding) = server.unprotect_request(&protected, &mut scratch).unwrap();
+    assert_eq!(opened.code(), plain.code());
+    assert_eq!(binding.kid(), client.sender_id());
+    assert_eq!(wire, original);
+    assert!(!server.replay_fresh(seq));
 }
 
 #[test]
