@@ -115,18 +115,21 @@ pub(crate) fn is_occupied(occupied: &[bool], id: SlotId) -> bool {
 }
 
 /// Compile-time occupancy flags plus a rotating cursor.
-pub(crate) struct Occupancy<const N: usize> {
+///
+/// Pools retain one pin flag per slot by default. Tables use zero pin flags:
+/// their entries can reference pinned pool slots, but are not themselves pinned.
+pub(crate) struct Occupancy<const N: usize, const PINS: usize = N> {
     occupied: [bool; N],
-    pinned: [bool; N],
+    pinned: [bool; PINS],
     cursor: usize,
     count: usize,
 }
 
-impl<const N: usize> Occupancy<N> {
+impl<const N: usize, const PINS: usize> Occupancy<N, PINS> {
     pub(crate) const fn new() -> Self {
         Self {
             occupied: [false; N],
-            pinned: [false; N],
+            pinned: [false; PINS],
             cursor: 0,
             count: 0,
         }
@@ -277,6 +280,162 @@ mod tests {
     use super::Occupancy;
     use crate::storage::SlotError;
     use crate::storage::SlotId;
+
+    fn assert_unpinned_parity<const N: usize>(
+        zero: &Occupancy<N, 0>,
+        default: &Occupancy<N>,
+        model: &[bool; N],
+        cursor: usize,
+    ) {
+        let count = model.iter().filter(|&&used| used).count();
+        assert_eq!(zero.slot_count(), N);
+        assert_eq!(default.slot_count(), N);
+        assert_eq!(zero.cursor(), cursor);
+        assert_eq!(default.cursor(), cursor);
+        assert_eq!(zero.occupied_count(), count);
+        assert_eq!(default.occupied_count(), count);
+        for (i, &used) in model.iter().enumerate() {
+            let id = SlotId::from_index(i);
+            assert_eq!(zero.is_occupied(id), used);
+            assert_eq!(default.is_occupied(id), used);
+            assert!(!zero.is_pinned(id));
+            assert!(!default.is_pinned(id));
+            assert!(zero.pinned.get(i).is_none());
+        }
+        assert!(!zero.is_occupied(SlotId::from_index(N)));
+        assert!(!default.is_occupied(SlotId::from_index(N)));
+    }
+
+    fn zero_pin_churn<const N: usize>() {
+        let mut zero = Occupancy::<N, 0>::new();
+        let mut default = Occupancy::<N>::new();
+        let mut model = [false; N];
+        let mut cursor = 0;
+        assert_unpinned_parity(&zero, &default, &model, cursor);
+        for round in 0..(2 * N + 3) {
+            let start = round * 3 + N;
+            zero.set_cursor(start);
+            default.set_cursor(start);
+            cursor = if N == 0 { 0 } else { start % N };
+            let steps = round * 5 + 1;
+            zero.advance(steps);
+            default.advance(steps);
+            if N != 0 {
+                cursor = (cursor + steps % N) % N;
+            }
+            assert_unpinned_parity(&zero, &default, &model, cursor);
+
+            // Independent scalar oracle: no occupancy helper or chunk search.
+            // Refill every hole, then probe saturation without moving the cursor.
+            for _ in 0..=N {
+                let expected = (0..N)
+                    .map(|offset| (cursor + offset) % N)
+                    .find(|&i| !model[i]);
+                assert_eq!(zero.acquire().map(SlotId::index), expected);
+                assert_eq!(default.acquire().map(SlotId::index), expected);
+                if let Some(i) = expected {
+                    model[i] = true;
+                    cursor = (i + 1) % N;
+                }
+                assert_unpinned_parity(&zero, &default, &model, cursor);
+            }
+
+            for i in [N, usize::MAX] {
+                let id = SlotId::from_index(i);
+                assert_eq!(zero.release(id), Err(SlotError::InvalidSlot));
+                assert_eq!(default.release(id), Err(SlotError::InvalidSlot));
+                assert_unpinned_parity(&zero, &default, &model, cursor);
+            }
+            // Alternating holes cross the 32-flag chunk boundaries and wrap.
+            // The final round drains all slots to check complete recovery.
+            for (i, used) in model.iter_mut().enumerate() {
+                if (i + round).is_multiple_of(2) || round == 2 * N + 2 {
+                    let id = SlotId::from_index(i);
+                    assert_eq!(zero.release(id), Ok(()));
+                    assert_eq!(default.release(id), Ok(()));
+                    *used = false;
+                    assert_eq!(zero.release(id), Err(SlotError::NotOccupied));
+                    assert_eq!(default.release(id), Err(SlotError::NotOccupied));
+                }
+            }
+            assert_unpinned_parity(&zero, &default, &model, cursor);
+        }
+        assert_eq!(zero.occupied_count(), 0);
+        assert_eq!(default.occupied_count(), 0);
+    }
+
+    #[test]
+    fn zero_pin_churn_matches_default_and_independent_model() {
+        zero_pin_churn::<0>();
+        zero_pin_churn::<1>();
+        zero_pin_churn::<2>();
+        zero_pin_churn::<4>();
+        zero_pin_churn::<8>();
+        zero_pin_churn::<32>();
+        zero_pin_churn::<131>();
+    }
+
+    #[test]
+    fn zero_pin_storage_refuses_pin_without_changing_occupancy() {
+        let mut occ = Occupancy::<1, 0>::new();
+        let id = SlotId::from_index(0);
+        assert_eq!(occ.try_pin(id), Err(SlotError::NotOccupied));
+        assert_eq!(occ.acquire(), Some(id));
+        assert_eq!(occ.try_pin(id), Err(SlotError::InvalidSlot));
+        assert!(occ.pin_flag_mut(id).is_none());
+        assert_eq!(occ.unpin(id), Err(SlotError::InvalidSlot));
+        assert!(!occ.is_pinned(id));
+        assert_eq!(occ.occupied_count(), 1);
+        assert_eq!(occ.release(id), Ok(()));
+        assert_eq!(occ.acquire(), Some(id));
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn zero_pin_profile_occupancy_layout_accounts_for_alignment() {
+        use crate::storage::MemoryProfile;
+        use crate::storage::profiles;
+        use core::mem::{align_of, size_of};
+
+        fn saving<const N: usize>() -> usize {
+            let align = align_of::<usize>();
+            let counters = 2 * size_of::<usize>();
+            assert_eq!(align_of::<Occupancy<N>>(), align);
+            assert_eq!(align_of::<Occupancy<N, 0>>(), align);
+            assert_eq!(
+                size_of::<Occupancy<N>>(),
+                counters + (2 * N).next_multiple_of(align)
+            );
+            assert_eq!(
+                size_of::<Occupancy<N, 0>>(),
+                counters + N.next_multiple_of(align)
+            );
+            size_of::<Occupancy<N>>() - size_of::<Occupancy<N, 0>>()
+        }
+
+        macro_rules! profile {
+            ($profile:ty, $raw_flags:expr, $aligned:expr) => {
+                assert_eq!(
+                    <$profile>::DEDUP_ENTRIES
+                        + <$profile>::OBSERVE_ENTRIES
+                        + <$profile>::TX_DATAGRAM_SLOTS,
+                    $raw_flags
+                );
+                assert_eq!(
+                    saving::<{ <$profile>::DEDUP_ENTRIES }>()
+                        + saving::<{ <$profile>::OBSERVE_ENTRIES }>()
+                        + saving::<{ <$profile>::TX_DATAGRAM_SLOTS }>(),
+                    $aligned
+                );
+            };
+        }
+        // These are the three occupancy owners only; enclosing tables/App can
+        // absorb changes in their own padding and require separate measurement.
+        profile!(profiles::Constrained, 8, 0);
+        profile!(profiles::Default, 16, 8);
+        profile!(profiles::Gateway, 32, 32);
+        profile!(profiles::Service, 128, 128);
+    }
 
     #[test]
     fn acquire_matches_rotating_search_for_every_small_state() {

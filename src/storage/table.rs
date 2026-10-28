@@ -928,7 +928,7 @@ pub(crate) trait ObserveStore<T: OwnedToken = Token> {
 /// still advances the occupancy cursor used by acquire.
 pub struct DedupTable<const ENTRIES: usize> {
     entries: [Option<DedupEntry>; ENTRIES],
-    occ: Occupancy<ENTRIES>,
+    occ: Occupancy<ENTRIES, 0>,
 }
 
 impl<const ENTRIES: usize> DedupTable<ENTRIES> {
@@ -1078,7 +1078,7 @@ impl<const ENTRIES: usize> SlotPool for DedupTable<ENTRIES> {
 /// [`Self::rotate`] still advances the occupancy cursor used by acquire.
 pub struct ObserveTable<const ENTRIES: usize, T: OwnedToken = Token> {
     entries: [Option<ObserveInterest<T>>; ENTRIES],
-    occ: Occupancy<ENTRIES>,
+    occ: Occupancy<ENTRIES, 0>,
 }
 
 impl<const ENTRIES: usize, T: OwnedToken> ObserveTable<ENTRIES, T> {

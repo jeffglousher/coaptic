@@ -96,14 +96,18 @@ pub(crate) fn open(
     Ok(pt_len)
 }
 
+// Supported callers supply a validated request kid <= 7 bytes and Partial IV
+// <= 5 bytes, with empty Class I here: prefix 11 + bstr header 1 + external
+// array 19 = at most 31 encoded bytes. ID Context is separate. Revisit this
+// bound if those supported inputs change; the general encoder is unchanged.
 pub(crate) struct Aad {
-    bytes: [u8; 64],
+    bytes: [u8; 32],
     len: usize,
 }
 
 impl Aad {
     pub(crate) fn new(request_kid: &[u8], request_piv: &[u8]) -> Result<Self, Error> {
-        let mut bytes = [0u8; 64];
+        let mut bytes = [0u8; 32];
         let len = cbor::encode_aad(&mut bytes, request_kid, request_piv, &[])?;
         Ok(Self { bytes, len })
     }
@@ -115,7 +119,85 @@ impl Aad {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+
+    fn assert_aad_matches_reference(kid: &[u8], piv: &[u8]) -> usize {
+        let mut reference = [0xa5; 64];
+        let len = cbor::encode_aad(&mut reference, kid, piv, &[]).unwrap();
+        let aad = Aad::new(kid, piv).unwrap();
+        assert_eq!(aad.as_bytes(), &reference[..len]);
+        assert!(reference[len..].iter().all(|byte| *byte == 0xa5));
+        len
+    }
+
+    #[test]
+    fn aad_matches_reference_for_every_supported_kid_and_piv_length() {
+        let kid = [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
+        let piv = [0x81, 0x82, 0x83, 0x84, 0x85];
+        assert_eq!(kid.len(), super::super::MAX_ID_LEN);
+        assert_eq!(piv.len(), super::super::MAX_PIV_LEN);
+        let mut maximum = 0;
+        for kid_len in 0..=kid.len() {
+            for piv_len in 1..=piv.len() {
+                let partial_iv = PartialIv::from_bytes(&piv[..piv_len]).unwrap();
+                let len = assert_aad_matches_reference(&kid[..kid_len], partial_iv.as_bytes());
+                assert_eq!(len, 19 + kid_len + piv_len);
+                maximum = maximum.max(len);
+            }
+        }
+        assert_eq!(maximum, 31);
+        for seq in [0, (1u64 << 40) - 1] {
+            let piv = PartialIv::from_seq(seq).unwrap();
+            assert_eq!(
+                piv.as_bytes(),
+                if seq == 0 { &[0][..] } else { &[0xff; 5][..] }
+            );
+            assert_aad_matches_reference(&kid, piv.as_bytes());
+        }
+    }
+
+    #[test]
+    fn aad_backing_and_layout_are_smaller_than_legacy_storage() {
+        struct LegacyAad {
+            bytes: [u8; 64],
+            len: usize,
+        }
+        let mut legacy = LegacyAad {
+            bytes: [0xa5; 64],
+            len: 0,
+        };
+        legacy.len = cbor::encode_aad(&mut legacy.bytes, &[], &[0], &[]).unwrap();
+        let aad = Aad::new(&[], &[0]).unwrap();
+        assert_eq!(aad.as_bytes(), &legacy.bytes[..legacy.len]);
+        assert_eq!(legacy.bytes.len() - aad.bytes.len(), 32);
+        let actual = core::mem::size_of::<Aad>();
+        let previous = core::mem::size_of::<LegacyAad>();
+        assert_eq!(
+            core::mem::align_of::<Aad>(),
+            core::mem::align_of::<LegacyAad>()
+        );
+        assert_eq!(previous - actual, 32);
+        std::println!(
+            "AAD object bytes: current={actual} legacy={previous}; not a stack-frame measurement"
+        );
+    }
+
+    #[test]
+    fn aad_bound_does_not_claim_arbitrary_private_input_equivalence() {
+        // A nine-byte kid cannot inhabit RequestRef or match a stored recipient.
+        let kid = [0x31; 9];
+        let piv = [0x72; 5];
+        let mut general = [0xa5; 64];
+        assert_eq!(cbor::encode_aad(&mut general, &kid, &piv, &[]), Ok(33));
+        assert!(matches!(Aad::new(&kid, &piv), Err(Error::BufferTooSmall)));
+        // Adding Class I would also require revisiting the local capacity.
+        assert_eq!(
+            cbor::encode_aad(&mut general, &kid[..7], &piv, &[1, 2]),
+            Ok(33)
+        );
+    }
 
     #[test]
     fn separate_input_authenticates_without_modifying_ciphertext_or_output_tail() {

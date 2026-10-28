@@ -215,7 +215,7 @@ pub(crate) trait ExchangeStore<T: OwnedToken = Token> {
 /// stored in TX slots: a released TX datagram must not drop the exchange.
 pub struct ExchangeTable<const ENTRIES: usize, T: OwnedToken = Token> {
     entries: [Option<ExchangeEntry<T>>; ENTRIES],
-    occ: Occupancy<ENTRIES>,
+    occ: Occupancy<ENTRIES, 0>,
 }
 
 impl<const ENTRIES: usize, T: OwnedToken> ExchangeTable<ENTRIES, T> {
