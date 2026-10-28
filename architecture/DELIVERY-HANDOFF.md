@@ -6,6 +6,50 @@ in [PLAN.md](../PLAN.md). Both 50% server CPU targets remain open under
 [#650](https://github.com/jeffglousher/coaptic/issues/650). Release publication
 requires separate authorization under #132.
 
+## Empty-body maintenance iteration, October 27
+
+Core #697 tests `4a504a2` against the reused actual `f4585c6` PE bundle, whose
+Rust/Cargo source matches accepted `0a8fb1e`. Both native fixtures are companion
+`1841076`, with identical compiler/lock/flags and one frozen baseline-built
+socket client. Exact binary/source identities remain separate from current main.
+The fresh O(1) TX-body occupied-count query follows deferred expiry and skips
+only the empty terminal-expiry loop. Occupied/pinned loops, clock comparisons,
+receive/error/progress ordering, OSCORE barriers and generated async operation
+remain intact. No new state, buffer, capacity or allocation is added.
+
+435 feature-dependent executions pass: one no-default focused case, 398 App
+std/alloc/OSCORE tests and 36 Observe integration tests. Strict release Clippy in
+both selected variants, formatting and MSRV1.89 alloc/OSCORE checks pass. The
+new boundary/pin/receive-refusal tests complement existing deferred, async and
+checkpoint coverage. Full eight-profile development AB runs pass in
+14.37381/14.29152 seconds, with every reliability/Observe/socket/core cell and
+all ten unsupported core cells retained. Their short timings are descriptive.
+
+The existing complete-operation `black_box` fixed-Service 16 KiB wall probe then
+runs eight serial processes: two AB/BA pairs per mode, 512 measured operations
+plus 128 warmups and 4096 separate calibrations per process. This reduced pair
+count is frozen before launch for storage bounds. All verify 4096 measured plus
+1024 warmup operations and 163,840 accepted sends. Unprotected pair medians are
+24,500 to 24,000 ns and 24,350 to 24,000 ns (-2.04%/-1.44%). Protected medians
+are 58,300 to 57,000 ns and 57,550 to 58,600 ns (-2.23%/+1.82%); protected
+benefit is inconclusive under the predeclared rule. Calibration is separate,
+never subtracted. No replacement or additional sampling is planned. Keep raw
+outliers, including the 372,500 ns candidate unprotected maximum. A consistent
+small unprotected scoped wall direction is not CPU or latency acceptance.
+
+The [empty-body iteration receipt](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/empty-body-maintenance-20261027)
+retains all measured arrays, capacities, owner ledgers, identities and analysis.
+Full raw calibration arrays/results remain losslessly compressed privately.
+All measured enclosing App/requested-pool owners remain unchanged, preserving
+prior memory improvements. The candidate PE set is 512 file bytes smaller,
+without a RAM or instruction-size claim. Sampled additional release output is
+67,641,421 bytes under 96 MiB; the new prepared bundle is 9,908,765 bytes under
+10 MiB. The phase stays within 112 MiB new output and separate 512 KiB private
+proof; no baseline rebuild/new cache/target/dependencies/worktree or concurrent
+build is used. Source/lock/main restoration and idle-lane checks pass. Both CPU
+50% targets, protected benefit, whole memory/peak stack, remaining Linux/physical
+and throughput/fairness qualification remain open; original failures stay intact.
+
 ## Allocated-table iteration, October 27
 
 Core #695 tests `f4585c6` against accepted `7ee2734` with identical companion

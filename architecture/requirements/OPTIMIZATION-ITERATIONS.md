@@ -30,6 +30,20 @@ Reject the simple lazy dedup replay enum: retained inactive
 bytes are observable through current equality/hashing, so discarding them changes
 behavior. These dispositions preserve useful work without reviving failed batches.
 
+## Empty-work iteration
+
+Core #697 wraps only pre-receive terminal-body expiry in a fresh documented O(1)
+occupied-count check after deferred expiry. Preserve retained bodies after Observe
+removal, pin-aware due refusal/retry, exact/regressed/MAX clocks and unconditional
+later progress. No cached emptiness, public backend redesign or diagnostic
+infrastructure is introduced. Tests and unchanged eight-profile functional
+screens pass with unchanged measured owners. The predeclared focused two-pair
+wall screen has a small consistent unprotected direction, with OSCORE mixed and
+inconclusive. End sampling without replacement. Retain the narrow empty-work
+reduction and its limited observation; do not present it as a CPU gain, protected
+improvement or satisfaction of either 50% target. Existing `black_box` complete
+verification suffices for this screen; no Criterion dependency is needed here.
+
 ## Compare implementations without changing the workload
 
 Keep a small, versioned set of configurations. Compare each configuration across
