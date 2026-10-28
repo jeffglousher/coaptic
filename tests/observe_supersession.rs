@@ -1430,6 +1430,10 @@ fn terminal_blocks<S: AppStorage<Token = coaptic::message::Token>>(
             control(&mut server, terminal.message_id(), false, OWNER, due + 1);
             let expires = due + u64::from(coaptic::message::Transmission::EXCHANGE_LIFETIME_MS);
             assert!(server.next_timeout().is_some_and(|at| at <= expires));
+            let retained = server.engine().tx_body_transfer(body).unwrap();
+            server.poll(expires - 1).unwrap();
+            assert_eq!(server.engine().tx_body_transfer(body), Some(retained));
+            assert_eq!(server.engine().tx_body_payload(body), Some(LARGE));
             server.poll(expires).unwrap();
             assert!(server.engine().tx_body_transfer(body).is_none());
             return;

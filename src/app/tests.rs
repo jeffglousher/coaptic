@@ -6250,6 +6250,71 @@ impl<T: DatagramIo<Error = &'static str>> DatagramIo for ReceiveFaultIo<T> {
 }
 
 #[test]
+fn terminal_body_expiry_rechecks_occupancy_after_empty_polls_and_pin_release() {
+    use crate::storage::{BodyTag, SlotPool};
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .bind(ReceiveFaultIo {
+            fail_receive: true,
+            ..ReceiveFaultIo::<WideLoopback>::default()
+        })
+        .unwrap();
+    let error = Err(Error::Io(crate::storage::DatagramIoError::Io(
+        "receive failure",
+    )));
+    let key = BlockKey::new(Token::new(b"terminal").unwrap(), peer)
+        .with_identity(BodyTag::new(b"old").unwrap());
+    for deadline in [20, u64::MAX] {
+        assert_eq!(app.engine.storage().tx_body().occupied_count(), 0);
+        assert_eq!(app.poll(if deadline == 20 { 10 } else { u64::MAX }), error);
+        let id = app.engine.start_block2(key, &LARGE, 6).unwrap();
+        let mut retained = app.engine.tx_body_transfer(id).unwrap();
+        retained.remember_notification(Code::BAD_REQUEST, None, None);
+        retained.expire_terminal_at(deadline);
+        app.engine
+            .storage_mut()
+            .tx_body_mut()
+            .set_transfer(id, retained)
+            .unwrap();
+        assert_eq!(app.poll(deadline - 1), error);
+        assert_eq!(app.engine.tx_body_transfer(id), Some(retained));
+        assert_eq!(app.engine.tx_body_payload(id), Some(&LARGE[..]));
+        assert_eq!(app.engine.storage().tx_body().occupied_count(), 1);
+        if deadline == 20 {
+            // A backwards clock sample must not turn a future deadline due.
+            assert_eq!(app.poll(9), error);
+            assert_eq!(app.engine.tx_body_transfer(id), Some(retained));
+            app.engine.storage_mut().tx_body_mut().pin(id).unwrap();
+            assert_eq!(app.poll(deadline), error);
+            assert_eq!(app.engine.tx_body_transfer(id), Some(retained));
+            assert_eq!(app.engine.tx_body_payload(id), Some(&LARGE[..]));
+            assert_eq!(app.engine.storage().tx_body().occupied_count(), 1);
+            app.engine.storage_mut().tx_body_mut().unpin(id).unwrap();
+        }
+        // Retry the same timestamp after unpinning; receive refusal is unchanged.
+        assert_eq!(app.poll(deadline), error);
+        assert!(app.engine.tx_body_transfer(id).is_none());
+        assert!(app.engine.tx_body_payload(id).is_none());
+        assert!(app.engine.lookup_tx_body(key).is_none());
+        assert_eq!(app.engine.storage().tx_body().occupied_count(), 0);
+    }
+    let fresh_key = key.with_identity(BodyTag::new(b"fresh").unwrap());
+    let fresh = app.engine.start_block2(fresh_key, b"fresh", 6).unwrap();
+    let retained = app.engine.tx_body_transfer(fresh).unwrap();
+    assert!(retained.terminal_deadline().is_none());
+    assert_eq!(app.poll(u64::MAX), error);
+    assert_eq!(app.engine.tx_body_transfer(fresh), Some(retained));
+    assert_eq!(app.engine.tx_body_payload(fresh), Some(&b"fresh"[..]));
+    assert_eq!(app.engine.lookup_tx_body(fresh_key), Some(fresh));
+    assert!(app.engine.lookup_tx_body(key).is_none());
+    assert_eq!(app.engine.storage().tx_body().occupied_count(), 1);
+}
+
+#[test]
 fn receive_failure_preserves_con_retries_and_give_up() {
     let peer = Endpoint::v4([192, 0, 2, 2], 5683);
     let mut app = App::profile::<profiles::Constrained>()

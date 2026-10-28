@@ -40,6 +40,18 @@ four observations and make no CPU/latency acceptance claim. Startup allocation
 request counts are measured separately from operation timing. Both CPU targets
 and whole memory remain open; the original source baseline is unchanged.
 
+Core #697 skips only the terminal TX-body expiry scan when a fresh documented
+O(1) occupied count is zero, immediately after deferred expiry. Occupied/pinned
+bodies retain the original loop; no state, capacity or buffer is added. Focused
+checks pass 435 executions, Clippy/fmt and MSRV. The unchanged eight-profile AB
+screen passes in 14.37/14.29 seconds. A separate predeclared two-pair-per-mode
+512-operation fixed-Service wall probe observes unprotected median changes
+-2.04%/-1.44%; OSCORE is mixed -2.23%/+1.82% and therefore inconclusive. Stop
+sampling and retain every run. This modest directional unprotected observation
+and removed empty work establish no CPU/latency or protected benefit claim.
+Measured App/requested owners stay unchanged; prior memory reductions remain.
+Both 50% targets and whole-memory/remaining qualification stay open.
+
 Companion #207 expands the prepared development suite to eight fixed rows:
 SmallDevice datagrams, blockwise and blockwise/Observe; Device and Gateway;
 Service without blockwise; and fixed/allocated Service blockwise. All run
