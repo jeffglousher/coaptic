@@ -137,10 +137,15 @@ def method(text, name):
   opening = text.index("{", matches[0].end())
   depth = 1
   pos = opening + 1
-  require(not re.search(r'["\'/]', text[opening + 1:text.index("\n    }", opening)]),
-      "unexpected lexical content in extracted method")
   while depth:
     require(pos < len(text), "unterminated method")
+    # These pinned methods contain no body literals or block comments. Skip
+    # line comments without interpreting their braces, preserving original bytes.
+    if text.startswith("//", pos):
+      pos = text.find("\n", pos)
+      require(pos >= 0, "unterminated method comment")
+      continue
+    require(text[pos] not in "\"'/", "unsupported literal/block comment in method")
     depth += (text[pos] == "{") - (text[pos] == "}")
     pos += 1
   return text[start:pos], opening - start
