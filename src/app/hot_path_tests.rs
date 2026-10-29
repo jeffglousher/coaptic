@@ -6,7 +6,7 @@ use super::*;
 use crate::message::Token;
 use crate::storage::{BlockTransfer, Memory, WithBodies, profiles};
 
-type Bodies = profiles::WithTxBody<profiles::WithRxBody<profiles::SmallDevice, 1, 64>, 4, 64>;
+type Bodies = profiles::WithTxBody<profiles::WithRxBody<profiles::Constrained, 1, 64>, 4, 64>;
 
 fn fixed_bodies() -> Engine<Memory<Bodies, WithBodies<Bodies>>> {
     Engine::from_storage(Memory::<Bodies>::with_block_wise())
@@ -200,7 +200,7 @@ fn legacy_notification<S: Storage + DatagramSlots>(
 fn notification_cases<const BYTES: usize>(
     mut contexts: impl FnMut() -> (oscore::Store<4, 1>, oscore::Request),
 ) {
-    type Base = profiles::SmallDevice;
+    type Base = profiles::Constrained;
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let token = Token::new(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
     for mask in 0..16 {
@@ -360,7 +360,7 @@ fn notification_four_metadata_options_match_legacy_protected() {
 #[test]
 fn notification_response_validation_precedes_slot_or_encoding_failure() {
     let mut engine = Engine::from_storage(Memory::<
-        profiles::WithTxDatagram<profiles::SmallDevice, 1, 1>,
+        profiles::WithTxDatagram<profiles::Constrained, 1, 1>,
     >::new());
     let mut context = oscore::Store::<4, 1>::new();
     // Even an unoccupied, out-of-range slot must not mask the first response error.
