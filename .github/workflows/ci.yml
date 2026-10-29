@@ -10,6 +10,10 @@ on:
         description: Run the full feature, packaging and companion matrix
         type: boolean
         default: true
+      cipher_probe:
+        description: Run separate response cipher continuation comparison
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,7 +28,7 @@ env:
 jobs:
   quick:
     name: Quick development checks
-    if: github.event_name == 'pull_request' || !inputs.full_validation
+    if: github.event_name == 'pull_request' || (!inputs.full_validation && !inputs.cipher_probe)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -157,3 +161,32 @@ jobs:
       suite_revision: cdc5b81dede6d8a80145443dce07fced883e0a5b
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}
+
+  cipher-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.cipher_probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: manual-linux-cpu
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Fetch the exact comparison baseline
+        run: git fetch --no-tags --depth=1 origin 869d4354f4a29158fe3644b8d5d71b9b0bb591d6
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.99.0
+      - name: Frozen proof and two ordered comparisons
+        shell: bash
+        run: python3 tools/experiments/cipher-continuation/hosted_probe.py
+      - name: Bounded evidence only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: oscore-cipher-continuation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cipher-continuation-probe/evidence/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

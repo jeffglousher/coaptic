@@ -1,0 +1,92 @@
+{
+  "schema": "coaptic-cipher-continuation-plan/1",
+  "baseline": "869d4354f4a29158fe3644b8d5d71b9b0bb591d6",
+  "scope": "immutable client authenticated-response opening, not replay admission/socket/process CPU/stack/whole memory",
+  "mechanism": "plain local one-shot cipher plus a Decrypt-only lazy continuation reusing existing AAD, nonce and private plaintext; no Option cipher/key-reference state",
+  "oracle": "exact original two-search entrypoint plus exact original free authentication helper calling unchanged one-shot AEAD, in same executable",
+  "criterion": "=0.5.1 default-features=false, temporary hosted dev dependency only",
+  "fixtures": {
+    "normal": {
+      "request_capacity": 4,
+      "occupied": 4,
+      "token_bytes": 8,
+      "payload_bytes": 32,
+      "query": "round-robin ordinary latest references, absent response PIV"
+    },
+    "observe": {
+      "request_capacity": 4,
+      "occupied": 4,
+      "token_bytes": 8,
+      "payload_bytes": 32,
+      "query": "last-slot registration plus two distinct downloads; latest/original/intermediate ciphertexts and copied tag tamper; separate key context for each PIV mode"
+    }
+  },
+  "nonce_rule": "one encryption per request nonce without PIV; fresh explicit server PIV per encryption; independent normal/PIV/noPIV key contexts; repeated immutable decryption is not fresh encryption",
+  "metrics": [
+    "normal-no-piv",
+    "first-slot-no-piv",
+    "latest-observe-piv",
+    "fallback-piv",
+    "fallback-no-piv",
+    "rejected-piv",
+    "rejected-no-piv"
+  ],
+  "rounds": [
+    [
+      "baseline",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "baseline"
+    ]
+  ],
+  "per_arm": {
+    "samples": 30,
+    "warmup_seconds": 0.5,
+    "measurement_seconds": 1,
+    "bootstrap_resamples": 10000,
+    "confidence": 0.95,
+    "noise_threshold": 0.02
+  },
+  "decision": {
+    "benefit": [
+      "fallback-piv",
+      "fallback-no-piv"
+    ],
+    "benefit_gate": "relative mean <= -0.05 and upper95 < 0 for both benefit metrics in BOTH rounds",
+    "guards": [
+      "normal-no-piv",
+      "first-slot-no-piv",
+      "latest-observe-piv",
+      "rejected-piv",
+      "rejected-no-piv"
+    ],
+    "guard_gate": "upper95 regression <= 0.02 for EVERY guard in BOTH rounds",
+    "other": "all correctness/source/binary/lock/fixture identity checks PASS; otherwise reject/inconclusive and stop; no replacing any sampled result"
+  },
+  "ratio_orientation": "Criterion second/first minus1; round2 invert ratio and reverse/invert bounds to report candidate/baseline.",
+  "runtime": "same test executable, host/compiler/flags; pin each measured process to same allowed CPU; no resource scans during timing",
+  "setup_policy": "retain deterministic setup failures; correct only before ANY timing sample exists. Once any arm samples, no retries/replacements/changed gates.",
+  "typing": "two exact baseline App empty-slice assertions temporarily annotated as &[u8] without changing assertions, matching validated prior setup",
+  "local_native_output_bytes": 0,
+  "private_metadata_cap_bytes": 65536,
+  "hosted_limits": {
+    "job_minutes": 15,
+    "build_seconds": 540,
+    "correctness_seconds": 120,
+    "arm_seconds": 45,
+    "artifact_bytes": 3145728,
+    "criterion_bytes": 524288,
+    "criterion_files": 384,
+    "target_cargo_bytes": 8589934592,
+    "free_floor_bytes": 4294967296
+  },
+  "cost_limits": "Closure capture/monomorphization, code placement, normal-path cost and emitted frames remain unmeasured. No persistent owner, cache or new backing buffer; no stack or whole-memory claim.",
+  "predecessor": {
+    "run": 40951035071,
+    "head": "636ad4e22185b5bf7b4d9f6e8641388814539511",
+    "outcome": "REJECT: fallback improves 10.4-10.7% but all three normal guards fail both rounds. All raw samples retained; no prior samples replaced.",
+    "separation": "This is a distinct source design and fresh oracle-matched comparison, not a retry of the rejected prototype. Hypothesis: preserve the normal construction path while deferring fallback; prior regression cause remains unproven."
+  }
+}
