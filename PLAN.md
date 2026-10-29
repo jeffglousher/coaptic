@@ -8,6 +8,18 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The separate response-only cipher continuation in #709 is rejected and remains
+unmerged. First-slot ordinary responses slow 2.727% / 8.411%, with upper95
++5.431% / +13.257%, failing the frozen 2% guard in both AB/BA rounds. Fallback
+improves 14.6-17.0%, but does not override those failures. All 139 focused
+correctness tests and four arms pass; separate quick checks pass 1,211
+all-feature and 711 minimal-feature library tests. Retain the
+[complete comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-cipher-continuation-20261029).
+The cipher-reuse campaign ends without replacement samples, changed gates,
+eight-profile expansion or another cipher variant. The ordinary-path cost cause
+remains unknown. No runtime optimization from this experiment is delivered;
+existing accepted reductions and all capabilities remain intact.
+
 The isolated response-binding lookup experiment in #705 is rejected and remains
 unmerged. Its lookup microbenchmark improves about 21%, but authenticated
 response opening slows 2.871% and 1.009% in the two AB/BA rounds; the first-slot
