@@ -1,0 +1,56 @@
+{
+  "schema": "coaptic-binding-probe-plan/1",
+  "baseline": "869d4354f4a29158fe3644b8d5d71b9b0bb591d6",
+  "scope": "private immutable client-response authentication wall cost, no replay-admission/socket/CPU50 claim",
+  "criterion": "=0.5.1 default-features=false, temporary hosted dev dependency only",
+  "fixtures": {
+    "normal": {
+      "request_capacity": 4,
+      "occupied": 4,
+      "token_bytes": 8,
+      "payload_bytes": 32,
+      "query": "round-robin latest references"
+    },
+    "fallback": {
+      "request_capacity": 4,
+      "occupied": 4,
+      "query": "last-slot original Observe reference after two downloads, latest fails authentication"
+    }
+  },
+  "metrics": [
+    "normal-entry",
+    "first-slot-entry",
+    "fallback-entry",
+    "normal-lookup"
+  ],
+  "first_slot_guard": "Reuse full normal fixture and query only slot0; same path as a single occupied first slot, preventing aggregate gains masking constrained-path regression.",
+  "rounds": [
+    [
+      "baseline",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "baseline"
+    ]
+  ],
+  "per_arm": {
+    "samples": 30,
+    "warmup_seconds": 0.5,
+    "measurement_seconds": 1,
+    "bootstrap_resamples": 10000,
+    "confidence": 0.95,
+    "noise_threshold": 0.02
+  },
+  "decision": {
+    "normal_entry": "relative mean<=-0.02 and upper95CI<0 in both rounds",
+    "normal_lookup": "relative mean<0 in both rounds",
+    "first_slot_entry": "upper95 regression<=0.02 in both rounds",
+    "fallback_entry": "upper95 regression<=0.02 in both rounds",
+    "other": "all source/binary/lock identities and full authentication checks must pass; otherwise STOP inconclusive/reject, no more variants/replacement runs"
+  },
+  "ratio_orientation": "Criterion reports second/first minus1; round2 invert ratio and reverse/invert bounds to express candidate/baseline.",
+  "runtime": "same test executable and host; pin benchmark child to one allowed CPU, no background disk sampling during measurement; capture affinity/compiler/features/flags",
+  "local_native_output_bytes": 0,
+  "metadata_cap_bytes": 65536
+}
