@@ -1,0 +1,86 @@
+{
+  "schema": "coaptic-observe-route-screen/1",
+  "baseline": "176c337d350a4f601e4c2a02b9bdfdcaf0792a92",
+  "mechanism": "Checked inverse of App route identity and direct Observe source slot lookup",
+  "metrics": [
+    "routes4-first-unprotected", "routes4-last-unprotected",
+    "routes32-first-unprotected", "routes32-last-unprotected",
+    "routes4-first-oscore", "routes4-last-oscore",
+    "routes32-first-oscore", "routes32-last-oscore"
+  ],
+  "benefit_metrics": ["routes32-last-unprotected", "routes32-last-oscore"],
+  "arms": [[1, "baseline"], [1, "candidate"], [2, "candidate"], [2, "baseline"]],
+  "parameters": {
+    "samples": 30,
+    "warmup_seconds": 0.2,
+    "measurement_seconds": 0.5,
+    "resamples": 10000,
+    "confidence_level": 0.95,
+    "rust": "1.99.0",
+    "criterion": "0.5.1",
+    "features": "std,oscore",
+    "no_default_features": true,
+    "release_lto": "thin",
+    "release_codegen_units": 1,
+    "affinity": "First CPU in actual allowed set; retain actual CPU and allowed set"
+  },
+  "workload": {
+    "timed_entry": "One complete synchronous App::poll with exactly one already-due ordinary NON notification",
+    "fixture": "Constrained-derived fixed server and separate fixed verifier client; blockwise disabled; 32-byte representation",
+    "server_routes": [4, 32],
+    "server_calls": 1,
+    "server_observe_entries": 1,
+    "server_deferred": 0,
+    "server_request_bindings": 4,
+    "server_associations": 1,
+    "route_population": "Every route slot occupied; target first or last",
+    "untimed": "Registration, signal, eligibility checks, previous notification consumption/authentication/content verification, virtual time advancement, deregistration and epoch recreation",
+    "eligibility": "No ingress, pending CON/retransmit, Q work, body ownership, deferred work or checkpoint work; exactly one eligible observer and one successful snapshot/send",
+    "epoch_notifications_max": 4096,
+    "pacing_ms": 3000,
+    "epoch_rule": "Count calibration and warmups; assert now before actual mandatory-CON deadline; real deregistration/draining then recreate with distinct epoch keys; no shallow state or sequence reset"
+  },
+  "oracle": {
+    "kind": "Exact frozen direct poll wrapper, engine and Site scan copies; no function-pointer Site field",
+    "poll_sha256": "dee35021506f7519a06685e95303af370677bce7c83ce4d999924f1b57436c22",
+    "engine_sha256": "7804bca9109868a4474c9491e2be6ff2a042b19ac6bb2a8516a53b7920703e13",
+    "site_sha256": "52031b2030bd850fa5302d27c78fd9ab5825b2c8602c7ecef384976aeb350169",
+    "allowed_edits": "Rename three copied declarations/calls and substitute exactly the due-notification Site call; preserve attributes except dual_io, bounds and bodies; verify inverse-renamed byte equality",
+    "limits": "Nested shared candidate paths must be ineligible. Direct copying preserves static-call opportunities, not identical emitted code or inlining"
+  },
+  "timing": {
+    "method": "Criterion iter_batched_ref with PerIteration and a borrowed preallocated fixture",
+    "verified_source": [
+      "https://raw.githubusercontent.com/bheisler/criterion.rs/0.5.1/src/bencher.rs",
+      "https://raw.githubusercontent.com/bheisler/criterion.rs/0.5.1/src/lib.rs"
+    ],
+    "boundary": "PerIteration selects batch size one: setup before start; routine between start/end; input/output drops afterward; no Vec in this branch. Warmup elapsed includes setup",
+    "limits": "Per-iteration clock, black_box and borrow/dereference overhead are included symmetrically; never subtract calibration or nominal overhead"
+  },
+  "gates": {
+    "correctness": "All required nonignored tests and full-output/authentication/selection/refusal/recovery fixture comparisons pass before sampling",
+    "fixture_order": "Before any sample, run one baseline and one candidate fixture-only process; compare all eight deterministic full-wire/content receipts. Timing arms also retain and compare their fixed preludes",
+    "fixture_identity": "Identical deterministic fixtures may be replayed in isolated test processes; every ordinary epoch recreation inside a process uses distinct key material and normal deregistration/draining",
+    "benefits": "Both benefit metrics: candidate/baseline mean change <= -0.05 and normalized upper95 < 0 in both rounds",
+    "guards": "Every other metric: normalized candidate/baseline upper95 <= 0.02 in both rounds",
+    "otherwise": "Reject or inconclusive; no threshold relaxation, replacement cohort or selective omission"
+  },
+  "limits": {
+    "job_minutes": 15,
+    "build_seconds": 540,
+    "correctness_seconds": 120,
+    "fixture_process_seconds": 60,
+    "measurement_total_seconds": 240,
+    "arm_seconds_max": 90,
+    "pair_bytes_max": 131072,
+    "test_stack": "Unchanged default; no increase",
+    "target_plus_cargo_home_bytes": 8589934592,
+    "free_bytes_min": 4294967296,
+    "remote_evidence_bytes": 3145728,
+    "criterion_bytes": 524288,
+    "retained_local_phase_bytes": 98304,
+    "local_build_output_bytes": 0
+  },
+  "stopping": "Any identity, fixture, cleanup, budget, setup-iteration or deadline failure stops later arms and remains retained. Setup corrections allowed only before any sample. After any sample no replacement or retry cohort",
+  "claims": "Instrumented hosted complete-notification poll wall cost only. No CPU50, socket throughput, emitted frame, peak stack, whole-memory, replay-admission or physical-device claim"
+}
