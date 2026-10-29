@@ -333,7 +333,7 @@ struct Pair<const N: usize> {
 }
 
 const fn pair_bytes<const N: usize>() -> usize {
-    size_of::<Pair<N>>() + size_of::<Link>() + 2 * size_of::<usize>()
+    size_of::<Pair<N>>() + size_of::<RefCell<Link>>() + 2 * size_of::<usize>()
 }
 
 const _: () = {
