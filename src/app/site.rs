@@ -388,12 +388,11 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
 
     /// Snapshot fn for an opaque App route identity.
     pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<SnapshotSource<T>> {
-        self.entries.iter().enumerate().find_map(|(index, entry)| {
-            entry
-                .as_ref()
-                .filter(|_| ObserveResource::app_route(index) == resource)
-                .and_then(|entry| entry.methods.observe_source())
-        })
+        self.entries
+            .get(resource.app_route_index()?)?
+            .as_ref()?
+            .methods
+            .observe_source()
     }
 }
 
@@ -465,6 +464,194 @@ mod lazy_catalog_tests;
 #[cfg(test)]
 #[path = "extended_handler_tests.rs"]
 mod extended_handler_tests;
+
+#[cfg(test)]
+mod observe_lookup_tests {
+    use super::super::routing::get;
+    use super::*;
+    use crate::message::{Message, MessageId, Opt, OptionsBuilder};
+    use crate::storage::{Endpoint, ObserveInterest, ObserveSelection};
+
+    fn handler(_: Request<'_>) -> Response<'static> {
+        Response::content(b"handler")
+    }
+
+    fn first() -> Response<'static> {
+        Response::content(b"first")
+    }
+
+    fn last() -> Response<'static> {
+        Response::content(b"last")
+    }
+
+    fn selected(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.method(), Some(Method::Get));
+        assert_eq!(request.path(), &["selected"]);
+        let mut query = request.uri_query();
+        assert_eq!(query.next(), Some(Ok("pick=blue")));
+        assert_eq!(query.next(), None);
+        Response::content(b"selected blue")
+    }
+
+    fn selected_interest() -> ObserveInterest {
+        let mut options = OptionsBuilder::<2>::new();
+        options.push(Opt::uri_path("selected")).unwrap();
+        options.push(Opt::uri_query("pick=blue")).unwrap();
+        let message = Message::con(Code::GET, MessageId::new(1), Token::EMPTY)
+            .with_options(options.as_slice());
+        let mut selection = ObserveSelection {
+            bytes: [0; crate::storage::BlockTransfer::REQUEST_IDENTITY_BYTES],
+            len: 0,
+        };
+        selection.len = message.encode(&mut selection.bytes).unwrap() as u16;
+        ObserveInterest::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 1], 5683))
+            .with_selection(Some(selection))
+    }
+
+    fn original_scan<const N: usize>(
+        site: &Site<N>,
+        resource: ObserveResource,
+    ) -> Option<SnapshotSource> {
+        site.entries.iter().enumerate().find_map(|(index, entry)| {
+            entry
+                .as_ref()
+                .filter(|_| ObserveResource::app_route(index) == resource)
+                .and_then(|entry| entry.methods.observe_source())
+        })
+    }
+
+    fn assert_lookup<const N: usize>(
+        site: &Site<N>,
+        resource: ObserveResource,
+        expected: Option<&[u8]>,
+    ) {
+        let actual = site.observe_source(resource);
+        let original = original_scan(site, resource);
+        assert_eq!(actual.is_some(), original.is_some());
+        assert_eq!(
+            matches!(actual, Some(SnapshotSource::Selected(_))),
+            matches!(original, Some(SnapshotSource::Selected(_)))
+        );
+        let interest = selected_interest();
+        let actual = actual.and_then(|source| source.snapshot(&interest, None));
+        let original = original.and_then(|source| source.snapshot(&interest, None));
+        assert_eq!(actual.as_ref().map(Response::payload), expected);
+        assert_eq!(
+            actual.as_ref().map(Response::payload),
+            original.as_ref().map(Response::payload)
+        );
+        assert_eq!(
+            actual.as_ref().map(Response::code),
+            original.as_ref().map(Response::code)
+        );
+    }
+
+    #[test]
+    fn observe_source_matches_scan_for_zero_single_and_populated_sites() {
+        assert_lookup(&Site::<0>::new(), ObserveResource::app_route(0), None);
+        let mut single = Site::<1>::new();
+        assert_lookup(&single, ObserveResource::app_route(0), None);
+        single.route("first", get(handler).observe(first));
+        assert_lookup(&single, single.observe_resource(&["first"]), Some(b"first"));
+        assert_lookup(&single, ObserveResource::app_route(1), None);
+        single.route("first", get(handler));
+        assert_lookup(&single, single.observe_resource(&["first"]), None);
+
+        let mut site = Site::<4>::new();
+        site.route("first", get(handler).observe(first));
+        site.route("absent", get(handler));
+        site.route("selected", get(handler).observe_selected(selected));
+        site.route("last", get(handler).observe(last));
+        for (index, payload) in [
+            Some(b"first".as_slice()),
+            None,
+            Some(b"selected blue".as_slice()),
+            Some(b"last".as_slice()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_lookup(&site, ObserveResource::app_route(index), payload);
+        }
+        let interest = ObserveInterest::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 1], 5683));
+        let resource = site.observe_resource(&["selected"]);
+        assert!(
+            site.observe_source(resource)
+                .unwrap()
+                .snapshot(&interest, None)
+                .is_none()
+        );
+        assert!(
+            original_scan(&site, resource)
+                .unwrap()
+                .snapshot(&interest, None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn observe_source_refuses_none_out_of_range_and_engine_path_hash_misses() {
+        let mut site = Site::<4>::new();
+        for path in ["first", "second", "third", "last"] {
+            site.route(path, get(handler).observe(first));
+        }
+        for resource in [
+            ObserveResource::NONE,
+            ObserveResource::app_route(4),
+            ObserveResource::app_route(5),
+            ObserveResource::app_route(usize::MAX - 1),
+            ObserveResource::from_path(&[]),
+            ObserveResource::from_path(&["first"]),
+            ObserveResource::from_path(&["outside"]),
+            site.observe_resource(&["missing"]),
+            site.observe_resource(&["first", "extra"]),
+        ] {
+            assert_lookup(&site, resource, None);
+        }
+        assert_lookup(&site, ObserveResource::app_route(0), Some(b"first"));
+        assert_lookup(&site, ObserveResource::app_route(3), Some(b"first"));
+    }
+
+    #[test]
+    fn observe_source_uses_stable_slots_through_holes_replacement_and_reuse() {
+        let mut site = Site::<4>::new();
+        site.route("first", get(handler).observe(first));
+        site.route("hole", get(handler).observe(last));
+        site.route("selected", get(handler).observe_selected(selected));
+        site.route("last", get(handler).observe(last));
+        let first_id = site.observe_resource(&["first"]);
+        let hole_id = site.observe_resource(&["hole"]);
+        let selected_id = site.observe_resource(&["selected"]);
+        let last_id = site.observe_resource(&["last"]);
+        assert!(site.remove_route("hole").unwrap());
+        assert!(site.remove_route("selected").unwrap());
+        assert_eq!(site.observe_resource(&["hole"]), ObserveResource::NONE);
+        assert_eq!(site.observe_resource(&["last"]), last_id);
+        assert_lookup(&site, hole_id, None);
+        assert_lookup(&site, selected_id, None);
+        assert_lookup(&site, last_id, Some(b"last"));
+
+        site.route("first", get(handler).observe(last));
+        assert_eq!(site.observe_resource(&["first"]), first_id);
+        assert_lookup(&site, first_id, Some(b"last"));
+        site.route("replacement", get(handler).observe(first));
+        assert_eq!(site.observe_resource(&["replacement"]), hole_id);
+        // Removed handles must be discarded; both lookups alias a reused slot.
+        assert_lookup(&site, hole_id, Some(b"first"));
+        assert_lookup(&site, selected_id, None);
+        site.route("selected", get(handler).observe_selected(selected));
+        assert_eq!(site.observe_resource(&["selected"]), selected_id);
+        assert_lookup(&site, selected_id, Some(b"selected blue"));
+        assert_lookup(&site, last_id, Some(b"last"));
+
+        let mut foreign = Site::<1>::new();
+        foreign.route("foreign", get(handler).observe(first));
+        let foreign_id = foreign.observe_resource(&["foreign"]);
+        assert_eq!(foreign_id, first_id);
+        assert_lookup(&foreign, first_id, Some(b"first"));
+        assert_lookup(&site, foreign_id, Some(b"last"));
+    }
+}
 
 /// Identity of this catalog. RFC 9177 section 4.4 requires an ETag on every Q-Block2 payload.
 fn catalog_etag(body: &[u8]) -> [u8; 4] {

@@ -260,6 +260,10 @@ impl ObserveResource {
         }
     }
 
+    pub(crate) fn app_route_index(self) -> Option<usize> {
+        usize::try_from(self.hash.checked_sub(1)?).ok()
+    }
+
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
@@ -1320,6 +1324,50 @@ where
             .expect("committed unpinned body");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod observe_resource_tests {
+    use super::ObserveResource;
+
+    #[test]
+    fn app_route_index_rejects_zero_and_round_trips_route_slots() {
+        assert_eq!(ObserveResource::NONE.app_route_index(), None);
+        assert_eq!(ObserveResource { hash: 0 }.app_route_index(), None);
+        for index in [0, 1, 7, usize::MAX - 1] {
+            let resource = ObserveResource::app_route(index);
+            assert_eq!(resource.app_route_index(), Some(index));
+            for other in [0, 1, 7, usize::MAX - 1] {
+                assert_eq!(
+                    ObserveResource::app_route(other) == resource,
+                    other == index
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn app_route_index_checks_integer_representability() {
+        assert_eq!(
+            ObserveResource {
+                hash: usize::MAX as u64,
+            }
+            .app_route_index(),
+            Some(usize::MAX - 1)
+        );
+        assert_eq!(
+            ObserveResource { hash: u64::MAX }.app_route_index(),
+            if usize::BITS == u64::BITS {
+                Some(usize::MAX - 1)
+            } else {
+                None
+            }
+        );
+        if let Some(hash) = (usize::MAX as u64).checked_add(1) {
+            assert_eq!(ObserveResource { hash }.app_route_index(), Some(usize::MAX));
+            assert_eq!(ObserveResource { hash: hash + 1 }.app_route_index(), None);
+        }
+    }
 }
 
 #[cfg(test)]
