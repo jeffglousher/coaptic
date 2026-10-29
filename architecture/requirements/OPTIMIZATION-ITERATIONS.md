@@ -355,3 +355,56 @@ or this benchmark's compiler. Compiler/executable identity and process cleanup
 remain producer evidence; no ELF was independently inspected. No process/server
 CPU50, socket, replay-admission, emitted-stack, hardware or whole-memory gain
 follows. Both CPU objectives and remaining qualification remain open.
+
+## October 29 response-only cipher continuation
+
+**REJECT; #709 is not delivered to main.** Candidate `905a3977` uses one plain
+local cipher and a lazy continuation reached only after the first raw AEAD
+failure. The continuation refills existing AAD backing and overwrites the
+existing nonce; both attempts reuse immutable ciphertext and private plaintext
+scratch. The cipher drops before Inner/code/stitch/decode. Original one-shot
+opening, both binding searches, capacities, security and terminal errors remain
+unchanged. This is a separate design and comparison from #707, whose rejected
+samples and disposition remain intact; it is not a replacement run.
+
+The [retained data](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-cipher-continuation-20261029)
+contains all 126 Criterion JSON members, exact collector receipt, selected lock,
+frozen plan, correctness output and explicit derived input/fixture projections.
+Four arms pass with 48 matching fixture records and 139 focused correctness
+tests. Twenty-eight sample records contain 840 positive finite time/iteration
+pairs; the collector's 56-array count counts times and iterations separately.
+Full response/reference/error/tail checks remain outside clocks; immutable
+reopening is not App replay admission.
+
+Explicit-PIV fallback improves 17.038% / 14.638%; absent-PIV fallback improves
+16.922% / 15.105%. Rejected traffic improves 19.053% / 16.873% with PIV and
+18.398% / 17.021% without. Round-robin ordinary changes are -9.148% / +0.285%,
+and latest-bound Observe changes are -0.784% / +0.691%; those guards pass.
+First-slot ordinary responses regress +2.727% / +8.411%, with normalized 95%
+intervals [+0.865%, +5.431%] / [+4.591%, +13.257%]. Both upper bounds violate
+the unchanged +2% guard. The first-slot cost cause is not established by source
+structure; stronger fallback gains cannot rescue this result.
+
+The frozen AB/BA plan requires both fallback means <= -5% with upper95 below
+zero and every other upper95 regression <= +2%, in both rounds. Source, lock,
+binary, fixture and correctness gates are mandatory. Rejection ends this campaign:
+no replacement samples, relaxed thresholds, eight-profile expansion or another
+cipher variant. Existing delivered reductions are retained; no functionality or
+capability is removed to obtain a performance result.
+
+The timing executable uses Rust 1.99.0, Linux x86_64 CPU0, Criterion 0.5.1,
+release thin LTO/one codegen unit and `std,oscore` without defaults. Each arm has
+30 samples, 0.5-second warmup and 1-second measurement. The 219-second hosted
+job includes a reported 155-second release build; the proof step is 205 seconds
+and four timed libtest processes total 46.77 seconds. These are nested costs.
+Separate quick run `40957984918` uses Rust 1.99.1 on the exact same tree and
+passes formatting, strict all-target/all-feature Clippy, 1,211 all-feature and
+711 no-default library tests. MSRV, the full feature matrix and
+`extended_oscore` integration were not run; rejection stops further qualification.
+
+Compiler/executable identity, resource enforcement and process settlement remain
+producer evidence, with no uploaded ELF or independent kernel cleanup replay.
+The collector checks complete source maps; publication retains selected identity
+projections, not those full maps. No server/process CPU50, socket, replay
+admission, emitted-frame/peak-stack, physical or whole-memory qualification
+follows. Both CPU objectives and whole-memory acceptance remain open.
