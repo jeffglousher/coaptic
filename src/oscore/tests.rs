@@ -6455,14 +6455,11 @@ fn older_concurrent_request_binding_is_not_authenticated() {
     );
     let n = server.protect_response(&plain, latest, &mut wire).unwrap();
     let protected = decode(&wire[..n]).unwrap();
-    assert_eq!(
-        client
-            .unprotect_bound_response(&protected, &mut out)
-            .unwrap()
-            .0
-            .payload(),
-        b"old"
-    );
+    let (inner, used) = client
+        .unprotect_bound_response(&protected, &mut out)
+        .unwrap();
+    assert_eq!(inner.payload(), b"old");
+    assert_eq!(used, latest);
     let n = server.protect_response(&plain, observe, &mut wire).unwrap();
     let protected = decode(&wire[..n]).unwrap();
     assert_eq!(
@@ -6472,6 +6469,103 @@ fn older_concurrent_request_binding_is_not_authenticated() {
             .1,
         observe
     );
+}
+
+#[test]
+fn unknown_response_token_precedes_malformed_oscore_header() {
+    let token = Token::from_checked(&[7]);
+    let reference = RequestRef::from_kid(&[], PartialIv::from_seq(4).unwrap()).unwrap();
+    let malformed = [0xe0];
+    let options = [Opt::oscore(&malformed)];
+    let response = Message::new(Type::Acknowledgement, Code::CHANGED, MessageId::new(9))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&[0; 8]);
+    let mut wire = [0; WIRE];
+    let n = encode(&response, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+    let mut out = [0; WIRE];
+    let mut client = client_c1();
+    assert_eq!(
+        client.unprotect_bound_response(&protected, &mut out),
+        Err(Error::Context)
+    );
+    client.remember(token, reference).unwrap();
+    assert_eq!(
+        client.unprotect_bound_response(&protected, &mut out),
+        Err(Error::Header)
+    );
+}
+
+#[test]
+fn bound_response_lookup_matches_complete_extended_tokens() {
+    use super::BoundedSecurityContext;
+    use crate::message::{decode_with_token, extended};
+
+    type WideToken = extended::Token<16>;
+    let mut client = BoundedSecurityContext::<2, WideToken>::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &MASTER_SALT,
+        sender_id: &[],
+        recipient_id: &[1],
+        id_context: &[],
+    })
+    .unwrap();
+    let server = BoundedSecurityContext::<2, WideToken>::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &MASTER_SALT,
+        sender_id: &[1],
+        recipient_id: &[],
+        id_context: &[],
+    })
+    .unwrap();
+    let first = WideToken::new(&[7; 16]).unwrap();
+    let mut last_differs = [7; 16];
+    last_differs[15] = 8;
+    let second = WideToken::new(&last_differs).unwrap();
+    let absent = WideToken::new(&[7; 15]).unwrap();
+    let original = RequestRef::from_kid(&[], PartialIv::from_seq(1).unwrap()).unwrap();
+    let latest = RequestRef::from_kid(&[], PartialIv::from_seq(4).unwrap()).unwrap();
+    client.remember_live(first, original, true).unwrap();
+    client.remember_download(first, latest).unwrap();
+    client.remember(second, original).unwrap();
+    assert_eq!(
+        client.response_bindings(first),
+        Some((latest, Some(original)))
+    );
+    assert_eq!(client.response_bindings(second), Some((original, None)));
+    assert_eq!(client.response_bindings(absent), None);
+
+    let mut wire = [0; WIRE];
+    let mut out = [0; WIRE];
+    for (token, reference) in [(first, latest), (first, original), (second, original)] {
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(9))
+            .with_token(token)
+            .with_payload(b"bound");
+        let n = server
+            .protect_response(&response, reference, &mut wire)
+            .unwrap();
+        let protected = decode_with_token::<WideToken>(&wire[..n]).unwrap();
+        let (inner, used) = client
+            .unprotect_bound_response(&protected, &mut out)
+            .unwrap();
+        assert_eq!(used, reference);
+        assert_eq!(inner.token(), token);
+        assert_eq!(inner.payload(), b"bound");
+    }
+    for (token, error) in [(second, Error::Decrypt), (absent, Error::Context)] {
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(9))
+            .with_token(token)
+            .with_payload(b"bound");
+        let n = server
+            .protect_response(&response, latest, &mut wire)
+            .unwrap();
+        let protected = decode_with_token::<WideToken>(&wire[..n]).unwrap();
+        assert_eq!(
+            client.unprotect_bound_response(&protected, &mut out),
+            Err(error)
+        );
+    }
 }
 
 #[path = "replay_tests.rs"]

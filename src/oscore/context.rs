@@ -548,12 +548,22 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
         self.remember(token, request)
     }
 
+    #[cfg(test)]
     pub(crate) fn observe_request(&self, token: T) -> Option<RequestRef> {
         self.live
             .iter()
             .flatten()
             .find(|row| row.token == token)
             .and_then(|row| row.observe_request)
+    }
+
+    // Fetch both authentication candidates from the same live row in one scan.
+    pub(crate) fn response_bindings(&self, token: T) -> Option<(RequestRef, Option<RequestRef>)> {
+        self.live
+            .iter()
+            .flatten()
+            .find(|row| row.token == token)
+            .map(|row| (row.request, row.observe_request))
     }
 
     pub(crate) fn response_without_piv_fresh(&self, token: T) -> Result<(), Error> {

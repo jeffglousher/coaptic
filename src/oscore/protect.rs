@@ -356,10 +356,12 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
         protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
     ) -> Result<(&'a [u8], RequestRef), Error> {
-        let request = self.lookup(protected.token()).ok_or(Error::Context)?;
-        let observation = self
-            .observe_request(protected.token())
-            .filter(|old| *old != request);
+        // Resolve the row before parsing so an unknown Token remains Context,
+        // even when the response also has a malformed OSCORE header.
+        let (request, observation) = self
+            .response_bindings(protected.token())
+            .ok_or(Error::Context)?;
+        let observation = observation.filter(|old| *old != request);
         unprotect_response_candidates(self, protected, request, observation, out)
     }
 }
