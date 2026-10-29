@@ -5918,16 +5918,19 @@ fn response_body_for<S: Storage + BodySlots>(
     engine: &mut Engine<S>,
     key: BlockKey<S::Token>,
 ) -> Option<SlotId> {
+    let slots = engine.capacities().tx_body_slots.unwrap_or(0);
     // SlotPool's live occupancy contract also applies to custom backends.
     // Read it afresh: acquired empty slots and pinned snapshots remain occupied.
-    if engine
-        .storage_mut()
-        .tx_body()
-        .is_some_and(|pool| pool.occupied_count() == 0)
+    // A single transfer probe is already bounded; avoid a preliminary query there.
+    if slots > 1
+        && engine
+            .storage_mut()
+            .tx_body()
+            .is_some_and(|pool| pool.occupied_count() == 0)
     {
         return None;
     }
-    (0..engine.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
+    (0..slots).find_map(|index| {
         let id = SlotId::from_index(index);
         let transfer = engine.tx_body_transfer(id)?;
         (transfer.token() == key.token()
