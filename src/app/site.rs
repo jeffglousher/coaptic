@@ -465,6 +465,88 @@ mod lazy_catalog_tests;
 #[path = "extended_handler_tests.rs"]
 mod extended_handler_tests;
 
+/// Identity of this catalog. RFC 9177 section 4.4 requires an ETag on every Q-Block2 payload.
+fn catalog_etag(body: &[u8]) -> [u8; 4] {
+    let mut hash = 0x811c_9dc5u32;
+    for byte in body {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash.to_be_bytes()
+}
+
+fn link_bytes(segments: &[&str], limit: usize) -> Option<usize> {
+    if segments.is_empty() {
+        (limit >= 3).then_some(3)
+    } else {
+        segments.iter().try_fold(2usize, |total, segment| {
+            let total = total.checked_add(1)?;
+            if total > limit {
+                return None;
+            }
+            segment.as_bytes().iter().try_fold(total, |n, &byte| {
+                let n = n.checked_add(if uri_path_byte_is_literal(byte) { 1 } else { 3 })?;
+                (n <= limit).then_some(n)
+            })
+        })
+    }
+}
+
+fn uri_path_byte_is_literal(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+                | b':'
+                | b'@'
+        )
+}
+
+fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
+    if link_bytes(segments, buf.len().saturating_sub(*n)).is_none() {
+        return false;
+    }
+    buf[*n] = b'<';
+    *n += 1;
+    if segments.is_empty() {
+        buf[*n] = b'/';
+        *n += 1;
+    } else {
+        for segment in segments {
+            buf[*n] = b'/';
+            *n += 1;
+            for &byte in segment.as_bytes() {
+                if uri_path_byte_is_literal(byte) {
+                    buf[*n] = byte;
+                    *n += 1;
+                } else {
+                    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                    buf[*n] = b'%';
+                    buf[*n + 1] = HEX[usize::from(byte >> 4)];
+                    buf[*n + 2] = HEX[usize::from(byte & 15)];
+                    *n += 3;
+                }
+            }
+        }
+    }
+    buf[*n] = b'>';
+    *n += 1;
+    true
+}
+
 #[cfg(test)]
 mod observe_lookup_tests {
     use super::super::routing::get;
@@ -651,86 +733,4 @@ mod observe_lookup_tests {
         assert_lookup(&foreign, first_id, Some(b"first"));
         assert_lookup(&site, foreign_id, Some(b"last"));
     }
-}
-
-/// Identity of this catalog. RFC 9177 section 4.4 requires an ETag on every Q-Block2 payload.
-fn catalog_etag(body: &[u8]) -> [u8; 4] {
-    let mut hash = 0x811c_9dc5u32;
-    for byte in body {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash.to_be_bytes()
-}
-
-fn link_bytes(segments: &[&str], limit: usize) -> Option<usize> {
-    if segments.is_empty() {
-        (limit >= 3).then_some(3)
-    } else {
-        segments.iter().try_fold(2usize, |total, segment| {
-            let total = total.checked_add(1)?;
-            if total > limit {
-                return None;
-            }
-            segment.as_bytes().iter().try_fold(total, |n, &byte| {
-                let n = n.checked_add(if uri_path_byte_is_literal(byte) { 1 } else { 3 })?;
-                (n <= limit).then_some(n)
-            })
-        })
-    }
-}
-
-fn uri_path_byte_is_literal(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'-' | b'.'
-                | b'_'
-                | b'~'
-                | b'!'
-                | b'$'
-                | b'&'
-                | b'\''
-                | b'('
-                | b')'
-                | b'*'
-                | b'+'
-                | b','
-                | b';'
-                | b'='
-                | b':'
-                | b'@'
-        )
-}
-
-fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
-    if link_bytes(segments, buf.len().saturating_sub(*n)).is_none() {
-        return false;
-    }
-    buf[*n] = b'<';
-    *n += 1;
-    if segments.is_empty() {
-        buf[*n] = b'/';
-        *n += 1;
-    } else {
-        for segment in segments {
-            buf[*n] = b'/';
-            *n += 1;
-            for &byte in segment.as_bytes() {
-                if uri_path_byte_is_literal(byte) {
-                    buf[*n] = byte;
-                    *n += 1;
-                } else {
-                    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-                    buf[*n] = b'%';
-                    buf[*n + 1] = HEX[usize::from(byte >> 4)];
-                    buf[*n + 2] = HEX[usize::from(byte & 15)];
-                    *n += 3;
-                }
-            }
-        }
-    }
-    buf[*n] = b'>';
-    *n += 1;
-    true
 }
