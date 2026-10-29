@@ -205,6 +205,17 @@ def normalize(estimate, inverse):
         "lower": 1 / (1 + d["upper"]) - 1,
         "upper": 1 / (1 + d["lower"]) - 1}
   return d
+def explicit_empty_fixture_slices(text):
+  # Criterion brings serde_json's additional PartialEq implementations into
+  # libtest. Preserve these existing assertions while fixing their byte type.
+  old = (".get_option(OptionNumber::NO_RESPONSE)\n"
+         "                        .unwrap()\n"
+         "                        .value(),\n"
+         "                    &[]")
+  require(text.count(old) == 2, "unexpected empty-slice fixture sites")
+  new = old + " as &[u8]"
+  return text.replace(old, new), old, new
+
 def decide():
   result = {}
   for n in (1, 2):
@@ -314,6 +325,17 @@ def main():
       "unexpected existing dev dependency")
   Path("Cargo.toml").write_text(manifest.replace("[dev-dependencies]", "[dev-dependencies]\n"
     "criterion = { version = '=0.5.1', default-features = false }", 1))
+  fixture_path = Path("src/app/tests.rs")
+  fixture_blob = small(["git", "rev-parse", BASE + ":src/app/tests.rs"])
+  require(small(["git", "hash-object", str(fixture_path)]) == fixture_blob,
+      "existing app test fixtures differ from baseline")
+  fixture_before = digest(fixture_path)
+  fixture_text, fixture_old, fixture_new = explicit_empty_fixture_slices(fixture_path.read_text())
+  fixture_path.write_text(fixture_text)
+  save("injected/test-typing.json", {"path": str(fixture_path), "baseline_blob": fixture_blob,
+    "before_sha256": fixture_before, "after_sha256": digest(fixture_path),
+    "occurrences": 2, "old": fixture_old, "new": fixture_new,
+    "scope": "temporary libtest type annotation only; assertions retained"})
   for p in (SOURCE[0], SOURCE[1], "Cargo.toml"):
     save("injected/" + p, Path(p).read_bytes())
   resource_guard()
