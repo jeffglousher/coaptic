@@ -6,7 +6,7 @@ use super::*;
 use crate::message::Token;
 use crate::storage::{BlockTransfer, Memory, WithBodies, profiles};
 
-type Bodies = profiles::WithTxBody<profiles::WithRxBody<profiles::Constrained, 1, 64>, 4, 64>;
+type Bodies = profiles::WithTxBody<profiles::WithRxBody<profiles::Constrained, 1, 1024>, 4, 1024>;
 
 fn fixed_bodies() -> Engine<Memory<Bodies, WithBodies<Bodies>>> {
     Engine::from_storage(Memory::<Bodies>::with_block_wise())
@@ -80,13 +80,16 @@ fn body_selection<S: Storage<Token = Token> + BodySlots>(mut engine: Engine<S>) 
     let token = Token::new(&[1]).unwrap();
     let key = BlockKey::new(token, peer);
     let other_token = BlockKey::new(Token::new(&[2]).unwrap(), peer);
-    let other_association = BlockKey::new(token, peer.with_association(1));
+    #[cfg(feature = "oscore")]
+    let other_identity = BlockKey::new(token, peer.with_association(1));
+    #[cfg(not(feature = "oscore"))]
+    let other_identity = BlockKey::new(token, Endpoint::v4([192, 0, 2, 1], 5684));
     let other_endpoint = BlockKey::new(token, Endpoint::v4([192, 0, 2, 2], 5683));
     let ids = core::array::from_fn::<_, 4, _>(|_| engine.acquire_tx_body().unwrap());
     let transfers = [
         BlockTransfer::outgoing_block1(key, 0, 0, 64).unwrap(),
         BlockTransfer::outgoing_block2(other_token, 0, 0, 64).unwrap(),
-        BlockTransfer::outgoing_q_block2(other_association, 0, 0, 64).unwrap(),
+        BlockTransfer::outgoing_q_block2(other_identity, 0, 0, 64).unwrap(),
         BlockTransfer::outgoing_block2(key, 0, 0, 64).unwrap(),
     ];
     for (id, transfer) in ids.into_iter().zip(transfers) {
@@ -95,7 +98,7 @@ fn body_selection<S: Storage<Token = Token> + BodySlots>(mut engine: Engine<S>) 
             .set_tx_body_transfer(id, transfer)
             .unwrap();
     }
-    for candidate in [key, other_token, other_association, other_endpoint] {
+    for candidate in [key, other_token, other_identity, other_endpoint] {
         assert_lookup(&mut engine, candidate);
     }
     assert_eq!(response_body_for(&mut engine, key), Some(ids[3]));
