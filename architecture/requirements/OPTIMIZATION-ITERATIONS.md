@@ -44,6 +44,73 @@ reduction and its limited observation; do not present it as a CPU gain, protecte
 improvement or satisfaction of either 50% target. Existing `black_box` complete
 verification suffices for this screen; no Criterion dependency is needed here.
 
+## October 29 hot-path screen
+
+Seven candidates were bounded; six were implemented in the staged
+[combined PR #699](https://github.com/jeffglousher/coaptic/pull/699).
+These were source-work nominations, not measured hotspot attribution.
+No feature, configured capacity or authentication rule was removed.
+
+1. **Select notification scratch independently.** `encode_notification` can
+   append only ETag, Observe, Content-Format and Max-Age. Its private builder
+   now has four entries instead of 24. The generic response encoder and public
+   `OptionsBuilder` remain unchanged. Actual Windows x64 type layout is
+   584 to 104 bytes, a 480-byte local-object reduction. This does not prove an
+   emitted-frame, peak-stack, CPU or whole-memory reduction.
+2. **Hold datagram acquisition reset removal.** Constructors and successful
+   releases already clear owned fixed/allocated metadata. Removing the repeated
+   acquire reset passes lifecycle checks, but an independent runtime benefit
+   has not been established. Keep the patch and pin/refusal/recovery tests.
+3. **Hold retained-response lookup shortcuts.** A fresh zero occupied count
+   can skip a body-table scan. An occupied pool instead gains a count query
+   before its unchanged scan. The refinement restores the original lookup for
+   zero/single-slot pools and keeps the shortcut only above one slot. Both
+   tested variants remain staged; neither establishes a net performance win.
+4. **Hold the combined OSCORE request-binding lookup.** One borrowed row yields
+   latest and original Observe references, preserving latest-first authentication
+   and the distinct-original fallback. Functional proof passes; client reception
+   cost is outside the existing server-only timing probe.
+5. **Hold parsed response-PIV reuse.** Carrying authenticated response metadata
+   removes a second option search/header parse in client admission. Replay and
+   failed-ACK checks pass. Independent runtime benefit remains unmeasured.
+6. **Hold direct Observe route indexing.** Checked inversion of App-local slot
+   identities removes a route scan without changing holes/reuse behavior. The
+   quick fixture has one populated route, so it does not measure scaling benefit.
+7. **Park exact/fallback body-search fusion without implementation.** Extra
+   identity comparisons before a later exact hit could worsen that workload.
+
+The unchanged eight-profile suite ran two predeclared opposite-order pairs for
+each combined source: `f4fb8e8` and refined `c39b100`, against `28d9f1a`, with
+companion `dd74a00` and the same frozen loopback client. All eight runs pass
+functional, security, refusal/recovery and owner checks in 14.00–14.69 seconds
+for the first cohort and 13.92–14.20 seconds for the refinement. Each includes
+16 socket cells, six C1 core cells, ten explicitly unsupported core cells and
+both separate Observe proofs. App inline and requested-pool owners are unchanged.
+
+Do not promote the combined timing result. The first cohort's unprotected
+SmallDevice/Observe GET median increases by 6.85/4.45 us in both pairs. The
+refinement changes that sign pattern, but Gateway increases by 11.80/14.45 us
+unprotected and 23.35/13.50 us under OSCORE. Other rows include improvements
+and mixed signs. These short observations do not attribute a cause or qualify
+CPU/latency acceptance; adverse observations still block broad promotion here.
+No replacement runs or further measurement variants were taken.
+
+Library executions belong to `f4fb8e8`: 1,212 all-feature and 715 no-default
+passes. Initial alias, allocated-body alignment and feature-gating fixture
+failures remain retained. The notification-only subset reuses the unchanged
+encoder, outbound adapters/protection and three exact oracle/test bodies after
+hash comparison. Its fresh Clippy checks type-check all targets/tests with all
+features and no defaults; its Rust 1.89 production checks pass in both modes.
+No new library-test or quick-suite binary was built for that subset. The earlier
+whole-batch passing suites are not relabeled as notification-only measurements.
+
+[Raw cohorts, layout/reuse receipts and staged patch](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/hot-path-efficiency-20261029)
+preserve these distinctions. Existing `std::hint::black_box` complete-operation
+probes stay in use. No Criterion dependency or new benchmark platform was added
+for this bounded memory result. Future CPU nominations need an isolated affected
+path and a declared decision rule before measurement; the original #650 baseline,
+both 50% targets and whole-memory qualification remain unchanged.
+
 ## Compare implementations without changing the workload
 
 Keep a small, versioned set of configurations. Compare each configuration across

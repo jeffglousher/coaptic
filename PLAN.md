@@ -8,6 +8,20 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The October 29 hot-path pass developed six bounded mechanisms and screened a
+seventh. The combined batch in #699 is held, not promoted as a performance win:
+all eight Windows development runs pass functionally, but repeated adverse
+median signals remain in SmallDevice/Observe and then Gateway after a selective
+body-lookup refinement. Retain both complete cohorts and the staged source.
+Only the independent notification-scratch change is selected for delivery:
+four reachable metadata options use four private entries rather than 24.
+Windows x64 Rust object layout is 104 rather than 584 bytes; emitted stack,
+CPU and whole-memory effects remain unknown. No public option capacity changes.
+The unchanged notification encoder/oracle tests reuse the passing precursor
+executions explicitly; the notification-only source has fresh strict Clippy
+and MSRV checks, but no new library-test or quick-suite executable. See the
+[seven dispositions and proof limits](architecture/requirements/OPTIMIZATION-ITERATIONS.md#october-29-hot-path-screen).
+
 The October 27 direction is reliability first, performance second, ease of use
 third. Deliver independently proven memory, stack, code-size, CPU or reliability
 improvements without requiring each to meet the separate 50% CPU objective.
