@@ -52,5 +52,11 @@
   "ratio_orientation": "Criterion reports second/first minus1; round2 invert ratio and reverse/invert bounds to express candidate/baseline.",
   "runtime": "same test executable and host; pin benchmark child to one allowed CPU, no background disk sampling during measurement; capture affinity/compiler/features/flags",
   "local_native_output_bytes": 0,
-  "metadata_cap_bytes": 65536
+  "metadata_cap_bytes": 65536,
+  "premeasurement_setup_correction": {
+    "failed_run": 40936640828,
+    "disposition": "Compilation failed before correctness or all four measurement arms; retain failure. Allow one corrected setup execution, without replacement of any measured result.",
+    "change": "Use CARGO_PROFILE_RELEASE_LTO=thin and CODEGEN_UNITS=1, empty RUSTFLAGS; Cargo selects supported LTO per crate type.",
+    "measured_samples_before_correction": 0
+  }
 }

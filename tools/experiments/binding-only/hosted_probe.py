@@ -16,7 +16,8 @@ BASE = "869d4354f4a29158fe3644b8d5d71b9b0bb591d6"
 TEST = "oscore::protect::binding_cost_probe::criterion_probe"
 METRICS = ("normal-entry", "first-slot-entry", "fallback-entry", "normal-lookup")
 ARMS = ((1, "baseline"), (1, "candidate"), (2, "candidate"), (2, "baseline"))
-FLAGS = "-C lto=thin -C embed-bitcode=yes -C codegen-units=1"
+# Cargo selects LTO per crate type; global -C lto rejects proc-macro dependencies.
+FLAGS = ""
 MIB = 1024 * 1024
 ART_CAP = 2 * MIB
 RAW_CAP = 256 * 1024
@@ -258,7 +259,7 @@ def main():
       del ENV[k]
   ENV.update(CARGO_HOME=str(ROOT / "cargo-home"), CARGO_TARGET_DIR=str(ROOT / "target"),
        CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="2", CARGO_PROFILE_RELEASE_DEBUG="0",
-       CARGO_PROFILE_RELEASE_CODEGEN_UNITS="1", RUSTFLAGS=FLAGS,
+       CARGO_PROFILE_RELEASE_CODEGEN_UNITS="1", CARGO_PROFILE_RELEASE_LTO="thin", RUSTFLAGS=FLAGS,
        RUSTUP_TOOLCHAIN="1.99.0", RUSTC=rustc)
   rustvv = small([rustc, "-Vv"])
   require(rustvv.startswith("rustc 1.99.0 "), "wrong Rust version")
@@ -280,7 +281,7 @@ def main():
         "target": target, "flags": FLAGS, "features": "std,oscore",
         "no_default_features": True, "environment": {k: ENV[k] for k in (
           "CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_INCREMENTAL", "CARGO_BUILD_JOBS",
-          "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
+          "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "CARGO_PROFILE_RELEASE_LTO",
           "RUSTUP_TOOLCHAIN", "RUSTC", "RUSTFLAGS")}}
   original.update(affinity={"allowed": allowed, "benchmark_cpu": allowed[0]},
           host=list(os.uname()), plan_sha256=digest(ASSETS[2]))
