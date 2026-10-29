@@ -211,9 +211,9 @@ def explicit_empty_fixture_slices(text):
   old = (".get_option(OptionNumber::NO_RESPONSE)\n"
          "                        .unwrap()\n"
          "                        .value(),\n"
-         "                    &[]")
+         "                    &[]\n")
   require(text.count(old) == 2, "unexpected empty-slice fixture sites")
-  new = old + " as &[u8]"
+  new = old[:-1] + " as &[u8]\n"
   return text.replace(old, new), old, new
 
 def decide():
