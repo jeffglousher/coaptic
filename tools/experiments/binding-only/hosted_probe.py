@@ -75,6 +75,10 @@ def group_exists(pgid):
     return True
   except ProcessLookupError:
     return False
+def observed_exit(proc):
+  # WNOWAIT reserves the leader's PID/PGID until our final group signal.
+  return os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+
 def run(args, name, timeout, cap=65536, env=None, building=False, cpu=None):
   used, _ = inventory(EVIDENCE, ART_CAP, 512)
   require(used + cap <= ART_CAP - 8192, "insufficient reserved log capacity")
@@ -96,7 +100,7 @@ def run(args, name, timeout, cap=65536, env=None, building=False, cpu=None):
     for i, stream in enumerate((proc.stdout, proc.stderr)):
       os.set_blocking(stream.fileno(), False)
       sel.register(stream, selectors.EVENT_READ, i)
-    while sel.get_map() or proc.poll() is None:
+    while sel.get_map() or observed_exit(proc) is None:
       now = time.monotonic()
       require(now < deadline, name + " timeout")
       if building and now >= next_guard:
@@ -114,17 +118,28 @@ def run(args, name, timeout, cap=65536, env=None, building=False, cpu=None):
         dest = sys.stdout.buffer if key.data == 0 else sys.stderr.buffer
         dest.write(block)
         dest.flush()
-    code = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
-    require(not group_exists(proc.pid), name + " owned process group persists after wait")
+    status = observed_exit(proc)
+    require(status is not None, name + " missing exit status")
+    code = status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
     require(code == 0, name + " exit " + str(code))
   finally:
-    if proc is not None:
-      if group_exists(proc.pid):
-        os.killpg(proc.pid, signal.SIGKILL)
-      proc.wait(timeout=5)
-    sel.close()
-    for f in files:
-      f.close()
+    try:
+      if proc is not None:
+        # No poll/wait has reaped this leader. Never signal this numeric PGID
+        # after wait(), even if the later read-only settlement check fails.
+        try:
+          os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+          pass
+        proc.wait(timeout=5)
+        settled = time.monotonic() + 5
+        while group_exists(proc.pid) and time.monotonic() < settled:
+          time.sleep(0.01)
+        require(not group_exists(proc.pid), name + " owned process group cleanup unresolved")
+    finally:
+      sel.close()
+      for f in files:
+        f.close()
   return outputs[0].read_bytes()
 def small(args):
   global META
