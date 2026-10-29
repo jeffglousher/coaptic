@@ -293,8 +293,9 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
         // only after context selection and the OSCORE-option check.
         let scratch = scratch.get_or_insert_with(Scratch::default).as_mut();
         let mut response_state = ResponseState::None;
-        let (wire, request) = if parsed.code().is_request() {
-            ctx.unprotect_request_wire(parsed, scratch)?
+        let (wire, request, response_piv) = if parsed.code().is_request() {
+            let (wire, request) = ctx.unprotect_request_wire(parsed, scratch)?;
+            (wire, request, None)
         } else {
             ctx.unprotect_bound_response_wire(parsed, scratch)?
         };
@@ -304,8 +305,6 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
                 crate::message::TokenDecodeError::Capacity(_) => OscoreError::MessageLength,
             })?;
         if !parsed.code().is_request() {
-            let header =
-                crate::oscore::OscoreHeader::parse(parsed.oscore().ok_or(OscoreError::Header)?)?;
             let observe = inner.observe().is_some();
             if observe && ctx.observe_request(parsed.token()) != Some(request) {
                 // Response to a non-Observe request must not carry Inner Observe.
@@ -316,10 +315,10 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
                 // IV) is bound to the request. Do not spend the RFC 8613
                 // §7.4.1 no-PIV notification budget on it.
                 let register_ack =
-                    parsed.ty() == crate::message::Type::Acknowledgement && header.piv.is_none();
+                    parsed.ty() == crate::message::Type::Acknowledgement && response_piv.is_none();
                 if !register_ack {
-                    ctx.notification_fresh(parsed.token(), header.piv)?;
-                    response_state = ResponseState::Notification(parsed.token(), header.piv);
+                    ctx.notification_fresh(parsed.token(), response_piv)?;
+                    response_state = ResponseState::Notification(parsed.token(), response_piv);
                 }
             } else if inner.q_block2().next().is_some()
                 || (inner.code() == crate::message::Code::REQUEST_ENTITY_INCOMPLETE
@@ -330,7 +329,7 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
                 // active. Authenticate
                 // before updating replay state; keep the binding until Call
                 // completion/cancellation, including an out-of-order final block.
-                if let Some(piv) = header.piv {
+                if let Some(piv) = response_piv {
                     if !ctx.replay_fresh(piv.seq()) {
                         return Err(OscoreError::Replay);
                     }

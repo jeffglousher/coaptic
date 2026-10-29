@@ -260,6 +260,10 @@ impl ObserveResource {
         }
     }
 
+    pub(crate) fn app_route_index(self) -> Option<usize> {
+        usize::try_from(self.hash.checked_sub(1)?).ok()
+    }
+
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0100_0000_01b3;
 

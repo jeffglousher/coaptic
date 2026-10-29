@@ -402,13 +402,15 @@ impl AllocDatagramPool {
 
 impl SlotPool for AllocDatagramPool {
     fn acquire(&mut self) -> Option<SlotId> {
-        let id = self.occ.acquire()?;
-        self.reset(id);
-        Some(id)
+        // Free slots have empty metadata from construction or successful release.
+        // Every metadata writer requires occupancy; byte contents are retained.
+        self.occ.acquire()
     }
 
     fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
         self.occ.release(id)?;
+        // Reset only after release succeeds, preserving pinned/refused slot state
+        // and establishing the empty metadata invariant for the next acquire.
         self.reset(id);
         Ok(())
     }
@@ -1907,6 +1909,18 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allocated_datagram_metadata_lifecycle() {
+        for n in [0, 1, 3] {
+            for bytes in [0, 7] {
+                super::super::pool::datagram_tests::check_pool!(
+                    AllocDatagramPool::new(n, bytes).unwrap(),
+                    bytes
+                );
+            }
+        }
+    }
 
     #[test]
     fn allocated_tables_saturate_rotate_and_reset_without_pins() {

@@ -5014,7 +5014,9 @@ fn protected_observe_and_q_response_admission_commits_replay_after_ack() {
                     .allow_unprotected()
                     .bind(QWire::default())
                     .unwrap();
-                client.set_oscore(&mut Some(client_c1())).unwrap();
+                let mut context = client_c1();
+                context.set_sender_seq(4).unwrap();
+                client.set_oscore(&mut Some(context)).unwrap();
                 let request = client.get("value").to(peer);
                 let call = if observe {
                     request.observe()
@@ -5026,8 +5028,10 @@ fn protected_observe_and_q_response_admission_commits_replay_after_ack() {
                 let sent = client.transport_mut().sent.remove(0);
                 let request = decode(&sent).unwrap();
                 let mut server = server_c1();
+                server.set_sender_seq(1000).unwrap();
                 let mut scratch = [0; WIRE];
                 let (_, reference) = server.unprotect_request(&request, &mut scratch).unwrap();
+                assert_eq!(reference.piv().seq(), 4);
                 let number = encode_uint(0);
                 let block = BlockValue::from_size(0, false, 16).unwrap().encode();
                 let size = encode_uint(3);
@@ -5092,6 +5096,21 @@ fn protected_observe_and_q_response_admission_commits_replay_after_ack() {
                 assert_eq!(client.transport().sent.len(), 1);
                 assert!(decode(&client.transport().sent[0]).unwrap().is_empty_ack());
                 assert!(client.take_response(call).is_none());
+                if piv || reject {
+                    let response_piv =
+                        PartialIv::from_seq(if piv && reject { 1001 } else { 1000 }).unwrap();
+                    if observe {
+                        assert_eq!(
+                            client
+                                .oscore()
+                                .unwrap()
+                                .notification_fresh(call.token(), Some(response_piv)),
+                            Err(Error::Replay)
+                        );
+                    } else {
+                        assert!(!client.oscore().unwrap().replay_fresh(response_piv.seq()));
+                    }
+                }
                 if observe {
                     assert!(client.cancel(call));
                 }
@@ -6472,6 +6491,92 @@ fn older_concurrent_request_binding_is_not_authenticated() {
             .1,
         observe
     );
+}
+
+#[test]
+fn unknown_response_token_precedes_malformed_oscore_header() {
+    let token = Token::from_checked(&[7]);
+    let reference = RequestRef::from_kid(&[], PartialIv::from_seq(4).unwrap()).unwrap();
+    let malformed = [0xe0];
+    let options = [Opt::oscore(&malformed)];
+    let response = Message::new(Type::Acknowledgement, Code::CHANGED, MessageId::new(9))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&[0; 8]);
+    let mut wire = [0; WIRE];
+    let n = encode(&response, &mut wire).unwrap();
+    let protected = decode(&wire[..n]).unwrap();
+    let mut out = [0; WIRE];
+    let mut client = client_c1();
+    assert_eq!(
+        client.unprotect_bound_response(&protected, &mut out),
+        Err(Error::Context)
+    );
+    client.remember(token, reference).unwrap();
+    assert_eq!(
+        client.unprotect_bound_response(&protected, &mut out),
+        Err(Error::Header)
+    );
+}
+
+#[test]
+fn bound_response_lookup_matches_complete_extended_tokens() {
+    use super::BoundedSecurityContext;
+    use crate::message::{decode_with_token, extended};
+
+    type WideToken = extended::Token<16>;
+    let mut client = BoundedSecurityContext::<2, WideToken>::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &MASTER_SALT,
+        sender_id: &[],
+        recipient_id: &[1],
+        id_context: &[],
+    })
+    .unwrap();
+    let server = BoundedSecurityContext::<2, WideToken>::derive(DeriveParams {
+        master_secret: &MASTER_SECRET,
+        master_salt: &MASTER_SALT,
+        sender_id: &[1],
+        recipient_id: &[],
+        id_context: &[],
+    })
+    .unwrap();
+    let first = WideToken::new(&[7; 16]).unwrap();
+    let mut last_differs = [7; 16];
+    last_differs[15] = 8;
+    let second = WideToken::new(&last_differs).unwrap();
+    let original = RequestRef::from_kid(&[], PartialIv::from_seq(1).unwrap()).unwrap();
+    let latest = RequestRef::from_kid(&[], PartialIv::from_seq(4).unwrap()).unwrap();
+    client.remember_live(first, original, true).unwrap();
+    client.remember_download(first, latest).unwrap();
+    client.remember(second, original).unwrap();
+    assert_eq!(
+        client.response_bindings(first),
+        Some((latest, Some(original)))
+    );
+    assert_eq!(client.response_bindings(second), Some((original, None)));
+    assert_eq!(
+        client.response_bindings(WideToken::new(&[7; 15]).unwrap()),
+        None
+    );
+
+    let mut wire = [0; WIRE];
+    let mut out = [0; WIRE];
+    for (token, reference) in [(first, latest), (first, original), (second, original)] {
+        let response = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(9))
+            .with_token(token)
+            .with_payload(b"bound");
+        let n = server
+            .protect_response(&response, reference, &mut wire)
+            .unwrap();
+        let protected = decode_with_token::<WideToken>(&wire[..n]).unwrap();
+        let (inner, used) = client
+            .unprotect_bound_response(&protected, &mut out)
+            .unwrap();
+        assert_eq!(used, reference);
+        assert_eq!(inner.token(), token);
+        assert_eq!(inner.payload(), b"bound");
+    }
 }
 
 #[path = "replay_tests.rs"]

@@ -298,13 +298,15 @@ impl<const SLOTS: usize, const BYTES: usize> Default for DatagramPool<SLOTS, BYT
 
 impl<const SLOTS: usize, const BYTES: usize> SlotPool for DatagramPool<SLOTS, BYTES> {
     fn acquire(&mut self) -> Option<SlotId> {
-        let id = self.occ.acquire()?;
-        self.reset(id);
-        Some(id)
+        // Free slots have empty metadata from construction or successful release.
+        // Every metadata writer requires occupancy; byte contents are retained.
+        self.occ.acquire()
     }
 
     fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
         self.occ.release(id)?;
+        // Reset only after release succeeds, preserving pinned/refused slot state
+        // and establishing the empty metadata invariant for the next acquire.
         self.reset(id);
         Ok(())
     }
@@ -1020,5 +1022,112 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> SlotPool for BodyPoo
 
     fn cursor(&self) -> usize {
         self.occ.cursor()
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod datagram_tests {
+    use super::*;
+
+    // Exercise the same lifecycle against both concrete datagram owners without
+    // widening the production pool traits or applying this invariant to bodies.
+    macro_rules! check_pool {
+        ($pool:expr, $bytes:expr) => {{
+            let mut pool = $pool;
+            let n = pool.slot_count();
+            let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+            let mid = MessageId::new(0x1234);
+            let rto = PendingRto::new(123, 456);
+            for round in 0..3 {
+                pool.advance(2);
+                let start = pool.cursor();
+                // All metadata writers, including guards, must reject free ids.
+                // An excessive length must not override the occupancy error.
+                for i in 0..=n {
+                    let id = SlotId::from_index(i);
+                    let error = if i == n {
+                        SlotError::InvalidSlot
+                    } else {
+                        SlotError::NotOccupied
+                    };
+                    assert_eq!(pool.set_len(id, usize::MAX), Err(error));
+                    assert_eq!(pool.set_endpoint(id, ep), Err(error));
+                    assert_eq!(pool.set_pending_mid(id, mid), Err(error));
+                    assert_eq!(pool.set_pending(id, mid, rto), Err(error));
+                    assert_eq!(pool.clear_pending_mid(id), Err(error));
+                    assert!(pool.payload_mut(id).is_none());
+                    assert!(matches!(pool.access(id), Err(e) if e == error));
+                    assert!(matches!(pool.access_mut(id), Err(e) if e == error));
+                    assert_eq!(pool.release(id), Err(error));
+                }
+                assert_eq!(pool.occupied_count(), 0);
+                assert_eq!(pool.cursor(), start);
+                for i in 0..n {
+                    let id = SlotId::from_index((start + i) % n);
+                    assert_eq!(pool.acquire(), Some(id));
+                    assert_eq!(pool.occupied_count(), i + 1);
+                    assert_eq!(pool.payload(id), Some(&[][..]));
+                    assert_eq!(pool.endpoint(id), None);
+                    assert_eq!(pool.pending_mid(id), None);
+                    assert_eq!(pool.pending_rto(id), None);
+                    assert!(!pool.is_pinned(id));
+                    let marker = id.index() as u8 + 1;
+                    let mut access = pool.access_mut(id).unwrap();
+                    assert_eq!(access.capacity(), $bytes);
+                    assert!(access.bytes_mut().iter().all(|&b| {
+                        b == if round == 0 { 0 } else { marker }
+                    }));
+                    // Release/acquire clears metadata, never the backing bytes.
+                    access.bytes_mut().fill(marker);
+                    access.set_len($bytes).unwrap();
+                    drop(access);
+                    pool.set_endpoint(id, ep).unwrap();
+                    pool.set_pending(id, mid, rto).unwrap();
+                }
+                assert_eq!(pool.acquire(), None);
+                assert_eq!(pool.occupied_count(), n);
+                assert_eq!(pool.cursor(), start);
+                assert_eq!(
+                    pool.release(SlotId::from_index(n)),
+                    Err(SlotError::InvalidSlot)
+                );
+                for i in 0..n {
+                    let id = SlotId::from_index(i);
+                    core::mem::forget(pool.access(id).unwrap());
+                    assert_eq!(pool.release(id), Err(SlotError::Pinned));
+                    assert_eq!(pool.occupied_count(), n - i);
+                    assert_eq!(pool.cursor(), start);
+                    assert!(pool.is_occupied(id));
+                    assert!(pool.is_pinned(id));
+                    assert!(pool.payload(id).unwrap().iter().all(|&b| b == i as u8 + 1));
+                    assert_eq!(pool.payload(id).unwrap().len(), $bytes);
+                    assert_eq!(pool.endpoint(id), Some(ep));
+                    assert_eq!(pool.pending_mid(id), Some(mid));
+                    assert_eq!(pool.pending_rto(id), Some(rto));
+                    // Test-only recovery of the deliberately forgotten guard.
+                    *pool.occ.pin_flag_mut(id).unwrap() = false;
+                    pool.release(id).unwrap();
+                    assert_eq!(pool.release(id), Err(SlotError::NotOccupied));
+                    assert_eq!(pool.occupied_count(), n - i - 1);
+                    assert_eq!(pool.cursor(), start);
+                    assert_eq!(pool.payload(id), None);
+                    assert_eq!(pool.endpoint(id), None);
+                    assert_eq!(pool.pending_mid(id), None);
+                    assert_eq!(pool.pending_rto(id), None);
+                }
+            }
+        }};
+    }
+
+    pub(crate) use check_pool;
+
+    #[test]
+    fn fixed_datagram_metadata_lifecycle() {
+        self::check_pool!(DatagramPool::<0, 0>::new(), 0);
+        self::check_pool!(DatagramPool::<0, 7>::new(), 7);
+        self::check_pool!(DatagramPool::<1, 0>::new(), 0);
+        self::check_pool!(DatagramPool::<1, 7>::new(), 7);
+        self::check_pool!(DatagramPool::<3, 0>::new(), 0);
+        self::check_pool!(DatagramPool::<3, 7>::new(), 7);
     }
 }

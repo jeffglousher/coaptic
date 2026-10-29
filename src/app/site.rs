@@ -388,12 +388,11 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
 
     /// Snapshot fn for an opaque App route identity.
     pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<SnapshotSource<T>> {
-        self.entries.iter().enumerate().find_map(|(index, entry)| {
-            entry
-                .as_ref()
-                .filter(|_| ObserveResource::app_route(index) == resource)
-                .and_then(|entry| entry.methods.observe_source())
-        })
+        self.entries
+            .get(resource.app_route_index()?)?
+            .as_ref()?
+            .methods
+            .observe_source()
     }
 }
 
@@ -546,4 +545,79 @@ fn write_link(buf: &mut [u8], n: &mut usize, segments: &[&str]) -> bool {
     buf[*n] = b'>';
     *n += 1;
     true
+}
+
+#[cfg(test)]
+mod observe_lookup_tests {
+    use super::super::routing::get;
+    use super::*;
+
+    fn handler(_: Request<'_>) -> Response<'static> {
+        Response::content(b"handler")
+    }
+
+    fn first() -> Response<'static> {
+        Response::content(b"first")
+    }
+
+    fn last() -> Response<'static> {
+        Response::content(b"last")
+    }
+
+    fn first_byte(site: &Site<4>, resource: ObserveResource) -> Option<u8> {
+        match site.observe_source(resource)? {
+            SnapshotSource::Plain(source) => source().payload().first().copied(),
+            SnapshotSource::Selected(_) => panic!("unexpected selected source"),
+        }
+    }
+
+    #[test]
+    fn observe_source_uses_stable_slots_through_holes_replacement_and_reuse() {
+        let mut site = Site::<4>::new();
+        site.route("a", get(handler).observe(first));
+        site.route("b", get(handler));
+        site.route("c", get(handler).observe_selected(handler));
+        site.route("d", get(handler).observe(last));
+        let a = site.observe_resource(&["a"]);
+        let b = site.observe_resource(&["b"]);
+        let c = site.observe_resource(&["c"]);
+        let d = site.observe_resource(&["d"]);
+        assert_eq!(first_byte(&site, a), Some(b'f'));
+        assert_eq!(first_byte(&site, b), None);
+        assert_eq!(first_byte(&site, d), Some(b'l'));
+        assert!(matches!(
+            site.observe_source(c),
+            Some(SnapshotSource::Selected(_))
+        ));
+        assert!(site.remove_route("c").unwrap());
+        assert_eq!(first_byte(&site, c), None);
+        assert_eq!(site.observe_resource(&["d"]), d);
+        assert_eq!(first_byte(&site, d), Some(b'l'));
+        site.route("a", get(handler).observe(last));
+        assert_eq!(site.observe_resource(&["a"]), a);
+        assert_eq!(first_byte(&site, a), Some(b'l'));
+        site.route("e", get(handler).observe(first));
+        assert_eq!(site.observe_resource(&["e"]), c);
+        assert_eq!(first_byte(&site, site.observe_resource(&["e"])), Some(b'f'));
+    }
+
+    #[test]
+    fn observe_source_refuses_none_out_of_range_and_engine_path_hashes() {
+        let site = Site::<4>::new();
+        assert!(site.observe_source(ObserveResource::NONE).is_none());
+        assert!(site.observe_source(ObserveResource::app_route(4)).is_none());
+        assert!(
+            site.observe_source(ObserveResource::app_route(usize::MAX - 1))
+                .is_none()
+        );
+        assert!(
+            site.observe_source(ObserveResource::from_path(&["outside"]))
+                .is_none()
+        );
+        assert!(
+            Site::<0>::new()
+                .observe_source(ObserveResource::app_route(0))
+                .is_none()
+        );
+    }
 }

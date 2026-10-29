@@ -549,11 +549,16 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
     }
 
     pub(crate) fn observe_request(&self, token: T) -> Option<RequestRef> {
-        self.live
-            .iter()
-            .flatten()
-            .find(|row| row.token == token)
-            .and_then(|row| row.observe_request)
+        self.lookup_live(token).and_then(|row| row.observe_request)
+    }
+
+    fn lookup_live(&self, token: T) -> Option<&LiveRequest<T>> {
+        self.live.iter().flatten().find(|row| row.token == token)
+    }
+
+    pub(crate) fn response_bindings(&self, token: T) -> Option<(RequestRef, Option<RequestRef>)> {
+        self.lookup_live(token)
+            .map(|row| (row.request, row.observe_request))
     }
 
     pub(crate) fn response_without_piv_fresh(&self, token: T) -> Result<(), Error> {
@@ -585,9 +590,7 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
     /// Observe download follow-ups retain the original registration separately.
     #[must_use]
     pub fn lookup(&self, token: T) -> Option<RequestRef> {
-        self.live
-            .iter()
-            .find_map(|row| row.and_then(|r| (r.token == token).then_some(r.request)))
+        self.lookup_live(token).map(|row| row.request)
     }
 
     /// Whether this Token retains an Observe registration, including during body downloads.

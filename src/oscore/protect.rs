@@ -328,7 +328,7 @@ pub fn unprotect_response<'a, const REQUESTS: usize, T: OwnedToken>(
     request: RequestRef,
     out: &'a mut [u8],
 ) -> Result<ParsedMessage<'a, T>, Error> {
-    let (wire, _) = unprotect_response_candidates(ctx, protected, request, None, out)?;
+    let (wire, _, _) = unprotect_response_candidates(ctx, protected, request, None, out)?;
     decode_owned::<T>(wire)
 }
 
@@ -347,7 +347,7 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
         protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
     ) -> Result<(ParsedMessage<'a, T>, RequestRef), Error> {
-        let (wire, request) = self.unprotect_bound_response_wire(protected, out)?;
+        let (wire, request, _) = self.unprotect_bound_response_wire(protected, out)?;
         Ok((decode_owned::<T>(wire)?, request))
     }
 
@@ -355,11 +355,13 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
         &self,
         protected: &ParsedMessage<'_, T>,
         out: &'a mut [u8],
-    ) -> Result<(&'a [u8], RequestRef), Error> {
-        let request = self.lookup(protected.token()).ok_or(Error::Context)?;
-        let observation = self
-            .observe_request(protected.token())
-            .filter(|old| *old != request);
+    ) -> Result<(&'a [u8], RequestRef, Option<PartialIv>), Error> {
+        // Resolve the row before parsing so an unknown Token remains Context,
+        // even when the response also has a malformed OSCORE header.
+        let (request, observation) = self
+            .response_bindings(protected.token())
+            .ok_or(Error::Context)?;
+        let observation = observation.filter(|old| *old != request);
         unprotect_response_candidates(self, protected, request, observation, out)
     }
 }
@@ -370,7 +372,7 @@ fn unprotect_response_candidates<'a, const REQUESTS: usize, T: OwnedToken>(
     request: RequestRef,
     fallback: Option<RequestRef>,
     out: &'a mut [u8],
-) -> Result<(&'a [u8], RequestRef), Error> {
+) -> Result<(&'a [u8], RequestRef, Option<PartialIv>), Error> {
     let header = parse_protected(protected)?;
     if protected.payload().len() < TAG_LEN {
         return Err(Error::MessageLength);
@@ -413,7 +415,7 @@ fn unprotect_response_candidates<'a, const REQUESTS: usize, T: OwnedToken>(
         &plaintext[..len],
         out,
     )?;
-    Ok((&out[..n], request))
+    Ok((&out[..n], request, header.piv))
 }
 
 fn parse_protected<'a, T: OwnedToken>(

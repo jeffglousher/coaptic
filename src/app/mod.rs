@@ -179,6 +179,9 @@ mod lifecycle_soak;
 mod tests;
 
 #[cfg(test)]
+mod hot_path_tests;
+
+#[cfg(test)]
 mod option_validation_tests;
 
 #[cfg(test)]
@@ -5912,9 +5915,18 @@ fn release_observe_response_body<S: Storage + BodySlots>(
 }
 
 fn response_body_for<S: Storage + BodySlots>(
-    engine: &Engine<S>,
+    engine: &mut Engine<S>,
     key: BlockKey<S::Token>,
 ) -> Option<SlotId> {
+    // SlotPool's live occupancy contract also applies to custom backends.
+    // Read it afresh: acquired empty slots and pinned snapshots remain occupied.
+    if engine
+        .storage_mut()
+        .tx_body()
+        .is_some_and(|pool| pool.occupied_count() == 0)
+    {
+        return None;
+    }
     (0..engine.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
         let id = SlotId::from_index(index);
         let transfer = engine.tx_body_transfer(id)?;
@@ -7300,7 +7312,8 @@ fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     let observe = response
         .observe_seq()
         .map(|seq| encode_uint(seq & 0x00ff_ffff));
-    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
+    // Only ETag, Observe, Content-Format and Max-Age are reachable here.
+    let mut opts = OptionsBuilder::<4>::new();
     let filled = (|| -> Result<(), EncodeError> {
         if let Some(etag) = response.etag_bytes() {
             push_opt(&mut opts, Opt::etag(etag))?;

@@ -12643,7 +12643,7 @@ fn notification_snapshot_lifecycle_reclaims_only_server_response_body() {
         let note = last_wide(&app);
         let mid = note.message_id();
         assert_eq!(note.ty() == Type::Confirmable, mode == 1 || mode == 4);
-        let body = super::response_body_for(&app.engine, key).unwrap();
+        let body = super::response_body_for(&mut app.engine, key).unwrap();
         let mut unrelated = [0; WIRE];
         let n = encode(
             &Message::empty_rst(MessageId::new(mid.get().wrapping_add(1))),
@@ -12755,7 +12755,7 @@ fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
                 assert_eq!(app.engine.rx_occupied(), 0);
                 assert!(
                     super::response_body_for(
-                        &app.engine,
+                        &mut app.engine,
                         BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
                     )
                     .is_none()
@@ -14588,7 +14588,8 @@ fn supersession_mid_exhaustion_refuses_and_retained_block2_can_shrink() {
             assert_ne!(last_wide(&app).message_id(), mid);
             assert_eq!(last_wide(&app).payload(), b"obs-snap");
             assert!(
-                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).is_none()
+                super::response_body_for(&mut app.engine, BlockKey::new(key.token(), peer))
+                    .is_none()
             );
             assert_eq!(
                 app.engine.pending_con(slot).unwrap().rto(),
@@ -15783,7 +15784,7 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
     let slot = app.engine.lookup_pending_con(mid, peer).unwrap();
     let original = app.engine.pending_con(slot).unwrap();
     let block_key = BlockKey::new(key.token(), peer);
-    assert!(super::response_body_for(&app.engine, block_key).is_some());
+    assert!(super::response_body_for(&mut app.engine, block_key).is_some());
     let row = app
         .engine
         .observe_interest(app.engine.lookup_observe(key).unwrap())
@@ -15796,7 +15797,7 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
     assert_ne!(reply.message_id(), mid);
     assert_eq!(reply.observe(), None);
     assert!(app.engine.lookup_observe(key).is_none());
-    assert!(super::response_body_for(&app.engine, block_key).is_none());
+    assert!(super::response_body_for(&mut app.engine, block_key).is_none());
     let terminal = app.engine.pending_con(slot).unwrap();
     assert_eq!(terminal.rto(), original.rto().next_attempt(due).unwrap());
 }
