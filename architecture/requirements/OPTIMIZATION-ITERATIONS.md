@@ -73,9 +73,10 @@ No feature, configured capacity or authentication rule was removed.
 5. **Hold parsed response-PIV reuse.** Carrying authenticated response metadata
    removes a second option search/header parse in client admission. Replay and
    failed-ACK checks pass. Independent runtime benefit remains unmeasured.
-6. **Hold direct Observe route indexing.** Checked inversion of App-local slot
-   identities removes a route scan without changing holes/reuse behavior. The
-   quick fixture has one populated route, so it does not measure scaling benefit.
+6. **Reject isolated direct Observe route indexing in #711.** Checked inversion
+   preserves holes/reuse behavior, but the later full-notification poll comparison
+   fails both benefit gates and ten regression guards. Keep its raw evidence and
+   source; the one-route quick GET fixture never established a scaling benefit.
 7. **Park exact/fallback body-search fusion without implementation.** Extra
    identity comparisons before a later exact hit could worsen that workload.
 
@@ -408,3 +409,72 @@ The collector checks complete source maps; publication retains selected identity
 projections, not those full maps. No server/process CPU50, socket, replay
 admission, emitted-frame/peak-stack, physical or whole-memory qualification
 follows. Both CPU objectives and whole-memory acceptance remain open.
+
+
+## October 29 checked Observe route lookup
+
+The separately isolated #711 candidate is rejected and remains unmerged. Its
+private checked inverse of the App-local slot identity replaces only
+`Site::observe_source`'s ascending route scan. Populated/hole/replacement/removed
+and foreign same-slot aliases, Plain/Selected callbacks and all capacities remain
+supported. The original one-route GET fixture does not time notifications; this
+screen clocks one complete already-due ordinary NON notification through
+`App::poll`, including normal polling work and a bounded in-memory transport.
+
+[Run 40970202099 attempt 1](https://github.com/jeffglousher/coaptic/actions/runs/40970202099)
+uses core `96505cf772ffb01c3f0037ada79f1570034021c5`, tree
+`68c64993e4e4ba8cf8f376d93cb8c60fd7257277`, against frozen accepted baseline
+`176c337d350a4f601e4c2a02b9bdfdcaf0792a92`. Production blobs equal
+`2349287f0bf78212125d94ab7316e4bcf604c326`. Frozen direct copies of poll, engine
+and the original Site scan change only recorded identifiers and one due-source
+call. This preserves static-call opportunities without a Site dispatch field;
+symmetric noinline outer wrappers do not prove identical emitted production code.
+
+Eight cells cross 4/32 fully populated server routes, first/last targets and
+unprotected/OSCORE. Constrained-derived fixed storage has RX2/TX2 at 1152 bytes,
+dedup4, Observe1, Call1, deferred0, four request bindings and one association;
+blockwise/body pools are disabled. The independent verifier App retains four
+routes and its own resources. Full 32-byte payload, wire metadata and
+OSCORE authentication/admission are checked outside timing. Epochs use real
+registration/deregistration/draining and distinct keys, at most 4096 NON
+notifications including calibration/warmup, three-second virtual pacing and
+actual confirmation-deadline checks. No state/sequence reset substitutes for
+protocol progress. Logical pair/Rc owners measure 24080/30128 bytes including
+RefCell metadata; allocator overhead, generated frames and peak stack are unknown.
+
+The same frozen binary runs AB then BA on Linux x64 CPU0 (allowed 0-3), AMD EPYC
+7763, Rust 1.99.0, temporary Criterion 0.5.1, `std,oscore` without defaults,
+thin LTO and one codegen unit. Thirty samples per arm use 0.2-second warmup,
+0.5-second nominal measurement, 10000 resamples and 95% intervals. PerIteration
+setup, verification and drops are outside clocks; clock/wrapper/borrow overhead
+remains and nothing is subtracted. Two fixture-only processes agree before any
+sample; all six processes produce 48 matching fixture receipts. Fixed preludes
+verify 196608 notifications and 196704 server packets, separately from dynamic
+calibration/warmup/samples. All 877 nonignored release correctness tests pass;
+same-head quick checks pass 1209 all-feature/716 minimal tests, strict Clippy/fmt.
+
+Both 32-route last-slot cases require mean change <= -5% and upper95 < 0 in both
+rounds. Actual unprotected changes are +3.297% / +1.510%; OSCORE changes are
+-0.613% / -1.398%. All four benefit checks fail. Ten of twelve other upper95
+<= +2% guards also fail; first-slot four-route unprotected means rise
++5.623% / +8.045%. All 144 Criterion JSON files, 64 literal arrays, 960 positive
+finite sample pairs, 32 means and 16 AB/BA-normalized intervals are retained.
+Producer status remains `INCONCLUSIVE/REJECT`; complete evidence supports REJECT.
+Cause is unknown. Stop without replacement samples, changed gates, a new source
+variant or eight-profile expansion. No runtime optimization is delivered.
+
+The hosted job is 276 seconds, with setup to runner 13 seconds, runner 258 seconds
+and upload 2 seconds. Nested inside the runner are Cargo-reported build time
+226 seconds, correctness 0.31 seconds, fixture aggregate 0.468458 seconds and
+sampling aggregate 28.896279 seconds, plus metadata/preparation/finalization.
+Do not add nested durations. The complete
+[retained selection and collector receipt](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/observe-route-index-20261029)
+include 166 exact producer texts and two byte-exact input-receipt reconstructions
+from the pinned Git tree, avoiding duplicate source identity maps. All raw samples,
+timing/fixture logs, selected dependencies and the earlier Clippy-layout failure
+remain lossless. Omitted duplicate source/build/meta payloads are identified.
+Compiler/executable bytes and independent cleanup/usage receipts are unavailable;
+those identities, settlement, deadlines and sampled resource guards remain
+producer-attested. No CPU50, real-UDP/endpoint, hardware, emitted-frame, peak-stack,
+allocator or whole-memory benefit follows. Existing accepted reductions and both
+open CPU targets remain unchanged.

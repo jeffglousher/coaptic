@@ -8,6 +8,20 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The isolated Observe route-index experiment in #711 is rejected and remains
+unmerged. The complete due-notification poll screen misses both required
+32-route last-slot benefits in both AB/BA rounds: unprotected changes are
++3.297% / +1.510%, OSCORE -0.613% / -1.398%, against a frozen 5% improvement
+gate. Ten of twelve other regression guards also fail. All 877 focused
+correctness tests, 48 fixture receipts and four timing arms pass; same-head
+quick checks pass 1,209 all-feature and 716 minimal-feature tests, strict Clippy
+and formatting. Retain the
+[raw samples and exact input reconstruction](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/observe-route-index-20261029).
+Stop without replacement samples, changed gates, another source variant or
+eight-profile expansion. This measures instrumented hosted App poll wall time
+with an in-memory transport; the observed cost cause remains unknown. No runtime
+optimization is delivered; accepted reductions and both CPU targets remain intact.
+
 The separate response-only cipher continuation in #709 is rejected and remains
 unmerged. First-slot ordinary responses slow 2.727% / 8.411%, with upper95
 +5.431% / +13.257%, failing the frozen 2% guard in both AB/BA rounds. Fallback
