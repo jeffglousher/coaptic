@@ -57,13 +57,15 @@
     "failed_run": 40936640828,
     "disposition": "Compilation failed before correctness or all four measurement arms; retain failure. Allow one corrected setup execution, without replacement of any measured result.",
     "change": "Use CARGO_PROFILE_RELEASE_LTO=thin and CODEGEN_UNITS=1, empty RUSTFLAGS; Cargo selects supported LTO per crate type.",
-    "measured_samples_before_correction": 0
+    "measured_samples_before_correction": 0,
+    "historical_only": true,
+    "superseded_by": "compile_fixture_correction.setup_policy"
   },
   "compile_fixture_correction": {
     "failed_run": 40938869342,
     "disposition": "Criterion dependency adds serde_json PartialEq alternatives; two baseline-identical &[] assertions require explicit &[u8] types in temporary hosted libtest only. No assertions are removed.",
     "measured_samples_before_correction": 0,
-    "setup_policy": "Retain and correct deterministic compile/fixture failures while no timing samples exist. After any measured sample, no replacement runs, changed gates or campaign expansion.",
+    "setup_policy": "This supersedes the earlier one-corrected-setup limit. Retain and correct deterministic compile/fixture failures only while zero timing samples exist. After any measured sample, no replacement runs, changed gates or campaign expansion.",
     "source_scope": "Production candidate and harness unchanged; temporary build records both test-file hashes and exact two-site substitutions."
   }
 }
