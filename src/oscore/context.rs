@@ -548,7 +548,6 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
         self.remember(token, request)
     }
 
-    #[cfg(test)]
     pub(crate) fn observe_request(&self, token: T) -> Option<RequestRef> {
         self.live
             .iter()
