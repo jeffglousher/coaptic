@@ -278,3 +278,34 @@ preserve evidence and mixed/shared build lanes. Keep routine reporting lightweig
 one disposition per mechanism, one coherent implementation batch, focused checks,
 independent review and authorized squash delivery. No PR watchers or recurring
 campaigns are required for continuous use of the developer suite.
+
+## October 29 isolated response-binding lookup
+
+**REJECT; #705 is not delivered to main.** Core `3474c106` compares the actual
+client response-opening entrypoint against `869d4354`'s exact two-search method
+in one executable. [Retained data](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-binding-lookup-20261029)
+includes all 72 Criterion JSON members, selected lock and identity limits.
+
+Normal-entry mean changes are +2.871% / +1.009%, with both 95% intervals above
+zero. First-slot changes are +12.893% / +0.830%; round 1's upper95 +19.539%
+violates the +2% guard. Fallback changes +0.483% / +0.099% establish no benefit.
+Lookup alone improves 21.154% / 21.166%. The full-entry regression cause remains
+unestablished; fewer source searches do not establish a caller improvement.
+
+The frozen two-round AB/BA plan requires at least 2% normal improvement and
+upper95 below zero in both rounds, improving isolated lookup direction, and
+first-slot/fallback upper95 regression at most 2%. Rejection ends sampling;
+no replacement run or eight-profile expansion follows. All four arms and 134
+nonignored correctness tests pass. Sixteen arrays contain 30 samples each;
+each sample aggregates repeated immutable opens, not socket transactions.
+Fixture equality, tamper and obsolete-binding rejection are checked outside
+clocks. Rust 1.99.0, Criterion 0.5.1, Linux x86_64 CPU0, release thin LTO and
+`std,oscore` without defaults are explicit. No replay-admission, process-CPU,
+socket, emitted-stack, hardware or whole-memory claim follows.
+
+Two earlier compile-only failures remain retained with zero samples and all
+correctness/timing arms NOT RUN. Setup corrections used Cargo-managed LTO and
+two temporary explicit byte-slice assertions; cases and thresholds stayed fixed.
+Prior delivered notification-scratch savings remain intact. Transient cipher
+reuse across two Observe authentication attempts is only a reviewed design,
+with normal-path and transient-owner costs still to prove.

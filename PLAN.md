@@ -8,6 +8,15 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The isolated response-binding lookup experiment in #705 is rejected and remains
+unmerged. Its lookup microbenchmark improves about 21%, but authenticated
+response opening slows 2.871% and 1.009% in the two AB/BA rounds; the first-slot
+regression guard also fails. All 134 correctness tests pass. Stop sampling and
+retain the [raw measurements](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-binding-lookup-20261029).
+No production rollback or CPU/memory gain follows. The next source-only candidate
+is transient AEAD key-schedule reuse across Observe fallback; its design is
+reviewed, but implementation and performance proof remain pending.
+
 The October 29 hot-path pass developed six bounded mechanisms and screened a
 seventh. The combined batch in #699 is held, not promoted as a performance win:
 all eight Windows development runs pass functionally, but repeated adverse
