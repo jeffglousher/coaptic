@@ -306,6 +306,52 @@ socket, emitted-stack, hardware or whole-memory claim follows.
 Two earlier compile-only failures remain retained with zero samples and all
 correctness/timing arms NOT RUN. Setup corrections used Cargo-managed LTO and
 two temporary explicit byte-slice assertions; cases and thresholds stayed fixed.
-Prior delivered notification-scratch savings remain intact. Transient cipher
-reuse across two Observe authentication attempts is only a reviewed design,
-with normal-path and transient-owner costs still to prove.
+Prior delivered notification-scratch savings remain intact. The separate
+transient-cipher prototype is dispositioned below.
+## October 29 transient cipher reuse
+
+**REJECT; #707 is not delivered to main.** Candidate `636ad4e2` compares the
+actual client response-opening path against `869d4354` in one executable. The
+baseline includes both the original bound method and its original free
+candidate loop; both retain the original two binding searches. The prototype
+retains one transient lazy AES schedule across authentication attempts, then
+drops it before processing authenticated Inner bytes. Ordinary one-shot
+AEAD, capabilities, capacities, authentication ordering and errors stay intact.
+
+The [retained data](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-transient-cipher-20261029)
+includes all 126 Criterion JSON members, exact collector receipt, selected lock,
+frozen plan, correctness output and explicitly derived identity/fixture projections.
+All four arms and 136 OSCORE correctness tests pass. Twenty-eight arrays contain
+840 positive finite time/iteration sample pairs; each sample aggregates repeated
+immutable opens, not socket operations. Forty-eight fixture records preserve
+identical wires, complete plaintext/reference checks, true fallback, obsolete
+binding rejection and tampering. Independent key contexts and fresh encryption
+nonces separate absent/explicit response PIV; repeated decryption is not replay
+admission. Setup and correctness assertions remain outside timed closures.
+
+Explicit-PIV fallback improves 10.544% / 10.662%; absent-PIV fallback improves
+10.409% / 10.517%. Rejected two-attempt traffic improves 15.505% / 15.269% with
+PIV and 15.989% / 15.898% without. These pass the frozen fallback benefit and
+rejection guards. However, ordinary responses slow 3.452% / 3.149%, first-slot
+responses 2.816% / 2.605%, and latest-bound Observe responses 2.189% / 1.839%.
+All six normal upper95 bounds exceed the 2% limit. Passing fallback gains cannot
+rescue those failures, and the specific normal-regression cause is unestablished.
+
+The predeclared AB then BA plan requires both fallback means to improve at least
+5%, with upper95 below zero in both rounds; each of the other five metrics must
+have upper95 regression at most 2% in both rounds. Source, lock, executable and
+fixture identities and correctness are mandatory. No replacement, changed gate,
+pooling or eight-profile expansion follows. Preserve the measured fallback
+opportunity for a separately justified normal-path-preserving design; do not
+merge this lazy-state implementation unchanged.
+
+Rust 1.99.0, Criterion 0.5.1 without default features, Linux x86_64 CPU0, release
+thin LTO, one codegen unit and `std,oscore` without defaults are explicit. The
+299-second hosted job includes a reported 228-second release build; instrumented
+authentication intervals are separate. Earlier quick checks on the identical
+tree use Rust 1.99.1: 1,208 all-feature and 711 minimal-feature library tests,
+formatting and strict Clippy pass. That is separate producer evidence, not MSRV
+or this benchmark's compiler. Compiler/executable identity and process cleanup
+remain producer evidence; no ELF was independently inspected. No process/server
+CPU50, socket, replay-admission, emitted-stack, hardware or whole-memory gain
+follows. Both CPU objectives and remaining qualification remain open.

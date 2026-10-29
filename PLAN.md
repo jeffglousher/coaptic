@@ -13,9 +13,20 @@ unmerged. Its lookup microbenchmark improves about 21%, but authenticated
 response opening slows 2.871% and 1.009% in the two AB/BA rounds; the first-slot
 regression guard also fails. All 134 correctness tests pass. Stop sampling and
 retain the [raw measurements](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-binding-lookup-20261029).
-No production rollback or CPU/memory gain follows. The next source-only candidate
-is transient AEAD key-schedule reuse across Observe fallback; its design is
-reviewed, but implementation and performance proof remain pending.
+No production rollback or CPU/memory gain follows.
+
+The separate transient-cipher prototype in #707 is also rejected and remains
+unmerged. Genuine original-binding fallback improves 10.4-10.7%, and rejected
+two-attempt traffic improves 15-16%, but all three normal-path upper95 guards
+fail in both rounds. Ordinary response opening slows 3.452% / 3.149%; first-slot
+opening slows 2.816% / 2.605%; latest-bound Observe opening slows 2.189% / 1.839%.
+All 136 OSCORE correctness tests, four arms and 840 sample pairs pass. Preserve
+these useful fallback results and the normal regressions in the
+[complete retained data](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-transient-cipher-20261029).
+The campaign stops without replacement samples or eight-profile expansion.
+A normal-path-preserving design may be investigated separately; the cost cause
+and emitted stack are unproven. No CPU50, socket or whole-memory gain follows.
+Existing delivered reductions remain intact.
 
 The October 29 hot-path pass developed six bounded mechanisms and screened a
 seventh. The combined batch in #699 is held, not promoted as a performance win:
