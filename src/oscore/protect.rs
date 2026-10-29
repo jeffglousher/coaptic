@@ -376,31 +376,29 @@ fn unprotect_response_candidates<'a, const REQUESTS: usize, T: OwnedToken>(
         return Err(Error::MessageLength);
     }
     let mut plaintext = [0u8; INNER];
-    let mut accepted = None;
-    // At most two AEAD attempts, using the same fixed scratch. Decode and
-    // admission happen only after authentication identifies the request.
-    for candidate in [Some(request), fallback].into_iter().flatten() {
-        let aad = Aad::new(candidate.kid(), candidate.piv().as_bytes())?;
-        let nonce = match header.piv {
-            Some(piv) => aead::nonce(ctx.common_iv(), ctx.recipient_id(), piv),
-            None => aead::nonce(ctx.common_iv(), candidate.kid(), candidate.piv()),
-        };
-        match aead::open(
-            ctx.recipient_key(),
-            &nonce,
-            aad.as_bytes(),
-            protected.payload(),
-            &mut plaintext,
-        ) {
-            Ok(len) => {
-                accepted = Some((len, candidate));
-                break;
+    let (len, request) = {
+        let mut opener = aead::Opener::new(ctx.recipient_key());
+        let mut accepted = None;
+        // At most two AEAD attempts, using the same fixed scratch. Only the
+        // key schedule survives fallback preparation, with fresh AAD/nonce.
+        for candidate in [Some(request), fallback].into_iter().flatten() {
+            let aad = Aad::new(candidate.kid(), candidate.piv().as_bytes())?;
+            let nonce = match header.piv {
+                Some(piv) => aead::nonce(ctx.common_iv(), ctx.recipient_id(), piv),
+                None => aead::nonce(ctx.common_iv(), candidate.kid(), candidate.piv()),
+            };
+            match opener.open(&nonce, aad.as_bytes(), protected.payload(), &mut plaintext) {
+                Ok(len) => {
+                    accepted = Some((len, candidate));
+                    break;
+                }
+                Err(Error::Decrypt) => {}
+                Err(error) => return Err(error),
             }
-            Err(Error::Decrypt) => {}
-            Err(error) => return Err(error),
         }
-    }
-    let (len, request) = accepted.ok_or(Error::Decrypt)?;
+        // Drop the transient schedule before processing authenticated Inner.
+        accepted.ok_or(Error::Decrypt)?
+    };
     let code = Code::from_raw(*plaintext[..len].first().ok_or(Error::MessageLength)?);
     if !code.is_response() {
         return Err(Error::MessageCode);

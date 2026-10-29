@@ -96,6 +96,48 @@ pub(crate) fn open(
     Ok(pt_len)
 }
 
+// One response may authenticate against two request bindings. Retain only the
+// key schedule between attempts; CCM recreates CTR and MAC for each open.
+pub(super) struct Opener<'key> {
+    key: &'key [u8; KEY_LEN],
+    cipher: Option<Aes128Ccm>,
+}
+
+impl<'key> Opener<'key> {
+    pub(super) fn new(key: &'key [u8; KEY_LEN]) -> Self {
+        Self { key, cipher: None }
+    }
+
+    pub(super) fn open(
+        &mut self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        ciphertext: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        // Keep preflight and separate-input decryption in parity with one-shot
+        // open, including lazy initialization only after tag extraction.
+        if ciphertext.len() < TAG_LEN {
+            return Err(Error::MessageLength);
+        }
+        let pt_len = ciphertext.len() - TAG_LEN;
+        if out.len() < pt_len {
+            return Err(Error::BufferTooSmall);
+        }
+        let tag =
+            Tag::<Aes128Ccm>::try_from(&ciphertext[pt_len..]).map_err(|_| Error::MessageLength)?;
+        let cipher = self
+            .cipher
+            .get_or_insert_with(|| Aes128Ccm::new(self.key.into()));
+        let buffer = InOutBuf::new(&ciphertext[..pt_len], &mut out[..pt_len])
+            .map_err(|_| Error::MessageLength)?;
+        cipher
+            .decrypt_inout_detached(nonce.into(), aad, buffer, &tag)
+            .map_err(|_| Error::Decrypt)?;
+        Ok(pt_len)
+    }
+}
+
 // Supported callers supply a validated request kid <= 7 bytes and Partial IV
 // <= 5 bytes, with empty Class I here: prefix 11 + bstr header 1 + external
 // array 19 = at most 31 encoded bytes. ID Context is separate. Revisit this
@@ -221,6 +263,117 @@ mod tests {
             );
             assert!(opened[..length].iter().all(|byte| *byte == 0));
             assert!(opened[length..].iter().all(|byte| *byte == 0xcc));
+            assert_eq!(sealed, original);
+        }
+    }
+
+    #[test]
+    fn transient_opener_matches_one_shot_across_authentication_attempts() {
+        let key = [0x43; KEY_LEN];
+        for (index, length) in [0, 1, 15, 16, 17, 63, 64, 65, 1280].into_iter().enumerate() {
+            let mut nonce = [0x27; NONCE_LEN];
+            nonce[0] = index as u8;
+            let mut wrong_nonce = nonce;
+            wrong_nonce[1] ^= 1;
+            let mut sealed = [0x5a; 1280 + TAG_LEN];
+            let n = seal_in_place(&key, &nonce, b"aad", length, &mut sealed).unwrap();
+            let original = sealed;
+            // Wrong AAD then success, wrong nonce then success, and all fail.
+            for attempts in [
+                [(&nonce, &b"wrong"[..], false), (&nonce, &b"aad"[..], true)],
+                [
+                    (&wrong_nonce, &b"aad"[..], false),
+                    (&nonce, &b"aad"[..], true),
+                ],
+                [
+                    (&nonce, &b"wrong"[..], false),
+                    (&wrong_nonce, &b"aad"[..], false),
+                ],
+            ] {
+                let mut opener = Opener::new(&key);
+                let mut actual = [0xcc; 1281];
+                let mut expected = actual;
+                for (attempt_nonce, aad, authenticates) in attempts {
+                    let result = opener.open(attempt_nonce, aad, &sealed[..n], &mut actual);
+                    assert_eq!(
+                        result,
+                        open(&key, attempt_nonce, aad, &sealed[..n], &mut expected)
+                    );
+                    assert_eq!(
+                        result,
+                        if authenticates {
+                            Ok(length)
+                        } else {
+                            Err(Error::Decrypt)
+                        }
+                    );
+                    assert_eq!(actual, expected);
+                    assert!(
+                        actual[..length]
+                            .iter()
+                            .all(|byte| { *byte == if authenticates { 0x5a } else { 0 } })
+                    );
+                    assert!(actual[length..].iter().all(|byte| *byte == 0xcc));
+                    assert_eq!(sealed, original);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transient_opener_preflight_matches_one_shot_before_and_after_initialization() {
+        let key = [0x44; KEY_LEN];
+        let nonce = [0x27; NONCE_LEN];
+        let mut sealed = [0x5a; 17 + TAG_LEN];
+        let n = seal_in_place(&key, &nonce, b"aad", 17, &mut sealed).unwrap();
+        let original = sealed;
+        let mut opener = Opener::new(&key);
+        for initialized in [false, true] {
+            for ct_len in 0..TAG_LEN {
+                let mut actual = [0xcc; 18];
+                let mut expected = actual;
+                assert_eq!(
+                    opener.open(&nonce, b"aad", &sealed[..ct_len], &mut actual),
+                    open(&key, &nonce, b"aad", &sealed[..ct_len], &mut expected)
+                );
+                assert_eq!(actual, [0xcc; 18]);
+                assert_eq!(actual, expected);
+                assert_eq!(opener.cipher.is_some(), initialized);
+            }
+            // Capacity refusal precedes authentication, including a bad tag.
+            for bad_tag in [false, true] {
+                let mut input = sealed;
+                if bad_tag {
+                    input[n - 1] ^= 1;
+                }
+                for capacity in [0, 16] {
+                    let mut actual = [0xcc; 18];
+                    let mut expected = actual;
+                    let result = opener.open(&nonce, b"aad", &input, &mut actual[..capacity]);
+                    assert_eq!(result, Err(Error::BufferTooSmall));
+                    assert_eq!(
+                        result,
+                        open(&key, &nonce, b"aad", &input, &mut expected[..capacity])
+                    );
+                    assert_eq!(actual, [0xcc; 18]);
+                    assert_eq!(actual, expected);
+                    assert_eq!(opener.cipher.is_some(), initialized);
+                }
+            }
+            for capacity in [17, 18] {
+                let mut actual = [0xcc; 18];
+                let mut expected = actual;
+                assert_eq!(
+                    opener.open(&nonce, b"aad", &sealed, &mut actual[..capacity]),
+                    Ok(17)
+                );
+                assert_eq!(
+                    open(&key, &nonce, b"aad", &sealed, &mut expected[..capacity]),
+                    Ok(17)
+                );
+                assert_eq!(actual, expected);
+                assert_eq!(actual[17], 0xcc);
+            }
             assert_eq!(sealed, original);
         }
     }

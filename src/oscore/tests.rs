@@ -6441,37 +6441,205 @@ fn older_concurrent_request_binding_is_not_authenticated() {
     assert_eq!(client.lookup(token), Some(latest));
     assert_eq!(client.observe_request(token), Some(observe));
 
-    let server = server_c1();
+    let mut server = server_c1();
     let plain = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(9))
         .with_token(token)
         .with_payload(b"old");
     let mut wire = [0u8; WIRE];
     let mut out = [0u8; WIRE];
-    let n = server.protect_response(&plain, older, &mut wire).unwrap();
-    let protected = decode(&wire[..n]).unwrap();
-    assert_eq!(
-        client.unprotect_bound_response(&protected, &mut out),
-        Err(Error::Decrypt)
-    );
-    let n = server.protect_response(&plain, latest, &mut wire).unwrap();
-    let protected = decode(&wire[..n]).unwrap();
-    assert_eq!(
-        client
-            .unprotect_bound_response(&protected, &mut out)
-            .unwrap()
-            .0
-            .payload(),
-        b"old"
-    );
-    let n = server.protect_response(&plain, observe, &mut wire).unwrap();
-    let protected = decode(&wire[..n]).unwrap();
-    assert_eq!(
-        client
-            .unprotect_bound_response(&protected, &mut out)
-            .unwrap()
-            .1,
-        observe
-    );
+    for response_piv in [false, true] {
+        for reference in [older, latest, observe] {
+            let n = if response_piv {
+                server.protect_response_with_piv(&plain, reference, &mut wire)
+            } else {
+                server.protect_response(&plain, reference, &mut wire)
+            }
+            .unwrap();
+            let original = wire;
+            let protected = decode(&wire[..n]).unwrap();
+            let result = client.unprotect_bound_response(&protected, &mut out);
+            if reference == older {
+                assert_eq!(result, Err(Error::Decrypt));
+            } else {
+                let (inner, used) = result.unwrap();
+                assert_eq!(inner.payload(), b"old");
+                assert_eq!(used, reference);
+            }
+            assert_eq!(wire, original);
+        }
+    }
+}
+
+// Build authenticated raw Inner bytes that the ordinary response encoder
+// intentionally refuses, without changing any production encoder contract.
+fn raw_response_inner_fixture(
+    server: &SecurityContext,
+    token: Token,
+    request: RequestRef,
+    response_piv: Option<PartialIv>,
+    inner: &[u8],
+    wire: &mut [u8],
+) -> usize {
+    let aad = super::aead::Aad::new(request.kid(), request.piv().as_bytes()).unwrap();
+    let nonce = match response_piv {
+        Some(piv) => super::aead::nonce(server.common_iv(), server.sender_id(), piv),
+        None => super::aead::nonce(server.common_iv(), request.kid(), request.piv()),
+    };
+    let mut ciphertext = [0u8; 1281 + super::TAG_LEN];
+    ciphertext[..inner.len()].copy_from_slice(inner);
+    let n = super::aead::seal_in_place(
+        server.sender_key(),
+        &nonce,
+        aad.as_bytes(),
+        inner.len(),
+        &mut ciphertext,
+    )
+    .unwrap();
+    let mut header = [0u8; 6];
+    let h = header::encode_option(&mut header, response_piv, None, None).unwrap();
+    let options = [Opt::oscore(&header[..h])];
+    Message::new(Type::NonConfirmable, Code::CHANGED, MessageId::new(91))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&ciphertext[..n])
+        .encode(wire)
+        .unwrap()
+}
+
+#[test]
+fn bound_response_inner_capacity_precedes_authentication_with_fallback() {
+    let token = Token::new(&[7]).unwrap();
+    let server = server_c1();
+    let inner = [0x45; 1281];
+    let mut case = 0;
+    for with_piv in [false, true] {
+        for use_original in [false, true] {
+            for bad_tag in [false, true] {
+                let original =
+                    RequestRef::from_kid(&[], PartialIv::from_seq(100 + 2 * case).unwrap())
+                        .unwrap();
+                let latest =
+                    RequestRef::from_kid(&[], PartialIv::from_seq(101 + 2 * case).unwrap())
+                        .unwrap();
+                let mut client = client_c1();
+                client.remember_live(token, original, true).unwrap();
+                client.remember_download(token, latest).unwrap();
+                let reference = if use_original { original } else { latest };
+                let response_piv = with_piv.then(|| PartialIv::from_seq(1000 + case).unwrap());
+                case += 1;
+                let mut wire = [0u8; WIRE];
+                let n = raw_response_inner_fixture(
+                    &server,
+                    token,
+                    reference,
+                    response_piv,
+                    &inner,
+                    &mut wire,
+                );
+                if bad_tag {
+                    wire[n - 1] ^= 1;
+                }
+                let saved = wire;
+                let protected = decode(&wire[..n]).unwrap();
+                assert_eq!(protected.payload().len(), 1289);
+                let mut out = [0xcc; WIRE];
+                assert_eq!(
+                    client.unprotect_bound_response(&protected, &mut out),
+                    Err(Error::BufferTooSmall)
+                );
+                assert_eq!(out, [0xcc; WIRE]);
+                assert_eq!(wire, saved);
+            }
+        }
+    }
+}
+
+#[test]
+fn authenticated_bound_response_inner_errors_are_terminal() {
+    use crate::error::{EncodeError, ParseError};
+
+    let token = Token::new(&[7]).unwrap();
+    let server = server_c1();
+    let cases: &[(&[u8], usize, Error)] = &[
+        (&[], WIRE, Error::MessageLength),
+        (&[0x01], WIRE, Error::MessageCode),
+        (
+            &[0x45, 0xf0],
+            WIRE,
+            Error::Parse(ParseError::ReservedOptionDelta),
+        ),
+        (
+            &[0x45, 0xff],
+            WIRE,
+            Error::Parse(ParseError::PayloadMarkerWithoutPayload),
+        ),
+        (
+            &[0x45, 0xff, b'v'],
+            0,
+            Error::Encode(EncodeError::BufferTooSmall),
+        ),
+        (
+            &[0x45, 0xff, b'v'],
+            4,
+            Error::Encode(EncodeError::BufferTooSmall),
+        ),
+    ];
+    // Disjoint from the capacity fixture's cases 0..8. Deterministic context
+    // construction does not supply a new key: every encryption needs fresh IVs.
+    let mut case = 100;
+    for with_piv in [false, true] {
+        for use_original in [false, true] {
+            for &(inner, capacity, error) in cases {
+                let original =
+                    RequestRef::from_kid(&[], PartialIv::from_seq(100 + 2 * case).unwrap())
+                        .unwrap();
+                let latest =
+                    RequestRef::from_kid(&[], PartialIv::from_seq(101 + 2 * case).unwrap())
+                        .unwrap();
+                let mut client = client_c1();
+                client.remember_live(token, original, true).unwrap();
+                client.remember_download(token, latest).unwrap();
+                let reference = if use_original { original } else { latest };
+                let other = if use_original { latest } else { original };
+                let response_piv = with_piv.then(|| PartialIv::from_seq(1000 + case).unwrap());
+                case += 1;
+                let mut wire = [0u8; WIRE];
+                let n = raw_response_inner_fixture(
+                    &server,
+                    token,
+                    reference,
+                    response_piv,
+                    inner,
+                    &mut wire,
+                );
+                let saved = wire;
+                let protected = decode(&wire[..n]).unwrap();
+                let mut out = [0xcc; WIRE];
+                // The other binding fails authentication on these same bytes.
+                // Retrying and returning that error would mask this terminal
+                // error; source control flow establishes the attempt bound.
+                assert_eq!(
+                    client.unprotect_response(&protected, other, &mut out),
+                    Err(Error::Decrypt)
+                );
+                if matches!(error, Error::Encode(_)) {
+                    let opened = client
+                        .unprotect_response(&protected, reference, &mut out)
+                        .unwrap();
+                    assert_eq!(opened.payload(), b"v");
+                }
+                out.fill(0xcc);
+                assert_eq!(
+                    client.unprotect_bound_response(&protected, &mut out[..capacity]),
+                    Err(error)
+                );
+                assert!(out[capacity..].iter().all(|byte| *byte == 0xcc));
+                assert_eq!(wire, saved);
+                assert_eq!(client.lookup(token), Some(latest));
+                assert_eq!(client.observe_request(token), Some(original));
+            }
+        }
+    }
 }
 
 #[path = "replay_tests.rs"]
