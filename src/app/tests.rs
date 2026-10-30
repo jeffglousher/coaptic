@@ -15,8 +15,8 @@ use crate::message::{
     QBlockTransmission, Token, Transmission, Type, decode, encode, encode_uint,
 };
 use crate::storage::{
-    BlockKey, DatagramIo, DedupEntry, DedupKey, Endpoint, ExchangeKey, MemoryLayout, MemoryProfile,
-    ObserveKey, profiles,
+    BlockKey, DatagramIo, DedupEntry, DedupKey, DedupSlots, Endpoint, Engine, ExchangeKey,
+    MemoryLayout, MemoryProfile, ObserveKey, SlotId, Storage, profiles,
 };
 
 const LARGE: [u8; 2000] = [b'A'; 2000];
