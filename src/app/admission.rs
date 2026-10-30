@@ -36,6 +36,10 @@ pub(super) fn refuse_new_request<S: AppStorage>(
     parsed: &ParsedMessage<'_, S::Token>,
     peer: Endpoint,
 ) -> bool {
+    // Ample headroom admits both new and existing work without table lookups.
+    if free_rx(engine) >= RX_HEADROOM && free_tx(engine) > TX_HEADROOM {
+        return false;
+    }
     // Existing body continuations and cancellation release or advance already
     // admitted work. Their individual send paths still enforce TX ownership.
     let existing = ((parsed.block2().is_some() || parsed.q_block2().next().is_some())

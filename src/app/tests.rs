@@ -15802,6 +15802,63 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
 }
 
 #[test]
+fn admission_request_headroom_boundaries_preserve_existing_cancellation() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let token = Token::new(&[0xa1]).unwrap();
+    let options = [Opt::observe_deregister(), Opt::uri_path("value")];
+    let cancellation = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+        .with_token(token)
+        .with_options(&options);
+    let mut wire = [0; 256];
+    let n = encode(&cancellation, &mut wire).unwrap();
+    let parsed = decode(&wire[..n]).unwrap();
+
+    // RX occupancy includes the ingress packet at this decision point.
+    for (free_rx, free_tx, refused, rx_refused, tx_refused) in [
+        (0, 0, true, 1, 0),
+        (0, 1, true, 1, 0),
+        (0, 2, true, 1, 0),
+        (1, 0, true, 0, 1),
+        (1, 1, true, 0, 1),
+        (1, 2, false, 0, 0),
+    ] {
+        let mut engine = crate::storage::EngineBuilder::new()
+            .profile::<profiles::Constrained>()
+            .block_wise(false)
+            .build(crate::storage::Memory::<profiles::Constrained>::new())
+            .unwrap();
+        for _ in 0..(2 - free_rx) {
+            engine.acquire_rx().unwrap();
+        }
+        for _ in 0..(2 - free_tx) {
+            engine.acquire_tx().unwrap();
+        }
+        let before = (engine.rx_occupied(), engine.tx_occupied());
+        assert_eq!(
+            super::admission::refuse_new_request(&mut engine, &parsed, peer),
+            refused,
+            "new request with {free_rx} RX and {free_tx} TX free"
+        );
+        assert_eq!(engine.metrics().admission_rx_refused, rx_refused);
+        assert_eq!(engine.metrics().admission_tx_refused, tx_refused);
+        assert_eq!((engine.rx_occupied(), engine.tx_occupied()), before);
+
+        let row = engine
+            .insert_observe(crate::storage::ObserveInterest::new(token, peer))
+            .unwrap();
+        assert!(!super::admission::refuse_new_request(
+            &mut engine,
+            &parsed,
+            peer
+        ));
+        assert!(engine.observe_interest(row).is_some());
+        assert_eq!((engine.rx_occupied(), engine.tx_occupied()), before);
+        assert_eq!(engine.metrics().admission_rx_refused, rx_refused);
+        assert_eq!(engine.metrics().admission_tx_refused, tx_refused);
+    }
+}
+
+#[test]
 fn admission_reserve_refuses_before_handler_and_recovers() {
     static HITS: AtomicUsize = AtomicUsize::new(0);
     fn handle(_: Request<'_>) -> Response<'static> {
