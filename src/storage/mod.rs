@@ -264,7 +264,10 @@ pub enum DedupInsert {
 }
 
 /// Typed Dedup Table access. Built-in operations scan the fixed capacity (O(n)).
-/// [`crate::App::poll`] uses the stored replay and TX pin for duplicate requests.
+///
+/// [`Memory`] and, with `alloc`, `AllocMemory` retain rows in existing table slots.
+/// [`crate::App::poll`] uses [`DedupEntry::due_ms`], [`DedupEntry::replay`] and
+/// [`DedupEntry::tx_pin`] to answer duplicate CON requests without another handler call.
 pub trait DedupSlots {
     /// Insert `entry`, or return the existing slot if the key is present.
     ///
@@ -273,6 +276,10 @@ pub trait DedupSlots {
 
     /// Classify an insertion without changing a matching row. The default first
     /// calls `lookup_dedup`, then calls `insert_dedup` only if lookup misses.
+    ///
+    /// `Existing` must select the same row as `lookup_dedup` and preserve its
+    /// payload, occupancy and cursor. Built-in stores share one lookup with
+    /// acquisition; custom stores can retain the default primitive sequence.
     fn insert_dedup_classified(&mut self, entry: DedupEntry) -> DedupInsert {
         if let Some(id) = self.lookup_dedup(entry.key()) {
             DedupInsert::Existing(id)
