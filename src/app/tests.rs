@@ -12917,7 +12917,7 @@ fn classified_dedup_custom_fallback_preserves_pin_order_and_missing_payload() {
     for hide_payload in [false, true] {
         for refuse_remove in [false, true] {
             let store = DedupFallbackStore {
-                inner: crate::storage::Memory::new(),
+                inner: crate::storage::Memory::<profiles::Default>::new(),
                 rows: crate::storage::DedupTable::new(),
                 calls: core::cell::Cell::new(0),
                 hide_payload,
