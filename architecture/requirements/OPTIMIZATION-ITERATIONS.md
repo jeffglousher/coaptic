@@ -43,12 +43,17 @@ Disposition of the two nominated hypotheses:
    RX/TX headroom. It remains unmerged. The
    [retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
    passes all eight frozen gates, with two-process Windows complete-App wall
-   limits. The public-App unprotected RX ownership proof passes on both pins in
-   run 41094806564. New unprotected/OSCORE TX proofs in companion #234 are
-   implemented but unrun; protected RX, Observe cancellation and complete Block2
-   proofs remain missing. Pressure/continuation comparisons are still required
-   before promotion. Preserve RX `<` versus TX `<=` refusal boundaries, tight-pool
-   continuation/cancellation/upload handling, dedup eviction and metrics. For
+   limits. The eight public-App ownership cases now pass on both pins in
+   [run 41142584716](https://github.com/jeffglousher/coaptic-validation/actions/runs/41142584716)
+   at tested companion source 49b1cab: 82 portable checks and 24 native executions,
+   four wall plus eight pressure cases per arm. RX, TX, Observe cancellation and
+   explicitly notification-backed Block2 each cover unprotected and OSCORE modes;
+   [companion #236](https://github.com/jeffglousher/coaptic-validation/pull/236)
+   records the source contract and three retained fixture failures. The Block2
+   snapshot cell is not ordinary stateless traffic. Pressure/continuation timing
+   remains unrun and required before promotion. Preserve RX `<` versus TX `<=`
+   refusal boundaries, tight-pool continuation/cancellation/upload handling,
+   dedup eviction and metrics. For
    stable logical storage with truthful accessors, incidental read-call counts
    are not a protocol contract. Extra occupancy reads can still regress existing
    or pressured requests; a helper-only speedup is insufficient.
@@ -67,9 +72,9 @@ Disposition of the two nominated hypotheses:
    VM retirement is unverified.
 
 Neither runtime candidate is promoted. Admission retains its separate successful
-normal-headroom cohort while software pressure proofs continue; the dedup campaign
-has ended. Further admission timing requires its own frozen supported matrix,
-source/host/tool identities, equivalent capacities, finite cohort and regression
+normal-headroom cohort and completed selected software ownership proofs; the
+dedup campaign has ended. Further admission timing requires its own frozen
+supported matrix, source/host/tool identities, equivalent capacities, finite cohort and regression
 gates. Preserve every failure and observation. These dispositions do not revive
 rejected lookup, cipher, dedup or Observe experiments and do not change full CPU
 or hardware acceptance requirements.

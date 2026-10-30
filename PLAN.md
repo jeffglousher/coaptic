@@ -24,12 +24,19 @@ The [admission headroom candidate #716](https://github.com/jeffglousher/coaptic/
 remains held for pressure and continuation validation. Its
 [retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
 passes all eight frozen normal-headroom gates. This is conditional two-process
-Windows full-App wall evidence, not CPU or device evidence. The original public-App
-unprotected RX ownership proof passed on both core arms in run 41094806564;
-protected RX, Observe cancellation and complete Block2 proofs remain missing.
-The new TX pressure/refusal/recovery tests for unprotected and OSCORE traffic
-are implemented in companion #234 but remain unrun. Complete these software
-proofs, then the required pressure/continuation comparisons, before promotion.
+Windows full-App wall evidence, not CPU or device evidence. The public-App
+RX, TX, Observe cancellation and notification-backed Block2 software proofs now
+pass in both unprotected and OSCORE modes on both core arms. Companion
+[#236](https://github.com/jeffglousher/coaptic-validation/pull/236) retains the
+[source-specific plan](https://github.com/jeffglousher/coaptic-validation/blob/9ceac134b7ac043511ebd3f2c741caed39dbd624/tools/benchmark/admission_pressure_plan.md).
+Run [41142584716](https://github.com/jeffglousher/coaptic-validation/actions/runs/41142584716)
+at tested companion source 49b1cab passes 82 portable checks and 24 native
+executions: each arm's four wall tests plus eight ownership cases. The three
+failed fixture proofs remain retained. The Block2 case explicitly uses an
+Observe notification snapshot; it does not claim ordinary stateless traffic
+owns a persistent body. Finish the separately frozen complete-App pressure and
+continuation timing comparisons before promotion; software success is not
+quantitative regression evidence.
 Preserve the exact RX/TX boundaries, authentication, ownership, eviction and metrics;
 do not replace or repeat the successful Stage A cohort.
 
