@@ -6,6 +6,58 @@ proven memory, stack, code-size, CPU or reliability improvement can be delivered
 independently of the open 50% CPU objective in [#650](https://github.com/jeffglousher/coaptic/issues/650).
 The [full acceptance requirements](PERFORMANCE-ACCEPTANCE.md) remain unchanged.
 
+## October 30 profiling and the next bounded slice
+
+Companion #226/#227/#229 deliver portable stack analysis, owned Windows ETW
+capture/export and a bounded live C1 server-thread fixture. The
+[86,215-byte retained proof](https://github.com/jeffglousher/coaptic-validation/tree/de360dd597e030a63525e1e2d44dda895e8d3ea6/tools/benchmark/evidence/windows-live-c1-capability-20261030)
+belongs to core `8af71fe4aa73b3bb76a921a836a1a9647d75f361` and the recorded
+companion revisions. It is 64-byte Default allocated, socket-free C1 traffic,
+with one client helper and virtual `index * 8 ms` protocol time; it is not the
+SmallDevice/32-byte fixture, a socket rate or device measurement.
+
+Both controls and the first two security-mode captures completed one million
+work exchanges plus 128 warmups; both ETW sessions stopped. Unprotected export
+has 3,164 events and 1,633 with App ancestry. Explicit exact-path projection
+preserves every path multiplicity, symbol self/inclusive/occurrence count,
+recursive prefix, weighted depth and quality counter against the original.
+The offline run passes 126 portable checks, 209 C# model assertions and the
+exporter build. The fixture's 12 native tests passed during recording preparation.
+The 200 App-sample floor is met, but other sampling/unwind/inline/mode gates
+remain unknown. Inclusive counts overlap and are not additive CPU percentages.
+
+Protected per-event export first refused its frame-text budget; the same-trace
+projection later refused `Stack/frame count budget exceeded.` Which count
+predicate fired and partial totals remain unknown. No protected profile is
+inferred. Keep both failures and the last two original NOTRUN captures; the
+campaign stops without a retry, larger cap, trace segmentation or replacement.
+Raw ETL remains authoritative for metadata omitted from the aggregate JSON.
+No CPU speed, exact in-memory-image, peak-stack, whole-memory or device proof
+follows. Linux stack qualification and commissioned-device elapsed tracing
+remain separate, with their prior limitations retained.
+
+The next small hypotheses are:
+
+1. [Ample-headroom admission #713](https://github.com/jeffglousher/coaptic/issues/713).
+   Check whether ordinary RX/TX headroom can bypass continuation and option
+   searches. Preserve RX `<` versus TX `<=` refusal boundaries, tight-pool
+   continuation/cancellation/upload handling, dedup eviction and metrics. For
+   stable logical storage with truthful accessors, incidental read-call counts
+   are not a protocol contract. Extra occupancy reads can still regress existing
+   or pressured requests; a helper-only speedup is insufficient.
+2. [Dedup reply-retention searches #714](https://github.com/jeffglousher/coaptic/issues/714).
+   Investigate a bounded replacement that combines redundant searches for fixed
+   and allocated backends. Preserve old pin release exactly once, replay bytes,
+   fail-closed requests, slot/cursor behavior and full-table eviction. An earlier
+   receive-side miss does not establish absence at later insertion.
+
+Neither is implemented or accepted here. Predeclare source/host/tool identities,
+equivalent capacities, full-entry metrics, finite cohorts and regression gates
+before timing. Cover protected/unprotected normal entries and pressure/replay
+cases as appropriate; retain all failures and observations. These nominations
+do not revive rejected lookup, cipher or Observe experiments and do not change
+full CPU or hardware acceptance requirements.
+
 ## First bounded memory iteration
 
 Core #693 keeps two isolated reductions: unused fixed-table row-pin backing and
