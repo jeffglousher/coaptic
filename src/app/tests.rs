@@ -12949,10 +12949,8 @@ fn classified_dedup_custom_fallback_preserves_pin_order_and_missing_payload() {
             engine.storage_mut().calls.set(0);
             let incoming = row(7).with_replay(b"new");
             assert!(super::store_request_dedup(&mut engine, incoming));
-            assert_eq!(
-                engine.storage_mut().calls.get(),
-                if hide_payload { 132 } else { 1432 }
-            );
+            // The missing-payload branch still performs the entry read (4).
+            assert_eq!(engine.storage_mut().calls.get(), 1432);
             assert_eq!(engine.tx_occupied(), usize::from(hide_payload));
             let stored = engine.storage_mut().rows.lookup(incoming.key()).unwrap();
             assert_eq!(
