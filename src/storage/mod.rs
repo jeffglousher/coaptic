@@ -251,20 +251,36 @@ pub trait DatagramSlots {
     fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
 
-/// Typed Dedup Table access.
-///
-/// Insert, lookup, and remove scan the configured entry count (O(n) in
-/// capacity). Capacity is fixed at construction. [`Memory`] and
-/// `AllocMemory` (with `alloc`) implement this so [`Engine`] can store [`DedupEntry`]
-/// values in the existing table slots. [`crate::App::poll`] uses
-/// [`DedupEntry::due_ms`], [`DedupEntry::replay`], and
-/// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
-/// without a second handler call.
+/// Result of a classified dedup insertion. Slot IDs locate the row immediately
+/// after the call; they are not generation tokens and may become stale on mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DedupInsert {
+    /// A new row was inserted.
+    Inserted(SlotId),
+    /// The key already existed; its row was not changed.
+    Existing(SlotId),
+    /// No matching key or free slot was found.
+    Full,
+}
+
+/// Typed Dedup Table access. Built-in operations scan the fixed capacity (O(n)).
+/// [`crate::App::poll`] uses the stored replay and TX pin for duplicate requests.
 pub trait DedupSlots {
     /// Insert `entry`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId>;
+
+    /// Classify an insertion without changing a matching row. The default first
+    /// calls `lookup_dedup`, then calls `insert_dedup` only if lookup misses.
+    fn insert_dedup_classified(&mut self, entry: DedupEntry) -> DedupInsert {
+        if let Some(id) = self.lookup_dedup(entry.key()) {
+            DedupInsert::Existing(id)
+        } else {
+            self.insert_dedup(entry)
+                .map_or(DedupInsert::Full, DedupInsert::Inserted)
+        }
+    }
 
     /// Occupied slot matching `key`, if any.
     fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId>;

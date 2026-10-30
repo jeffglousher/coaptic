@@ -9,6 +9,7 @@ use super::BodySlots;
 use super::Capacities;
 use super::DatagramSlots;
 use super::DedupEntry;
+use super::DedupInsert;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
@@ -685,6 +686,10 @@ impl<T: OwnedToken> Exchanges for AllocMemory<T> {
 impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
+    }
+
+    fn insert_dedup_classified(&mut self, entry: DedupEntry) -> DedupInsert {
+        self.dedup.insert_classified(entry)
     }
 
     fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId> {
@@ -1648,6 +1653,17 @@ impl DedupStore for AllocDedupTable {
         Some(id)
     }
 
+    fn insert_classified(&mut self, entry: DedupEntry) -> DedupInsert {
+        if let Some(id) = self.lookup(entry.key()) {
+            return DedupInsert::Existing(id);
+        }
+        let Some(id) = self.occ.acquire() else {
+            return DedupInsert::Full;
+        };
+        self.entries[id.index()] = Some(entry);
+        DedupInsert::Inserted(id)
+    }
+
     fn lookup(&self, key: DedupKey) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
@@ -1907,6 +1923,20 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allocated_classified_duplicate_empty_slot_and_cursor_transitions() {
+        crate::storage::tests::classified_table_transitions(
+            AllocDedupTable::new(3).unwrap(),
+            AllocDedupTable::new(3).unwrap(),
+            |table, id, row| table.entries[id.index()] = Some(row),
+        );
+        let row = DedupEntry::new(MessageId::new(0), Endpoint::v4([192, 0, 2, 5], 5683));
+        assert_eq!(
+            AllocDedupTable::new(0).unwrap().insert_classified(row),
+            DedupInsert::Full
+        );
+    }
 
     #[test]
     fn allocated_tables_saturate_rotate_and_reset_without_pins() {

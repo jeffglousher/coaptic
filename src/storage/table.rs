@@ -1,9 +1,9 @@
 //! [`DedupTable`] and [`ObserveTable`]: fixed entry slots plus rotating occupancy.
 
-use super::SlotPool;
 use super::endpoint::Endpoint;
 use super::occupancy::Occupancy;
 use super::slot::{SlotError, SlotId};
+use super::{DedupInsert, SlotPool};
 use crate::message::{MessageId, OBSERVE_SEQUENCE_MASK, ObserveTransmission, OwnedToken, Token};
 
 /// Lookup identity for one Dedup Table row.
@@ -172,6 +172,7 @@ impl From<DedupKey> for DedupEntry {
 /// is fixed at construction.
 pub(crate) trait DedupStore {
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId>;
+    fn insert_classified(&mut self, entry: DedupEntry) -> DedupInsert;
     fn lookup(&self, key: DedupKey) -> Option<SlotId>;
     fn remove(&mut self, key: DedupKey) -> bool;
     fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry>;
@@ -1022,6 +1023,17 @@ impl<const ENTRIES: usize> Default for DedupTable<ENTRIES> {
 impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId> {
         DedupTable::insert(self, entry)
+    }
+
+    fn insert_classified(&mut self, entry: DedupEntry) -> DedupInsert {
+        if let Some(id) = self.lookup(entry.key()) {
+            return DedupInsert::Existing(id);
+        }
+        let Some(id) = self.occ.acquire() else {
+            return DedupInsert::Full;
+        };
+        self.entries[id.index()] = Some(entry);
+        DedupInsert::Inserted(id)
     }
 
     fn lookup(&self, key: DedupKey) -> Option<SlotId> {

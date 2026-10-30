@@ -1344,6 +1344,123 @@ fn engine_dedup_insert_lookup_remove() {
     assert_eq!(engine.lookup_dedup(key), None);
 }
 
+fn classified_dedup_matches_ordinary<S: Storage + super::DedupSlots>(
+    mut old: Engine<S>,
+    mut new: Engine<S>,
+) {
+    let ep = Endpoint::v4([198, 51, 100, 8], 5683);
+    let capacity = old.capacities().dedup_entries;
+    for i in 0..capacity {
+        let row = DedupEntry::new(MessageId::new(i as u16), ep)
+            .with_due_ms(i as u64 + 1)
+            .with_replay(&[1, 2, i as u8]);
+        let old_id = old.insert_dedup(row).unwrap();
+        assert_eq!(
+            new.insert_dedup_classified(row),
+            super::DedupInsert::Inserted(old_id)
+        );
+        let duplicate = DedupEntry::new(MessageId::new(i as u16), ep).with_replay(&[9]);
+        assert_eq!(old.insert_dedup(duplicate), Some(old_id));
+        assert_eq!(
+            new.insert_dedup_classified(duplicate),
+            super::DedupInsert::Existing(old_id)
+        );
+        assert_eq!(old.dedup_entry(old_id), new.dedup_entry(old_id));
+    }
+    let overflow = DedupEntry::new(MessageId::new(u16::MAX), ep);
+    assert_eq!(old.insert_dedup(overflow), None);
+    assert_eq!(
+        new.insert_dedup_classified(overflow),
+        super::DedupInsert::Full
+    );
+    if capacity > 0 {
+        let key = DedupKey::new(MessageId::new(0), ep);
+        assert!(old.remove_dedup(key));
+        assert!(new.remove_dedup(key));
+        let id = old.insert_dedup(overflow).unwrap();
+        assert_eq!(
+            new.insert_dedup_classified(overflow),
+            super::DedupInsert::Inserted(id)
+        );
+        assert_eq!(old.dedup_entry(id), new.dedup_entry(id));
+    }
+}
+
+#[test]
+fn fixed_classified_dedup_matches_ordinary() {
+    classified_dedup_matches_ordinary(build_default(), build_default());
+}
+
+pub(super) fn classified_table_transitions<T: super::table::DedupStore + SlotPool>(
+    mut old: T,
+    mut new: T,
+    seed: impl Fn(&mut T, SlotId, DedupEntry),
+) {
+    let peer = Endpoint::v4([192, 0, 2, 5], 5683);
+    let row = |n| DedupEntry::new(MessageId::new(n), peer).with_replay(&[1, 2, 3]);
+    // Seed duplicate foreign rows and an occupied slot without a payload.
+    for table in [&mut old, &mut new] {
+        let a = table.acquire().unwrap();
+        seed(table, a, row(7));
+        let _empty = table.acquire().unwrap();
+        let b = table.acquire().unwrap();
+        seed(table, b, row(7).with_due_ms(99));
+        table.advance(2);
+    }
+    for incoming in [row(7).with_replay(&[9]), row(8), row(7), row(9)] {
+        let before = (new.cursor(), new.occupied_count());
+        let found = old.lookup(incoming.key());
+        let result = new.insert_classified(incoming);
+        if let Some(id) = found {
+            assert_eq!(result, super::DedupInsert::Existing(id));
+            assert_eq!((new.cursor(), new.occupied_count()), before);
+            assert!(old.remove(incoming.key()));
+            assert!(new.remove(incoming.key()));
+            // A second duplicate must be returned unchanged; never overwrite it.
+            assert_eq!(old.insert(incoming), new.insert(incoming));
+        } else {
+            match old.insert(incoming) {
+                Some(id) => assert_eq!(result, super::DedupInsert::Inserted(id)),
+                None => assert_eq!(result, super::DedupInsert::Full),
+            }
+        }
+        assert_eq!(old.cursor(), new.cursor());
+        assert_eq!(old.occupied_count(), new.occupied_count());
+        for i in 0..old.slot_count() {
+            let id = SlotId::from_index(i);
+            assert_eq!(old.is_occupied(id), new.is_occupied(id));
+            assert_eq!(old.entry_ref(id), new.entry_ref(id));
+        }
+    }
+    // Free a non-cursor slot, then prove both algorithms acquire the same ID.
+    let id = SlotId::from_index(1);
+    old.release(id).unwrap();
+    new.release(id).unwrap();
+    assert_eq!(
+        new.insert_classified(row(42)),
+        super::DedupInsert::Inserted(old.insert(row(42)).unwrap())
+    );
+    assert_eq!(old.cursor(), new.cursor());
+}
+
+#[test]
+fn fixed_classified_duplicate_empty_slot_and_cursor_transitions() {
+    classified_table_transitions(
+        DedupTable::<3>::new(),
+        DedupTable::<3>::new(),
+        |t, id, row| {
+            t.set_entry(id, row).unwrap();
+        },
+    );
+    assert_eq!(
+        super::table::DedupStore::insert_classified(
+            &mut DedupTable::<0>::new(),
+            DedupEntry::new(MessageId::new(0), Endpoint::v4([192, 0, 2, 5], 5683))
+        ),
+        super::DedupInsert::Full
+    );
+}
+
 fn dedup_borrowed_payload_and_default_copy<S: Storage + super::DedupSlots>(mut engine: Engine<S>) {
     let entry = DedupEntry::new(MessageId::new(92), Endpoint::v4([192, 0, 2, 8], 5683))
         .with_due_ms(u64::MAX)
@@ -4251,6 +4368,11 @@ mod alloc_backend {
                 .insert_dedup(DedupEntry::new(MessageId::new(99), ep))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn alloc_classified_dedup_matches_ordinary() {
+        classified_dedup_matches_ordinary(build_alloc(false), build_alloc(false));
     }
 
     #[test]

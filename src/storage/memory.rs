@@ -5,6 +5,7 @@ use super::AccessMut;
 use super::BodySlots;
 use super::DatagramSlots;
 use super::DedupEntry;
+use super::DedupInsert;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
@@ -595,6 +596,10 @@ where
 {
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
+    }
+
+    fn insert_dedup_classified(&mut self, entry: DedupEntry) -> DedupInsert {
+        self.dedup.insert_classified(entry)
     }
 
     fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId> {

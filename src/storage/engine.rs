@@ -6,6 +6,7 @@ use super::BodySlots;
 use super::Capacities;
 use super::DatagramSlots;
 use super::DedupEntry;
+use super::DedupInsert;
 use super::DedupKey;
 use super::DedupSlots;
 use super::Endpoint;
@@ -451,6 +452,9 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 }
 
 impl<S: Storage + DedupSlots> Engine<S> {
+    pub(crate) fn insert_dedup_classified(&mut self, entry: DedupEntry) -> DedupInsert {
+        self.storage.insert_dedup_classified(entry)
+    }
     /// Insert a Dedup Table row, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored. Scans

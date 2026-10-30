@@ -202,9 +202,9 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
-    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, MemoryLayout, MemoryProfile,
-    Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
-    PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    DedupInsert, DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, MemoryLayout,
+    MemoryProfile, Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots,
+    OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -7624,22 +7624,21 @@ fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: D
     if !entry.has_usable_replay() {
         return false;
     }
-    release_existing_dedup(engine, entry.key());
-    if engine.insert_dedup(entry).is_some() {
-        return true;
+    match engine.insert_dedup_classified(entry) {
+        DedupInsert::Inserted(_) => return true,
+        DedupInsert::Existing(id) => {
+            if let Some(old) = engine.dedup_entry(id) {
+                release_dedup_row(engine, old);
+            } else {
+                let _ = engine.remove_dedup(entry.key());
+            }
+            if engine.insert_dedup(entry).is_some() {
+                return true;
+            }
+        }
+        DedupInsert::Full => {}
     }
     evict_oldest_app_dedup(engine) && engine.insert_dedup(entry).is_some()
-}
-
-fn release_existing_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, key: DedupKey) {
-    let Some(id) = engine.lookup_dedup(key) else {
-        return;
-    };
-    if let Some(old) = engine.dedup_entry(id) {
-        release_dedup_row(engine, old);
-    } else {
-        let _ = engine.remove_dedup(key);
-    }
 }
 
 fn release_dedup_row<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: DedupEntry) {

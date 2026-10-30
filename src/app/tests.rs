@@ -12844,6 +12844,241 @@ fn replay_cache_admission_distinguishes_eviction_from_real_saturation() {
     }
 }
 
+// A custom backend deliberately uses the public classified-operation default.
+// Its removal observes TX occupancy to verify release-before-removal ordering.
+struct DedupFallbackStore {
+    inner: crate::storage::Memory<profiles::Default>,
+    rows: crate::storage::DedupTable<
+        { <profiles::Default as crate::storage::MemoryProfile>::DEDUP_ENTRIES },
+    >,
+    calls: core::cell::Cell<u64>,
+    hide_payload: bool,
+    refuse_remove: bool,
+    expected_tx_on_remove: usize,
+}
+
+impl crate::storage::Storage for DedupFallbackStore {
+    type Token = Token;
+    fn capacities(&self) -> crate::storage::Capacities {
+        crate::storage::Storage::capacities(&self.inner)
+    }
+    fn rx_datagram(&mut self) -> &mut dyn crate::storage::SlotPool {
+        crate::storage::Storage::rx_datagram(&mut self.inner)
+    }
+    fn tx_datagram(&mut self) -> &mut dyn crate::storage::SlotPool {
+        crate::storage::Storage::tx_datagram(&mut self.inner)
+    }
+    fn dedup(&mut self) -> &mut dyn crate::storage::SlotPool {
+        &mut self.rows
+    }
+    fn observe(&mut self) -> &mut dyn crate::storage::SlotPool {
+        crate::storage::Storage::observe(&mut self.inner)
+    }
+    fn rx_body(&mut self) -> Option<&mut dyn crate::storage::SlotPool> {
+        None
+    }
+    fn tx_body(&mut self) -> Option<&mut dyn crate::storage::SlotPool> {
+        None
+    }
+}
+
+impl crate::storage::DedupSlots for DedupFallbackStore {
+    fn insert_dedup(&mut self, row: DedupEntry) -> Option<SlotId> {
+        self.calls.set(self.calls.get() * 10 + 2);
+        self.rows.insert(row)
+    }
+    fn lookup_dedup(&self, key: DedupKey) -> Option<SlotId> {
+        self.calls.set(self.calls.get() * 10 + 1);
+        self.rows.lookup(key)
+    }
+    fn remove_dedup(&mut self, key: DedupKey) -> bool {
+        self.calls.set(self.calls.get() * 10 + 3);
+        assert_eq!(
+            crate::storage::Storage::tx_datagram(&mut self.inner).occupied_count(),
+            self.expected_tx_on_remove,
+        );
+        !self.refuse_remove && self.rows.remove(key)
+    }
+    fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
+        self.calls.set(self.calls.get() * 10 + 4);
+        if self.hide_payload {
+            None
+        } else {
+            self.rows.entry_ref(id)
+        }
+    }
+}
+
+#[test]
+fn classified_dedup_custom_fallback_preserves_pin_order_and_missing_payload() {
+    use crate::storage::{DedupInsert, DedupSlots, SlotPool};
+    let peer = Endpoint::v4([192, 0, 2, 4], 5683);
+    let row = |mid| DedupEntry::new(MessageId::new(mid), peer).with_replay(b"old");
+    for hide_payload in [false, true] {
+        for refuse_remove in [false, true] {
+            let store = DedupFallbackStore {
+                inner: crate::storage::Memory::new(),
+                rows: crate::storage::DedupTable::new(),
+                calls: core::cell::Cell::new(0),
+                hide_payload,
+                refuse_remove,
+                expected_tx_on_remove: usize::from(hide_payload),
+            };
+            let mut engine = crate::storage::EngineBuilder::new()
+                .profile::<profiles::Default>()
+                .block_wise(false)
+                .build(store)
+                .unwrap();
+            // Default miss performs lookup then ordinary insertion.
+            assert!(matches!(
+                engine.storage_mut().insert_dedup_classified(row(1)),
+                DedupInsert::Inserted(_)
+            ));
+            assert_eq!(engine.storage_mut().calls.get(), 12);
+            engine.storage_mut().calls.set(0);
+            assert!(matches!(
+                engine.storage_mut().insert_dedup_classified(row(1)),
+                DedupInsert::Existing(_)
+            ));
+            assert_eq!(engine.storage_mut().calls.get(), 1);
+            // Clear setup without going through the instrumented remove path.
+            engine.storage_mut().rows.remove(row(1).key());
+            let pin = engine.acquire_tx().unwrap();
+            let old = row(7).with_tx_pin(pin);
+            let old_id = engine.storage_mut().rows.insert(old).unwrap();
+            engine.storage_mut().calls.set(0);
+            let incoming = row(7).with_replay(b"new");
+            assert!(super::store_request_dedup(&mut engine, incoming));
+            assert_eq!(
+                engine.storage_mut().calls.get(),
+                if hide_payload { 132 } else { 1432 }
+            );
+            assert_eq!(engine.tx_occupied(), usize::from(hide_payload));
+            let stored = engine.storage_mut().rows.lookup(incoming.key()).unwrap();
+            assert_eq!(
+                engine.storage_mut().rows.entry(stored),
+                Some(if refuse_remove { old } else { incoming })
+            );
+            if refuse_remove {
+                assert_eq!(stored, old_id);
+            }
+            // An unusable incoming row must not touch any backend primitive.
+            engine.storage_mut().calls.set(0);
+            assert!(!super::store_request_dedup(
+                &mut engine,
+                DedupEntry::new(MessageId::new(7), peer)
+            ));
+            assert_eq!(engine.storage_mut().calls.get(), 0);
+            if hide_payload {
+                engine.release_tx(pin).unwrap();
+            }
+            assert_eq!(engine.storage_mut().rows.occupied_count(), 1);
+            for mid in 100..100
+                + <profiles::Default as crate::storage::MemoryProfile>::DEDUP_ENTRIES as u16
+            {
+                let _ = engine.storage_mut().rows.insert(row(mid));
+            }
+            engine.storage_mut().calls.set(0);
+            assert_eq!(
+                engine.storage_mut().insert_dedup_classified(row(u16::MAX)),
+                DedupInsert::Full
+            );
+            assert_eq!(engine.storage_mut().calls.get(), 12);
+        }
+    }
+}
+
+fn classified_app_store_matches_original<S: Storage + DedupSlots>(
+    mut old: Engine<S>,
+    mut new: Engine<S>,
+    foreign: bool,
+) {
+    // Frozen pre-candidate algorithm, including its normal insertion/eviction tail.
+    fn original<S: Storage + DedupSlots>(e: &mut Engine<S>, row: DedupEntry) -> bool {
+        if !row.has_usable_replay() {
+            return false;
+        }
+        if let Some(id) = e.lookup_dedup(row.key()) {
+            if let Some(prior) = e.dedup_entry(id) {
+                super::release_dedup_row(e, prior);
+            } else {
+                let _ = e.remove_dedup(row.key());
+            }
+        }
+        e.insert_dedup(row).is_some()
+            || (super::evict_oldest_app_dedup(e) && e.insert_dedup(row).is_some())
+    }
+    let peer = Endpoint::v4([192, 0, 2, 9], 5683);
+    let capacity = old.capacities().dedup_entries;
+    for i in 0..capacity + 4 {
+        let key = if i == capacity { 0 } else { i as u16 };
+        let mut row = DedupEntry::new(MessageId::new(key), peer)
+            .with_due_ms(if foreign { 0 } else { (i % 3 + 1) as u64 })
+            .with_replay(b"original tail bytes")
+            .with_replay(b"new");
+        if i == 0 || i == capacity {
+            let pin = old.acquire_tx().unwrap();
+            assert_eq!(new.acquire_tx(), Some(pin));
+            row = row.with_tx_pin(pin);
+        }
+        assert_eq!(
+            original(&mut old, row),
+            super::store_request_dedup(&mut new, row)
+        );
+        assert_eq!(old.tx_occupied(), new.tx_occupied());
+        assert_eq!(old.tx_cursor(), new.tx_cursor());
+        let before = (
+            old.storage_mut().dedup().cursor(),
+            old.storage_mut().dedup().occupied_count(),
+        );
+        assert_eq!(
+            before,
+            (
+                new.storage_mut().dedup().cursor(),
+                new.storage_mut().dedup().occupied_count()
+            )
+        );
+        for slot in 0..capacity {
+            let id = SlotId::from_index(slot);
+            assert_eq!(old.dedup_entry(id), new.dedup_entry(id));
+        }
+    }
+}
+
+#[test]
+fn classified_app_store_fixed_matches_original_replacement_pin_and_full_tail() {
+    let build = || {
+        crate::storage::EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(crate::storage::Memory::<profiles::Default>::new())
+            .unwrap()
+    };
+    for foreign in [false, true] {
+        classified_app_store_matches_original(build(), build(), foreign);
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn classified_app_store_allocated_matches_original_replacement_pin_and_full_tail() {
+    let build = || {
+        let mut caps = crate::storage::Capacities::from_profile::<profiles::Default>();
+        caps.rx_body_slots = None;
+        caps.rx_body_bytes = None;
+        caps.tx_body_slots = None;
+        caps.tx_body_bytes = None;
+        crate::storage::EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build_alloc(caps)
+            .unwrap()
+    };
+    for foreign in [false, true] {
+        classified_app_store_matches_original(build(), build(), foreign);
+    }
+}
+
 #[test]
 fn observe_reregistration_after_removal_starts_a_new_relation() {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
