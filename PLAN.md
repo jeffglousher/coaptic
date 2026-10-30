@@ -20,15 +20,29 @@ than a qualified hotspot ranking or CPU-share claim. Protected export refuses
 the unchanged count limit; the final two original captures remain not run.
 The recording/export campaign ends without larger caps or replacement samples.
 
-Next bounded source targets are [admission headroom #713](https://github.com/jeffglousher/coaptic/issues/713),
-then [dedup reply retention #714](https://github.com/jeffglousher/coaptic/issues/714).
-These are portable core hypotheses from observed paths, not measured savings.
-First investigate skipping continuation/option searches only when RX and TX
-already have ordinary headroom; preserve pressure behavior and exact boundaries.
-Then investigate repeated dedup searches without changing pin/replay, slot/cursor
-or full-table semantics. Require correctness plus preregistered complete-App
-comparisons in equivalent configurations, including protected and regression
-cells, before promotion. Keep each candidate separate. Linux capture qualification
+The [admission headroom candidate #716](https://github.com/jeffglousher/coaptic/pull/716)
+remains held for pressure and continuation validation. Its
+[retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
+passes all eight frozen normal-headroom gates. This is conditional two-process
+Windows full-App wall evidence, not CPU or device evidence. The original public-App
+unprotected RX ownership proof passed on both core arms in run 41094806564;
+protected RX, Observe cancellation and complete Block2 proofs remain missing.
+The new TX pressure/refusal/recovery tests for unprotected and OSCORE traffic
+are implemented in companion #234 but remain unrun. Complete these software
+proofs, then the required pressure/continuation comparisons, before promotion.
+Preserve the exact RX/TX boundaries, authentication, ownership, eviction and metrics;
+do not replace or repeat the successful Stage A cohort.
+
+The [classified dedup insertion candidate #717](https://github.com/jeffglousher/coaptic/pull/717)
+is rejected and closed without merge. All 16 complete-App processes finished,
+but Default unprotected failed in both orders and Default OSCORE failed in AB
+order. All eight comparisons independently reproduce the frozen decisions.
+Retain the [complete screen and verifier](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/dedup-classified-20261030).
+Stop without another variant, replacement samples, changed gates or pooled appeal;
+the observed cost cause remains unknown. No core/API optimization from this
+candidate is delivered. The screen tooling and evidence are delivered separately.
+
+Linux capture qualification
 and device elapsed tracing remain separate from the delivered Windows proof;
 no device, stack, whole-memory or 50% CPU objective is established.
 

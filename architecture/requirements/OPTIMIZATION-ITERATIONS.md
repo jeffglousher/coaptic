@@ -36,27 +36,43 @@ No CPU speed, exact in-memory-image, peak-stack, whole-memory or device proof
 follows. Linux stack qualification and commissioned-device elapsed tracing
 remain separate, with their prior limitations retained.
 
-The next small hypotheses are:
+Disposition of the two nominated hypotheses:
 
 1. [Ample-headroom admission #713](https://github.com/jeffglousher/coaptic/issues/713).
-   Check whether ordinary RX/TX headroom can bypass continuation and option
-   searches. Preserve RX `<` versus TX `<=` refusal boundaries, tight-pool
+   Candidate #716 bypasses continuation and option searches only with ordinary
+   RX/TX headroom. It remains unmerged. The
+   [retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
+   passes all eight frozen gates, with two-process Windows complete-App wall
+   limits. The public-App unprotected RX ownership proof passes on both pins in
+   run 41094806564. New unprotected/OSCORE TX proofs in companion #234 are
+   implemented but unrun; protected RX, Observe cancellation and complete Block2
+   proofs remain missing. Pressure/continuation comparisons are still required
+   before promotion. Preserve RX `<` versus TX `<=` refusal boundaries, tight-pool
    continuation/cancellation/upload handling, dedup eviction and metrics. For
    stable logical storage with truthful accessors, incidental read-call counts
    are not a protocol contract. Extra occupancy reads can still regress existing
    or pressured requests; a helper-only speedup is insufficient.
 2. [Dedup reply-retention searches #714](https://github.com/jeffglousher/coaptic/issues/714).
-   Investigate a bounded replacement that combines redundant searches for fixed
-   and allocated backends. Preserve old pin release exactly once, replay bytes,
-   fail-closed requests, slot/cursor behavior and full-table eviction. An earlier
-   receive-side miss does not establish absence at later insertion.
+   Classified insertion candidate #717 is rejected and closed without merge.
+   It preserves replacement, duplicate selection, pin-release, slot/cursor and
+   eviction semantics, but the full-entry screen fails the frozen gates. All
+   16 processes complete and all eight independently recomputed comparisons
+   match: Default unprotected fails AB and BA, and Default OSCORE fails AB.
+   SmallDevice passes do not override these failures. The
+   [complete retained evidence](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/dedup-classified-20261030)
+   preserves all 960,000 latencies and 65,536 calibrations with the exact STOP
+   vector. Stop without another variant, replacement sample, changed gate or
+   pooling. No core/API optimization is delivered; the cost cause is unknown.
+   Execution, affinity, source restoration and RSS remain producer-attested;
+   VM retirement is unverified.
 
-Neither is implemented or accepted here. Predeclare source/host/tool identities,
-equivalent capacities, full-entry metrics, finite cohorts and regression gates
-before timing. Cover protected/unprotected normal entries and pressure/replay
-cases as appropriate; retain all failures and observations. These nominations
-do not revive rejected lookup, cipher or Observe experiments and do not change
-full CPU or hardware acceptance requirements.
+Neither runtime candidate is promoted. Admission retains its separate successful
+normal-headroom cohort while software pressure proofs continue; the dedup campaign
+has ended. Further admission timing requires its own frozen supported matrix,
+source/host/tool identities, equivalent capacities, finite cohort and regression
+gates. Preserve every failure and observation. These dispositions do not revive
+rejected lookup, cipher, dedup or Observe experiments and do not change full CPU
+or hardware acceptance requirements.
 
 ## First bounded memory iteration
 
