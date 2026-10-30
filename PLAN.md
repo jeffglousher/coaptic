@@ -8,6 +8,30 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+Windows profiling capability is delivered in companion #226/#227/#229. The
+[retained live proof](https://github.com/jeffglousher/coaptic-validation/tree/de360dd597e030a63525e1e2d44dda895e8d3ea6/tools/benchmark/evidence/windows-live-c1-capability-20261030)
+contains verified exchange counts, server-thread ETW capture, portable
+stack JSON and an interactive flame/self/inclusive view. The measured library
+is `8af71fe4aa73b3bb76a921a836a1a9647d75f361`; later sources do not inherit
+that measurement. Exact offline projection preserves all 3,164 unprotected
+samples, including 1,633 with App ancestry. Unwind/inline completeness, CPU mode
+and circular overwrite remain uncertain, so the result is diagnostic rather
+than a qualified hotspot ranking or CPU-share claim. Protected export refuses
+the unchanged count limit; the final two original captures remain not run.
+The recording/export campaign ends without larger caps or replacement samples.
+
+Next bounded source targets are [admission headroom #713](https://github.com/jeffglousher/coaptic/issues/713),
+then [dedup reply retention #714](https://github.com/jeffglousher/coaptic/issues/714).
+These are portable core hypotheses from observed paths, not measured savings.
+First investigate skipping continuation/option searches only when RX and TX
+already have ordinary headroom; preserve pressure behavior and exact boundaries.
+Then investigate repeated dedup searches without changing pin/replay, slot/cursor
+or full-table semantics. Require correctness plus preregistered complete-App
+comparisons in equivalent configurations, including protected and regression
+cells, before promotion. Keep each candidate separate. Linux capture qualification
+and device elapsed tracing remain separate from the delivered Windows proof;
+no device, stack, whole-memory or 50% CPU objective is established.
+
 The isolated Observe route-index experiment in #711 is rejected and remains
 unmerged. The complete due-notification poll screen misses both required
 32-route last-slot benefits in both AB/BA rounds: unprotected changes are
