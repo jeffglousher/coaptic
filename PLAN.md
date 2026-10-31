@@ -21,24 +21,26 @@ the unchanged count limit; the final two original captures remain not run.
 The recording/export campaign ends without larger caps or replacement samples.
 
 The [admission headroom candidate #716](https://github.com/jeffglousher/coaptic/pull/716)
-remains held for pressure and continuation validation. Its
+is rejected and closed without merge. Its
 [retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
-passes all eight frozen normal-headroom gates. This is conditional two-process
-Windows full-App wall evidence, not CPU or device evidence. The public-App
-RX, TX, Observe cancellation and notification-backed Block2 software proofs now
-pass in both unprotected and OSCORE modes on both core arms. Companion
-[#236](https://github.com/jeffglousher/coaptic-validation/pull/236) retains the
-[source-specific plan](https://github.com/jeffglousher/coaptic-validation/blob/9ceac134b7ac043511ebd3f2c741caed39dbd624/tools/benchmark/admission_pressure_plan.md).
-Run [41142584716](https://github.com/jeffglousher/coaptic-validation/actions/runs/41142584716)
-at tested companion source 49b1cab passes 82 portable checks and 24 native
-executions: each arm's four wall tests plus eight ownership cases. The three
-failed fixture proofs remain retained. The Block2 case explicitly uses an
-Observe notification snapshot; it does not claim ordinary stateless traffic
-owns a persistent body. Finish the separately frozen complete-App pressure and
-continuation timing comparisons before promotion; software success is not
-quantitative regression evidence.
-Preserve the exact RX/TX boundaries, authentication, ownership, eviction and metrics;
-do not replace or repeat the successful Stage A cohort.
+passes all eight normal-headroom gates. Public-App RX, TX, Observe cancellation
+and notification-backed Block2 software proofs also pass in both security modes
+on both core arms; the later isolated driver additionally checks ordinary
+borrowed Block2 and its pressure-refusal counterexample.
+
+The frozen Stage B [run 41154445351](https://github.com/jeffglousher/coaptic-validation/actions/runs/41154445351)
+at companion source c656045 passes 114 portable checks, 24 untimed qualification
+cases and all 40 timing processes. Its 72,000 latencies and 163,840 calibration
+values reproduce all 36 regression comparisons: 13 fail and 23 pass. Every
+one-sided upper95 B/A bound had to be at most 1.02. Functional success and Stage A
+benefit do not override the failed gates. [Companion #237](https://github.com/jeffglousher/coaptic-validation/pull/237)
+retains the complete source-specific evidence, original failed qualification,
+corrected qualification and standalone verifier. Stop without replacement
+samples, another variant, changed thresholds or pooling. The cause remains
+unknown; these are conditional instrumented release-test App wall comparisons,
+not CPU, socket, device, stack or whole-memory evidence. No admission optimization
+is delivered. Compiler execution, affinity, restoration and cleanup remain
+producer-attested; VM retirement is unverified.
 
 The [classified dedup insertion candidate #717](https://github.com/jeffglousher/coaptic/pull/717)
 is rejected and closed without merge. All 16 complete-App processes finished,

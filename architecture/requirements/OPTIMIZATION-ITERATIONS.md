@@ -39,24 +39,37 @@ remain separate, with their prior limitations retained.
 Disposition of the two nominated hypotheses:
 
 1. [Ample-headroom admission #713](https://github.com/jeffglousher/coaptic/issues/713).
-   Candidate #716 bypasses continuation and option searches only with ordinary
-   RX/TX headroom. It remains unmerged. The
+   Candidate #716 at `8782a6a` is rejected and closed without merge. The
    [retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
-   passes all eight frozen gates, with two-process Windows complete-App wall
-   limits. The eight public-App ownership cases now pass on both pins in
-   [run 41142584716](https://github.com/jeffglousher/coaptic-validation/actions/runs/41142584716)
-   at tested companion source 49b1cab: 82 portable checks and 24 native executions,
-   four wall plus eight pressure cases per arm. RX, TX, Observe cancellation and
-   explicitly notification-backed Block2 each cover unprotected and OSCORE modes;
-   [companion #236](https://github.com/jeffglousher/coaptic-validation/pull/236)
-   records the source contract and three retained fixture failures. The Block2
-   snapshot cell is not ordinary stateless traffic. Pressure/continuation timing
-   remains unrun and required before promotion. Preserve RX `<` versus TX `<=`
-   refusal boundaries, tight-pool continuation/cancellation/upload handling,
-   dedup eviction and metrics. For
-   stable logical storage with truthful accessors, incidental read-call counts
-   are not a protocol contract. Extra occupancy reads can still regress existing
-   or pressured requests; a helper-only speedup is insufficient.
+   passes all eight normal-headroom gates. The eight ownership cases pass on
+   both arms in run 41142584716 at `49b1cab`; their notification-backed Block2 body
+   is explicitly distinct from ordinary borrowed responses. The isolated Stage B
+   release integration-test driver at `c656045` additionally checks ordinary Block2
+   and the three-held-RX refusal counterexample. Corrected untimed qualification
+   run 41152630644 passes 114 portable checks and 24 native cases. The earlier
+   failed qualification, primary-context observer correction and all original
+   fixture failures remain retained rather than being replaced by successful results.
+
+   [Timing run 41154445351](https://github.com/jeffglousher/coaptic-validation/actions/runs/41154445351)
+   rebuilds and requalifies both core arms, then completes 40 serial processes.
+   All 72,000 measured poll latencies and 163,840 calibration values are retained.
+   Each of 18 security/path strata has separate AB/BA decisions: 20 consecutive
+   50-value block means, 10,000 independent-arm bootstrap replicates, seed 20261030
+   reset per comparison, A draws before B, and a one-sided linear 95% upper B/A
+   bound (candidate/baseline). All 36 bounds had to be <= 1.02. Independent
+   recomputation matches every comparison: 13 fail and 23 pass; the first
+   RX/unprotected/AB upper bound is 1.0345551317572643. Stage A benefit and passing
+   cells cannot override these failures. The complete
+   [companion #237 evidence](https://github.com/jeffglousher/coaptic-validation/pull/237)
+   includes raw arrays, protocol/source identity, all qualification outcomes and
+   the standalone verifier. No replacement campaign, changed gate or pooled appeal
+   is authorized. This is conditional instrumented release-test complete-App wall
+   evidence with preparation and verification outside clocks, virtual empty-history
+   cycles and unchanged SmallDevice/Default capacities. The cost cause and
+   host-independent effect remain unknown. No runtime optimization is promoted.
+   Compiler/process execution, affinity, restoration and cleanup are producer
+   attestations; VM retirement remains unknown. Collector cadence exceptions and
+   the corrected receipt-hash transcription remain explicit in retained records.
 2. [Dedup reply-retention searches #714](https://github.com/jeffglousher/coaptic/issues/714).
    Classified insertion candidate #717 is rejected and closed without merge.
    It preserves replacement, duplicate selection, pin-release, slot/cursor and
@@ -71,13 +84,18 @@ Disposition of the two nominated hypotheses:
    Execution, affinity, source restoration and RSS remain producer-attested;
    VM retirement is unverified.
 
-Neither runtime candidate is promoted. Admission retains its separate successful
-normal-headroom cohort and completed selected software ownership proofs; the
-dedup campaign has ended. Further admission timing requires its own frozen
-supported matrix, source/host/tool identities, equivalent capacities, finite cohort and regression
-gates. Preserve every failure and observation. These dispositions do not revive
-rejected lookup, cipher, dedup or Observe experiments and do not change full CPU
-or hardware acceptance requirements.
+Neither runtime candidate is promoted; both campaigns have ended. Preserve their
+successful cells, failed gates, software proofs and every selected observation.
+A new source hypothesis must establish a concrete bounded mechanism before another
+separately frozen full-App campaign. Do not revive rejected lookup, cipher,
+dedup, admission or Observe variants, or change full CPU and hardware acceptance
+requirements. A subsequent response-encoding source challenge found no worthwhile
+bounded change: the ordinary fixture's ETag and Content-Format inserts already
+shift zero options, and notification construction already has a smaller builder.
+Append-only construction would break mixed Q-Block ordering, and reusing the
+four-option notification builder would lose supported location-option combinations. Initialization savings would need
+emitted-code evidence before adding another specialized path. No new runtime
+candidate, tooling expansion or measurement campaign is selected.
 
 ## First bounded memory iteration
 
