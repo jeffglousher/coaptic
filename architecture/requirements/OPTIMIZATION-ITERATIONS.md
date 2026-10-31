@@ -89,8 +89,13 @@ successful cells, failed gates, software proofs and every selected observation.
 A new source hypothesis must establish a concrete bounded mechanism before another
 separately frozen full-App campaign. Do not revive rejected lookup, cipher,
 dedup, admission or Observe variants, or change full CPU and hardware acceptance
-requirements. Response encoding remains a diagnostic source-screen area only;
-no new runtime candidate or measurement is preregistered by these results.
+requirements. A subsequent response-encoding source challenge found no worthwhile
+bounded change: the ordinary fixture's ETag and Content-Format inserts already
+shift zero options, and notification construction already has a smaller builder.
+General append-only construction or a blanket capacity reduction would lose
+supported ordering or option combinations. Initialization savings would need
+emitted-code evidence before adding another specialized path. No new runtime
+candidate, tooling expansion or measurement campaign is selected.
 
 ## First bounded memory iteration
 
