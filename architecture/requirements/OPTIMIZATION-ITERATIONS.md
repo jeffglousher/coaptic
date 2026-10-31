@@ -92,8 +92,8 @@ dedup, admission or Observe variants, or change full CPU and hardware acceptance
 requirements. A subsequent response-encoding source challenge found no worthwhile
 bounded change: the ordinary fixture's ETag and Content-Format inserts already
 shift zero options, and notification construction already has a smaller builder.
-General append-only construction or a blanket capacity reduction would lose
-supported ordering or option combinations. Initialization savings would need
+Append-only construction would break mixed Q-Block ordering, and reusing the
+four-option notification builder would lose supported location-option combinations. Initialization savings would need
 emitted-code evidence before adding another specialized path. No new runtime
 candidate, tooling expansion or measurement campaign is selected.
 
