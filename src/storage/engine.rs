@@ -1596,7 +1596,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// transfers retain their explicit identity requirements.
     pub fn apply_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
-        S: DatagramSlots,
+        S: super::IncomingRxSlots,
     {
         self.apply_incoming_rx(id, RxBlockOpt::Block1, false)
     }
@@ -1651,7 +1651,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// separate). Missing Block2 is [`BlockTransferError::MissingBlock`].
     pub fn apply_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
-        S: DatagramSlots,
+        S: super::IncomingRxSlots,
     {
         self.apply_incoming_rx(id, RxBlockOpt::Block2, false)
     }
@@ -1664,7 +1664,7 @@ impl<S: Storage + BodySlots> Engine<S> {
         q_block: bool,
     ) -> Result<BlockProgress, BlockTransferError>
     where
-        S: DatagramSlots,
+        S: super::IncomingRxSlots,
     {
         self.apply_incoming_rx(
             id,
@@ -1733,7 +1733,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// the body.
     pub fn apply_q_block1_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
-        S: DatagramSlots,
+        S: super::IncomingRxSlots,
     {
         self.apply_incoming_rx(id, RxBlockOpt::QBlock1, false)
     }
@@ -1790,7 +1790,7 @@ impl<S: Storage + BodySlots> Engine<S> {
     /// are rejected before modifying the body.
     pub fn apply_q_block2_rx(&mut self, id: SlotId) -> Result<BlockProgress, BlockTransferError>
     where
-        S: DatagramSlots,
+        S: super::IncomingRxSlots,
     {
         self.apply_incoming_rx(id, RxBlockOpt::QBlock2, false)
     }
@@ -2425,15 +2425,16 @@ impl<S: Storage + BodySlots> Engine<S> {
         call_scoped: bool,
     ) -> Result<BlockProgress, BlockTransferError>
     where
-        S: DatagramSlots,
+        S: super::IncomingRxSlots,
     {
         let endpoint = self.storage.rx_endpoint(id).ok_or(SlotError::NotOccupied)?;
-        // Profile-sized copy so Constrained does not stack Default 1472.
-        let mut tmp = S::RxScratch::default();
-        let (token, block, expected, identity, mut binding, n) = {
-            let parsed = crate::message::decode_with_token::<S::Token>(
-                self.storage.rx_payload(id).ok_or(SlotError::NotOccupied)?,
-            )?;
+        // Retain scratch construction and its actual logical capacity guard.
+        let tmp = S::RxScratch::default();
+        let capacities = self.capacities();
+        let (wire, body) = self.storage.split_incoming_rx(id);
+        let (token, block, expected, identity, binding, payload) = {
+            let parsed =
+                crate::message::decode_with_token::<S::Token>(wire.ok_or(SlotError::NotOccupied)?)?;
             let block = match which.read_block(&parsed) {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Err(e.into()),
@@ -2477,179 +2478,24 @@ impl<S: Storage + BodySlots> Engine<S> {
             if payload.len() > tmp.as_ref().len() {
                 return Err(BlockTransferError::PayloadLength);
             }
-            tmp.as_mut()[..payload.len()].copy_from_slice(payload);
-            (
-                parsed.token(),
-                block,
-                expected,
-                identity,
-                binding,
-                payload.len(),
-            )
+            (parsed.token(), block, expected, identity, binding, payload)
         };
-        #[cfg(feature = "diagnostics")]
-        super::WorkMetrics::add(&mut self.work_metrics.block_rx_staged_bytes, n);
-        let key = BlockKey::new(token, endpoint).with_identity(identity);
-        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
-        let mut classic_body = None;
-        if let Some(candidate) = binding {
-            let role = if matches!(which, RxBlockOpt::Block1) {
-                BlockRole::IncomingBlock1
-            } else {
-                BlockRole::IncomingQBlock1
-            };
-            let existing = if untagged_classic {
-                (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
-                    let id = SlotId::from_index(i);
-                    let transfer = self.storage.rx_body_transfer(id)?;
-                    (transfer.role() == role
-                        && transfer.endpoint() == endpoint
-                        && transfer.identity().is_absent()
-                        && transfer
-                            .request_binding
-                            .is_some_and(|stored| stored.same_options(candidate)))
-                    .then_some(id)
-                })
-            } else {
-                self.lookup_rx_body_role(key, role).or_else(|| {
-                    (0..self.capacities().rx_body_slots.unwrap_or(0)).find_map(|i| {
-                        let id = SlotId::from_index(i);
-                        let transfer = self.storage.rx_body_transfer(id)?;
-                        same_body_identity(transfer, key, role).then_some(id)
-                    })
-                })
-            };
-            if let Some(id) = existing {
-                let transfer = self
-                    .storage
-                    .rx_body_transfer(id)
-                    .ok_or(BlockTransferError::NoTransfer)?;
-                let stored = transfer
-                    .request_binding
-                    .ok_or(BlockTransferError::IdentityMismatch)?;
-                let restart = untagged_classic && block.num() == 0 && key != transfer.key();
-                if restart {
-                    if !stored.same_options(candidate) {
-                        return Err(BlockTransferError::IdentityMismatch);
-                    }
-                } else {
-                    // Q may admit NUM0 last. Validate its immutable condition before
-                    // applying bytes, then commit the merged knowledge only on success.
-                    binding = Some(stored.retain_condition(candidate)?);
-                }
-                if untagged_classic {
-                    if block.num() == 0 && key != transfer.key() {
-                        BlockTransfer::incoming_block1(
-                            key,
-                            block,
-                            n,
-                            self.capacities().rx_body_bytes.unwrap_or(0),
-                            expected,
-                        )?;
-                        self.release_rx_body(id)?;
-                    } else {
-                        classic_body = Some(id);
-                    }
-                }
-            }
+        IncomingAssembly {
+            body,
+            capacities,
+            metrics: &mut self.metrics,
         }
-        let progress = if call_scoped {
-            self.apply_call_block2(
-                key,
-                block,
-                &tmp.as_ref()[..n],
-                expected,
-                matches!(which, RxBlockOpt::QBlock2),
-            )?
-        } else if untagged_classic {
-            let result = if let Some(id) = classic_body {
-                self.write_block1(id, block, &tmp.as_ref()[..n])
-            } else {
-                self.admit_block1(key, block, &tmp.as_ref()[..n], expected)
-                    .and_then(|id| {
-                        let transfer = self
-                            .storage
-                            .rx_body_transfer(id)
-                            .ok_or(BlockTransferError::NoTransfer)?;
-                        Ok(BlockProgress::new(
-                            id,
-                            transfer.filled(),
-                            transfer.is_complete(),
-                        ))
-                    })
-            };
-            self.metrics.tally_block(result.as_ref().map(|_| ()), true);
-            result?
-        } else {
-            match which {
-                RxBlockOpt::Block1 => self.apply_block1(key, block, &tmp.as_ref()[..n], expected),
-                RxBlockOpt::Block2 => self.apply_block2(key, block, &tmp.as_ref()[..n], expected),
-                RxBlockOpt::QBlock1 => {
-                    self.apply_q_block1(key, block, &tmp.as_ref()[..n], expected)
-                }
-                RxBlockOpt::QBlock2 => {
-                    self.apply_q_block2(key, block, &tmp.as_ref()[..n], expected)
-                }
-            }?
-        };
-        if let Some(binding) = binding {
-            let mut transfer = self
-                .storage
-                .rx_body_transfer(progress.id())
-                .ok_or(BlockTransferError::NoTransfer)?;
-            transfer.request_binding = Some(binding);
-            if let Err(error) = self.storage.set_rx_body_transfer(progress.id(), transfer) {
-                let _ = self.release_rx_body(progress.id());
-                return Err(error.into());
-            }
-        }
-        Ok(progress)
-    }
-
-    fn apply_call_block2(
-        &mut self,
-        key: BlockKey<S::Token>,
-        block: BlockValue,
-        payload: &[u8],
-        expected: Option<u32>,
-        q_block: bool,
-    ) -> Result<BlockProgress, BlockTransferError> {
-        let role = if q_block {
-            BlockRole::IncomingQBlock2
-        } else {
-            BlockRole::IncomingBlock2
-        };
-        let result = (|| {
-            if let Some(id) = self.lookup_rx_body_role(key, role) {
-                if q_block
-                    && self
-                        .rx_body_transfer(id)
-                        .is_some_and(|t| t.expected_len() != expected)
-                {
-                    return Err(BlockTransferError::LengthInconsistent);
-                }
-                return if q_block {
-                    self.write_q_block2(id, block, payload)
-                } else {
-                    self.write_block2(id, block, payload)
-                };
-            }
-            let id = if q_block {
-                self.admit_q_block2(key, block, payload, expected)?
-            } else {
-                self.admit_block2(key, block, payload, expected)?
-            };
-            let transfer = self
-                .rx_body_transfer(id)
-                .ok_or(BlockTransferError::NoTransfer)?;
-            Ok(BlockProgress::new(
-                id,
-                transfer.filled(),
-                transfer.is_complete(),
-            ))
-        })();
-        self.metrics.tally_block(result.as_ref().map(|_| ()), false);
-        result
+        .apply(
+            token,
+            endpoint,
+            which,
+            call_scoped,
+            block,
+            expected,
+            identity,
+            binding,
+            payload,
+        )
     }
 
     fn issue_and_encode_tx(
@@ -2956,4 +2802,319 @@ fn copy_into_slot(buf: Option<&mut [u8]>, bytes: &[u8]) -> Result<(), SlotError>
     }
     buf[..bytes.len()].copy_from_slice(bytes);
     Ok(())
+}
+
+// Only incoming assembly needs simultaneous RX/body access.
+struct IncomingAssembly<'a, B> {
+    body: Option<&'a mut B>,
+    capacities: Capacities,
+    metrics: &'a mut Metrics,
+}
+impl<B> IncomingAssembly<'_, B> {
+    fn transfer<T: OwnedToken>(&self, id: SlotId) -> Option<BlockTransfer<T>>
+    where
+        B: super::BodyOps<T>,
+    {
+        self.body.as_deref()?.transfer(id)
+    }
+    fn lookup<T: OwnedToken>(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId>
+    where
+        B: super::BodyOps<T>,
+    {
+        (0..self.capacities.rx_body_slots.unwrap_or(0)).find_map(|i| {
+            let id = SlotId::from_index(i);
+            self.transfer::<T>(id)
+                .filter(|t| t.key() == key && t.role() == role)
+                .map(|_| id)
+        })
+    }
+    fn release(&mut self, id: SlotId) -> Result<(), SlotError>
+    where
+        B: super::SlotPool,
+    {
+        self.body
+            .as_deref_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .release(id)
+    }
+    fn set_transfer<T: OwnedToken>(
+        &mut self,
+        id: SlotId,
+        transfer: BlockTransfer<T>,
+    ) -> Result<(), SlotError>
+    where
+        B: super::BodyOps<T>,
+    {
+        self.body
+            .as_deref_mut()
+            .ok_or(SlotError::InvalidSlot)?
+            .set_transfer(id, transfer)
+    }
+    fn admit<T: OwnedToken>(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        block: BlockValue,
+        payload: &[u8],
+        expected: Option<u32>,
+    ) -> Result<SlotId, BlockTransferError>
+    where
+        B: super::BodyOps<T>,
+    {
+        self.body
+            .as_deref_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .admit_incoming(key, role, block, payload, expected)
+    }
+    fn write<T: OwnedToken>(
+        &mut self,
+        id: SlotId,
+        role: BlockRole,
+        block: BlockValue,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        B: super::BodyOps<T>,
+    {
+        self.body
+            .as_deref_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .write_incoming(id, role, block, payload)
+    }
+    fn apply_body<T: OwnedToken>(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        block: BlockValue,
+        payload: &[u8],
+        expected: Option<u32>,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        B: super::BodyOps<T>,
+    {
+        self.body
+            .as_deref_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .apply_incoming(key, role, block, payload, expected)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn apply<T: OwnedToken>(
+        &mut self,
+        token: T,
+        endpoint: Endpoint,
+        which: RxBlockOpt,
+        call_scoped: bool,
+        block: BlockValue,
+        expected: Option<u32>,
+        identity: BodyTag,
+        mut binding: Option<RequestBinding>,
+        payload: &[u8],
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        B: super::BodyOps<T> + super::SlotPool,
+    {
+        let n = payload.len();
+        let key = BlockKey::new(token, endpoint).with_identity(identity);
+        let untagged_classic = matches!(which, RxBlockOpt::Block1) && identity.is_absent();
+        let mut classic_body = None;
+        if let Some(candidate) = binding {
+            let role = if matches!(which, RxBlockOpt::Block1) {
+                BlockRole::IncomingBlock1
+            } else {
+                BlockRole::IncomingQBlock1
+            };
+            let existing = if untagged_classic {
+                (0..self.capacities.rx_body_slots.unwrap_or(0)).find_map(|i| {
+                    let id = SlotId::from_index(i);
+                    let transfer = self.transfer::<T>(id)?;
+                    (transfer.role() == role
+                        && transfer.endpoint() == endpoint
+                        && transfer.identity().is_absent()
+                        && transfer
+                            .request_binding
+                            .is_some_and(|stored| stored.same_options(candidate)))
+                    .then_some(id)
+                })
+            } else {
+                self.lookup(key, role).or_else(|| {
+                    (0..self.capacities.rx_body_slots.unwrap_or(0)).find_map(|i| {
+                        let id = SlotId::from_index(i);
+                        let transfer = self.transfer::<T>(id)?;
+                        same_body_identity(transfer, key, role).then_some(id)
+                    })
+                })
+            };
+            if let Some(id) = existing {
+                let transfer = self
+                    .transfer::<T>(id)
+                    .ok_or(BlockTransferError::NoTransfer)?;
+                let stored = transfer
+                    .request_binding
+                    .ok_or(BlockTransferError::IdentityMismatch)?;
+                let restart = untagged_classic && block.num() == 0 && key != transfer.key();
+                if restart {
+                    if !stored.same_options(candidate) {
+                        return Err(BlockTransferError::IdentityMismatch);
+                    }
+                } else {
+                    // Q may admit NUM0 last. Validate its immutable condition before
+                    // applying bytes, then commit the merged knowledge only on success.
+                    binding = Some(stored.retain_condition(candidate)?);
+                }
+                if untagged_classic {
+                    if block.num() == 0 && key != transfer.key() {
+                        BlockTransfer::incoming_block1(
+                            key,
+                            block,
+                            n,
+                            self.capacities.rx_body_bytes.unwrap_or(0),
+                            expected,
+                        )?;
+                        self.release(id)?;
+                    } else {
+                        classic_body = Some(id);
+                    }
+                }
+            }
+        }
+        let progress = if call_scoped {
+            self.apply_call_block2(
+                key,
+                block,
+                payload,
+                expected,
+                matches!(which, RxBlockOpt::QBlock2),
+            )?
+        } else if untagged_classic {
+            let result = if let Some(id) = classic_body {
+                self.write::<T>(id, BlockRole::IncomingBlock1, block, payload)
+            } else {
+                self.admit(key, BlockRole::IncomingBlock1, block, payload, expected)
+                    .and_then(|id| {
+                        let transfer = self
+                            .transfer::<T>(id)
+                            .ok_or(BlockTransferError::NoTransfer)?;
+                        Ok(BlockProgress::new(
+                            id,
+                            transfer.filled(),
+                            transfer.is_complete(),
+                        ))
+                    })
+            };
+            self.metrics.tally_block(result.as_ref().map(|_| ()), true);
+            result?
+        } else {
+            let result = match which {
+                RxBlockOpt::Block1 => {
+                    self.apply_body(key, BlockRole::IncomingBlock1, block, payload, expected)
+                }
+                RxBlockOpt::Block2 => {
+                    self.apply_body(key, BlockRole::IncomingBlock2, block, payload, expected)
+                }
+                RxBlockOpt::QBlock1 => {
+                    self.apply_body(key, BlockRole::IncomingQBlock1, block, payload, expected)
+                }
+                RxBlockOpt::QBlock2 => {
+                    self.apply_body(key, BlockRole::IncomingQBlock2, block, payload, expected)
+                }
+            };
+            self.metrics
+                .tally_block(result.as_ref().map(|_| ()), which.uses_size1());
+            result?
+        };
+        if let Some(binding) = binding {
+            let mut transfer = self
+                .transfer::<T>(progress.id())
+                .ok_or(BlockTransferError::NoTransfer)?;
+            transfer.request_binding = Some(binding);
+            if let Err(error) = self.set_transfer(progress.id(), transfer) {
+                let _ = self.release(progress.id());
+                return Err(error.into());
+            }
+        }
+        Ok(progress)
+    }
+    fn apply_call_block2<T: OwnedToken>(
+        &mut self,
+        key: BlockKey<T>,
+        block: BlockValue,
+        payload: &[u8],
+        expected: Option<u32>,
+        q_block: bool,
+    ) -> Result<BlockProgress, BlockTransferError>
+    where
+        B: super::BodyOps<T>,
+    {
+        let role = if q_block {
+            BlockRole::IncomingQBlock2
+        } else {
+            BlockRole::IncomingBlock2
+        };
+        let result = (|| {
+            if let Some(id) = self.lookup(key, role) {
+                if q_block
+                    && self
+                        .transfer::<T>(id)
+                        .is_some_and(|t| t.expected_len() != expected)
+                {
+                    return Err(BlockTransferError::LengthInconsistent);
+                }
+                return if q_block {
+                    self.write::<T>(id, BlockRole::IncomingQBlock2, block, payload)
+                } else {
+                    self.write::<T>(id, BlockRole::IncomingBlock2, block, payload)
+                };
+            }
+            let id = if q_block {
+                self.admit(key, BlockRole::IncomingQBlock2, block, payload, expected)?
+            } else {
+                self.admit(key, BlockRole::IncomingBlock2, block, payload, expected)?
+            };
+            let transfer = self
+                .transfer::<T>(id)
+                .ok_or(BlockTransferError::NoTransfer)?;
+            Ok(BlockProgress::new(
+                id,
+                transfer.filled(),
+                transfer.is_complete(),
+            ))
+        })();
+        self.metrics.tally_block(result.as_ref().map(|_| ()), false);
+        result
+    }
+}
+
+#[cfg(test)]
+mod incoming_assembly_tests {
+    use super::*;
+    #[test]
+    fn configured_empty_body_pool_remains_saturation_not_absence() {
+        let mut pool = super::super::BodyPool::<0, 1024>::default();
+        let mut metrics = Metrics::ZERO;
+        let mut capacities = Capacities::from_profile::<super::super::profiles::Default>();
+        capacities.rx_body_slots = Some(0);
+        capacities.rx_body_bytes = Some(1024);
+        let key = BlockKey::new(
+            crate::message::Token::EMPTY,
+            Endpoint::v4([192, 0, 2, 1], 5683),
+        );
+        let block = BlockValue::from_size(0, false, 16).unwrap();
+        for present in [true, false] {
+            let mut assembly = IncomingAssembly {
+                body: if present { Some(&mut pool) } else { None },
+                capacities,
+                metrics: &mut metrics,
+            };
+            assert_eq!(
+                assembly.apply_call_block2(key, block, b"x", None, false),
+                Err(if present {
+                    BlockTransferError::Saturated
+                } else {
+                    BlockTransferError::NoBodyPools
+                })
+            );
+        }
+        assert_eq!(metrics.saturated, 1);
+        assert_eq!(metrics.block2_assemble, 0);
+    }
 }

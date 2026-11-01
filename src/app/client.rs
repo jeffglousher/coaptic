@@ -3724,6 +3724,7 @@ where
         + PendingCons
         + Exchanges
         + BodySlots
+        + crate::storage::IncomingRxSlots
         + ObserveSlots
         + crate::storage::DedupSlots,
     T: DatagramIo,

@@ -711,7 +711,14 @@ pub(super) async fn dispatch_rx_async<
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + IncomingRxSlots
+        + Exchanges
+        + DedupSlots,
     T: ProtocolIo,
 {
     let mut owner = RxOwner {

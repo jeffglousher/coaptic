@@ -2074,12 +2074,24 @@ pub(crate) fn store_incoming(
     Ok(())
 }
 
-/// Byte and transfer access shared by [`super::BodyPool`] and the alloc body pool.
-pub(crate) trait BodyOps<T: OwnedToken = Token> {
+/// Advanced typed body backing shared by fixed and allocated storage.
+///
+/// Implementations preserve bounded admission, transfer identity, byte ranges,
+/// pin refusal and recovery semantics of the corresponding `BodySlots` backend.
+/// In particular, a custom backend's incoming view must enforce its policies on
+/// admission, writes, sidecar commits and release (via `SlotPool`). Engine uses
+/// this view with a separately borrowed immutable RX datagram; it must not bypass
+/// policies implemented by the backend's ordinary body methods.
+pub trait BodyOps<T: OwnedToken = Token> {
+    /// Filled bytes of an occupied body slot.
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
+    /// Transfer sidecar of an occupied body slot.
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>>;
+    /// Commit a sidecar, preserving backend validation and refusal policies.
     fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError>;
+    /// Find an occupied body by key.
     fn lookup(&self, key: BlockKey<T>) -> Option<SlotId>;
+    /// Admit a new incoming body through the backend admission policy.
     fn admit_incoming(
         &mut self,
         key: BlockKey<T>,
@@ -2088,6 +2100,7 @@ pub(crate) trait BodyOps<T: OwnedToken = Token> {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<SlotId, BlockTransferError>;
+    /// Apply a range to an existing incoming body.
     fn write_incoming(
         &mut self,
         id: SlotId,
@@ -2095,6 +2108,7 @@ pub(crate) trait BodyOps<T: OwnedToken = Token> {
         block: BlockValue,
         payload: &[u8],
     ) -> Result<BlockProgress, BlockTransferError>;
+    /// Admit or continue an incoming body through the backend policy.
     fn apply_incoming(
         &mut self,
         key: BlockKey<T>,
@@ -2103,6 +2117,7 @@ pub(crate) trait BodyOps<T: OwnedToken = Token> {
         payload: &[u8],
         expected_len: Option<u32>,
     ) -> Result<BlockProgress, BlockTransferError>;
+    /// Retain a complete outgoing body in a bounded slot.
     fn start_outgoing(
         &mut self,
         key: BlockKey<T>,
@@ -2110,17 +2125,20 @@ pub(crate) trait BodyOps<T: OwnedToken = Token> {
         body: &[u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError>;
+    /// Issue the next outgoing range.
     fn next_outgoing(
         &mut self,
         id: SlotId,
         role: BlockRole,
     ) -> Result<OutgoingBlock, BlockTransferError>;
+    /// Adopt a smaller outgoing block size at the current issued byte.
     fn adopt_smaller_outgoing_szx(
         &mut self,
         id: SlotId,
         role: BlockRole,
         szx: u8,
     ) -> Result<(), BlockTransferError>;
+    /// Issue a bounded outgoing BERT range.
     fn next_bert_outgoing(
         &mut self,
         id: SlotId,
@@ -2135,13 +2153,16 @@ pub(crate) trait BodyOps<T: OwnedToken = Token> {
         Ok(())
     }
 
+    /// Acknowledge an outgoing block and return its progress.
     fn ack_outgoing(
         &mut self,
         id: SlotId,
         role: BlockRole,
         num: u32,
     ) -> Result<BlockProgress, BlockTransferError>;
+    /// Pin the filled body bytes for shared access.
     fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError>;
+    /// Pin the body buffer for exclusive access.
     fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
 

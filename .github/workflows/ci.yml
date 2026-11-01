@@ -42,6 +42,8 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-features --lib
       - run: cargo test --locked --no-default-features --lib
+      - run: cargo test --locked --all-features --test footprint
+      - run: cargo test --locked --no-default-features --test footprint
 
   msrv:
     name: library MSRV
@@ -152,8 +154,8 @@ jobs:
   validation:
     name: Companion validation
     if: github.event_name == 'workflow_dispatch' && inputs.full_validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@cdc5b81dede6d8a80145443dce07fced883e0a5b
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@6b09d42ab79bfff5bba2643a73059a725ce521e6
     with:
-      suite_revision: cdc5b81dede6d8a80145443dce07fced883e0a5b
+      suite_revision: 6b09d42ab79bfff5bba2643a73059a725ce521e6
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}

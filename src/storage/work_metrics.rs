@@ -25,6 +25,7 @@ pub struct WorkMetrics {
     /// Bytes copied from RX slots into App dispatch scratch.
     pub app_rx_staged_bytes: u64,
     /// Payload bytes copied into Engine incoming block scratch.
+    /// Direct RX/body borrowing adds zero here; the final body write is not staging.
     pub block_rx_staged_bytes: u64,
     /// Body bytes copied into App or Engine outgoing block scratch.
     pub block_tx_staged_bytes: u64,

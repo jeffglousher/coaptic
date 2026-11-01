@@ -4436,7 +4436,9 @@ fn classic_block1_changed_tokens_preserve_exact_operation_identity() {
     }
 }
 
-fn classic_block1_token_suite<S: Storage<Token = Token> + DatagramSlots + BodySlots>(
+fn classic_block1_token_suite<
+    S: Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots,
+>(
     mut engine: Engine<S>,
 ) {
     #[derive(Clone, Copy)]
@@ -4450,7 +4452,7 @@ fn classic_block1_token_suite<S: Storage<Token = Token> + DatagramSlots + BodySl
         num: u32,
         payload: &'a [u8],
     }
-    fn apply<S: Storage<Token = Token> + DatagramSlots + BodySlots>(
+    fn apply<S: Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
         engine: &mut Engine<S>,
         packet: Packet<'_>,
     ) -> Result<super::BlockProgress, BlockTransferError> {
@@ -4776,7 +4778,7 @@ fn request_binding_boundary_refuses_before_allocating_body() {
 
 #[test]
 fn classic_wire_size_estimates_can_change_or_disappear() {
-    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + BodySlots>(
+    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
         build: fn() -> Engine<S>,
     ) {
         for upload in [false, true] {
@@ -4853,7 +4855,7 @@ fn classic_wire_size_estimates_can_change_or_disappear() {
 
 #[test]
 fn q_wire_size_is_mandatory_stable_and_refusal_preserves_body() {
-    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + BodySlots>(
+    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
         build: fn() -> Engine<S>,
     ) {
         use crate::message::OptionsBuilder;
@@ -5133,7 +5135,7 @@ fn observe_role_keys_and_client_refusal_are_distinct() {
 
 #[test]
 fn incoming_request_and_response_bodies_with_the_same_key_are_isolated() {
-    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + BodySlots>(
+    fn exercise<S: super::Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
         build: fn() -> Engine<S>,
     ) {
         for upload_first in [false, true] {
@@ -5964,4 +5966,492 @@ fn allocated_initial_con_reservation_counts_nstart_without_starting_rto() {
         .build_alloc(Capacities::from_profile::<profiles::Default>())
         .unwrap();
     initial_con_reservation_contract(engine);
+}
+
+// Borrow-path regressions use actual fixed/allocated backing and a policy wrapper.
+mod incoming_rx_borrow {
+    use super::*;
+    use crate::storage::{Access, AccessMut, BlockProgress, BodyOps, OutgoingBlock};
+
+    #[derive(Default)]
+    struct PolicyBody {
+        inner: crate::storage::BodyPool<2, 4096>,
+        refuse_admit: bool,
+        fail_binding: bool,
+    }
+    impl BodyOps for PolicyBody {
+        fn payload(&self, id: SlotId) -> Option<&[u8]> {
+            super::super::BodyPool::payload(&self.inner, id)
+        }
+
+        fn transfer(&self, id: SlotId) -> Option<BlockTransfer<Token>> {
+            super::super::BodyPool::transfer(&self.inner, id)
+        }
+
+        fn set_transfer(
+            &mut self,
+            id: SlotId,
+            transfer: BlockTransfer<Token>,
+        ) -> Result<(), SlotError> {
+            if self.fail_binding && transfer.request_binding.is_some() {
+                return Err(SlotError::InvalidSlot);
+            }
+            super::super::BodyPool::set_transfer(&mut self.inner, id, transfer)
+        }
+
+        fn lookup(&self, key: BlockKey<Token>) -> Option<SlotId> {
+            super::super::BodyPool::lookup(&self.inner, key)
+        }
+
+        fn admit_incoming(
+            &mut self,
+            key: BlockKey<Token>,
+            role: BlockRole,
+            block: BlockValue,
+            payload: &[u8],
+            expected_len: Option<u32>,
+        ) -> Result<SlotId, BlockTransferError> {
+            if self.refuse_admit {
+                return Err(BlockTransferError::Saturated);
+            }
+            super::super::BodyPool::admit_incoming(
+                &mut self.inner,
+                key,
+                role,
+                block,
+                payload,
+                expected_len,
+            )
+        }
+
+        fn write_incoming(
+            &mut self,
+            id: SlotId,
+            role: BlockRole,
+            block: BlockValue,
+            payload: &[u8],
+        ) -> Result<BlockProgress, BlockTransferError> {
+            super::super::BodyPool::write_incoming(&mut self.inner, id, role, block, payload)
+        }
+
+        fn apply_incoming(
+            &mut self,
+            key: BlockKey<Token>,
+            role: BlockRole,
+            block: BlockValue,
+            payload: &[u8],
+            expected_len: Option<u32>,
+        ) -> Result<BlockProgress, BlockTransferError> {
+            super::super::BodyPool::apply_incoming(
+                &mut self.inner,
+                key,
+                role,
+                block,
+                payload,
+                expected_len,
+            )
+        }
+
+        fn start_outgoing(
+            &mut self,
+            key: BlockKey<Token>,
+            role: BlockRole,
+            body: &[u8],
+            szx: u8,
+        ) -> Result<SlotId, BlockTransferError> {
+            super::super::BodyPool::start_outgoing(&mut self.inner, key, role, body, szx)
+        }
+
+        fn next_outgoing(
+            &mut self,
+            id: SlotId,
+            role: BlockRole,
+        ) -> Result<OutgoingBlock, BlockTransferError> {
+            super::super::BodyPool::next_outgoing(&mut self.inner, id, role)
+        }
+
+        fn adopt_smaller_outgoing_szx(
+            &mut self,
+            id: SlotId,
+            role: BlockRole,
+            szx: u8,
+        ) -> Result<(), BlockTransferError> {
+            super::super::BodyPool::adopt_smaller_outgoing_szx(&mut self.inner, id, role, szx)
+        }
+
+        fn next_bert_outgoing(
+            &mut self,
+            id: SlotId,
+            role: BlockRole,
+            max_payload: usize,
+        ) -> Result<OutgoingBlock, BlockTransferError> {
+            super::super::BodyPool::next_bert_outgoing(&mut self.inner, id, role, max_payload)
+        }
+
+        fn ack_outgoing(
+            &mut self,
+            id: SlotId,
+            role: BlockRole,
+            num: u32,
+        ) -> Result<BlockProgress, BlockTransferError> {
+            super::super::BodyPool::ack_outgoing(&mut self.inner, id, role, num)
+        }
+
+        fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
+            super::super::BodyPool::access(&mut self.inner, id)
+        }
+
+        fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
+            super::super::BodyPool::access_mut(&mut self.inner, id)
+        }
+    }
+    impl SlotPool for PolicyBody {
+        fn acquire(&mut self) -> Option<SlotId> {
+            self.inner.acquire()
+        }
+        fn release(&mut self, id: SlotId) -> Result<(), SlotError> {
+            self.inner.release(id)
+        }
+        fn advance(&mut self, n: usize) {
+            self.inner.advance(n);
+        }
+        fn slot_count(&self) -> usize {
+            self.inner.slot_count()
+        }
+        fn occupied_count(&self) -> usize {
+            self.inner.occupied_count()
+        }
+        fn is_occupied(&self, id: SlotId) -> bool {
+            self.inner.is_occupied(id)
+        }
+        fn is_pinned(&self, id: SlotId) -> bool {
+            self.inner.is_pinned(id)
+        }
+        fn cursor(&self) -> usize {
+            self.inner.cursor()
+        }
+    }
+    struct ShortScratch([u8; 64]);
+    impl Default for ShortScratch {
+        fn default() -> Self {
+            Self([0; 64])
+        }
+    }
+    impl AsRef<[u8]> for ShortScratch {
+        fn as_ref(&self) -> &[u8] {
+            &self.0[..4]
+        }
+    }
+    impl AsMut<[u8]> for ShortScratch {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+    macro_rules! profile {
+        ($name:ident, $scratch:ty, $rx:ty) => {
+            struct $name;
+            impl MemoryProfile for $name {
+                type Token = Token;
+                const RX_DATAGRAM_SLOTS: usize = 4;
+                const RX_DATAGRAM_BYTES: usize = 1472;
+                const TX_DATAGRAM_SLOTS: usize = 4;
+                const TX_DATAGRAM_BYTES: usize = 1472;
+                const RX_BODY_SLOTS: usize = 2;
+                const RX_BODY_BYTES: usize = 4096;
+                const TX_BODY_SLOTS: usize = 2;
+                const TX_BODY_BYTES: usize = 4096;
+                const DEDUP_ENTRIES: usize = 8;
+                const OBSERVE_ENTRIES: usize = 4;
+                type RxDatagram = $rx;
+                type TxDatagram = DatagramPool<4, 1472>;
+                type RxBody = PolicyBody;
+                type TxBody = crate::storage::BodyPool<2, 4096>;
+                type Dedup = DedupTable<8>;
+                type Observe = ObserveTable<4>;
+                type Exchange = ExchangeTable<4>;
+                type RxScratch = $scratch;
+                type TxScratch = crate::storage::DatagramScratch<1472>;
+            }
+        };
+    }
+    profile!(PolicyProfile, crate::storage::DatagramScratch<1472>, DatagramPool<4,1472>);
+    profile!(ShortProfile, ShortScratch, DatagramPool<4,1472>);
+    profile!(BodyOnlyProfile, ShortScratch, DedupTable<4>);
+    #[test]
+    fn body_only_profile_keeps_body_slots_without_datagram_bytes() {
+        fn apply<S: BodySlots<Token = Token>>(storage: &mut S) {
+            let id = storage
+                .admit_block1(
+                    block_key(),
+                    BlockValue::from_size(0, false, 16).unwrap(),
+                    b"body",
+                    None,
+                )
+                .unwrap();
+            assert_eq!(storage.rx_body_payload(id), Some(b"body".as_slice()));
+        }
+        apply(&mut Memory::<BodyOnlyProfile>::with_block_wise());
+    }
+    fn packet<S: Storage<Token = Token> + DatagramSlots>(
+        engine: &mut Engine<S>,
+        token: u8,
+        num: u32,
+        more: bool,
+        bytes: &[u8],
+    ) -> SlotId {
+        let block = BlockValue::from_size(num, more, 16).unwrap().encode();
+        let opts = [Opt::block1(&block)];
+        let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(7))
+            .with_token(Token::new(&[token]).unwrap())
+            .with_options(&opts)
+            .with_payload(bytes);
+        let (wire, n) = encode_into(&msg);
+        let rx = engine.acquire_rx().unwrap();
+        engine
+            .write_rx(rx, &wire[..n], Endpoint::v4([192, 0, 2, 1], 5683))
+            .unwrap();
+        rx
+    }
+    fn policy_engine() -> Engine<Memory<PolicyProfile, WithBodies<PolicyProfile>>> {
+        EngineBuilder::new()
+            .profile::<PolicyProfile>()
+            .block_wise(true)
+            .build(Memory::<PolicyProfile>::with_block_wise())
+            .unwrap()
+    }
+    #[test]
+    fn short_logical_scratch_refuses_before_body_effects() {
+        let mut e = EngineBuilder::new()
+            .profile::<ShortProfile>()
+            .block_wise(true)
+            .build(Memory::<ShortProfile>::with_block_wise())
+            .unwrap();
+        let old = e
+            .apply_block1(
+                block_key(),
+                BlockValue::from_size(0, true, 16).unwrap(),
+                &[9; 16],
+                None,
+            )
+            .unwrap();
+        let before = e.rx_body_transfer(old.id()).unwrap();
+        let rx = packet(&mut e, 3, 0, false, b"12345");
+        let cursor = e.rx_body_cursor();
+        assert_eq!(
+            e.apply_block1_rx(rx),
+            Err(BlockTransferError::PayloadLength)
+        );
+        assert_eq!(e.rx_body_transfer(old.id()), Some(before));
+        assert_eq!(e.rx_body_payload(old.id()), Some([9; 16].as_slice()));
+        assert_eq!(e.rx_body_cursor(), cursor);
+    }
+    #[test]
+    fn custom_binding_failure_releases_new_body_and_preserves_rx() {
+        let mut e = policy_engine();
+        e.storage_mut().rx_body_mut().fail_binding = true;
+        let rx = packet(&mut e, 1, 0, false, b"body");
+        let cursor = e.rx_cursor();
+        assert_eq!(e.apply_block1_rx(rx), Err(SlotError::InvalidSlot.into()));
+        assert_eq!(e.storage_mut().rx_body_mut().occupied_count(), 0);
+        assert_eq!(e.rx_cursor(), cursor);
+        assert_eq!(e.decode_rx(rx).unwrap().payload(), b"body");
+        e.storage_mut().rx_body_mut().fail_binding = false;
+        assert!(e.apply_block1_rx(rx).unwrap().complete());
+    }
+    #[test]
+    fn allowed_restart_releases_old_body_before_custom_admission_refusal() {
+        let mut e = policy_engine();
+        let rx = packet(&mut e, 1, 0, true, &[1; 16]);
+        let old = e.apply_block1_rx(rx).unwrap().id();
+        e.release_rx(rx).unwrap();
+        e.storage_mut().rx_body_mut().refuse_admit = true;
+        let rx = packet(&mut e, 2, 0, false, b"new");
+        assert_eq!(e.apply_block1_rx(rx), Err(BlockTransferError::Saturated));
+        assert_eq!(e.rx_body_transfer(old), None);
+        assert_eq!(e.rx_body_payload(old), None);
+        assert_eq!(e.storage_mut().rx_body_mut().occupied_count(), 0);
+        assert_eq!(e.decode_rx(rx).unwrap().payload(), b"new");
+        e.storage_mut().rx_body_mut().refuse_admit = false;
+        assert!(e.apply_block1_rx(rx).unwrap().complete());
+    }
+    #[test]
+    fn pinned_restart_refuses_without_changing_body_or_rx() {
+        let mut e = build_default_bodies();
+        let rx = packet(&mut e, 1, 0, true, &[7; 16]);
+        e.storage_mut().rx_datagram_mut().pin(rx).unwrap();
+        let old = e.apply_block1_rx(rx).unwrap().id();
+        assert!(e.rx_is_pinned(rx));
+        e.storage_mut().rx_datagram_mut().unpin(rx).unwrap();
+        e.release_rx(rx).unwrap();
+        let before = e.rx_body_transfer(old).unwrap();
+        e.storage_mut().rx_body_mut().pin(old).unwrap();
+        let rx = packet(&mut e, 2, 0, false, b"replace");
+        let cursor = e.rx_body_cursor();
+        assert_eq!(e.apply_block1_rx(rx), Err(SlotError::Pinned.into()));
+        assert_eq!(e.rx_body_transfer(old), Some(before));
+        assert_eq!(e.rx_body_payload(old), Some([7; 16].as_slice()));
+        assert_eq!(e.rx_body_cursor(), cursor);
+        assert_eq!(e.decode_rx(rx).unwrap().payload(), b"replace");
+        e.storage_mut().rx_body_mut().unpin(old).unwrap();
+        assert!(e.apply_block1_rx(rx).unwrap().complete());
+    }
+    fn no_pool_order<S: Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
+        mut e: Engine<S>,
+    ) {
+        let invalid = SlotId::from_index(usize::MAX);
+        assert_eq!(
+            e.apply_block1_rx(invalid),
+            Err(SlotError::NotOccupied.into())
+        );
+        let rx = e.acquire_rx().unwrap();
+        assert_eq!(e.apply_block1_rx(rx), Err(SlotError::NotOccupied.into()));
+        let ep = Endpoint::v4([192, 0, 2, 1], 5683);
+        e.write_rx(rx, &[], ep).unwrap();
+        assert!(matches!(
+            e.apply_block1_rx(rx),
+            Err(BlockTransferError::Parse(_))
+        ));
+        e.write_rx(rx, &[0], ep).unwrap();
+        assert!(matches!(
+            e.apply_block1_rx(rx),
+            Err(BlockTransferError::Parse(_))
+        ));
+        let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1));
+        let (wire, n) = encode_into(&msg);
+        e.write_rx(rx, &wire[..n], ep).unwrap();
+        assert_eq!(e.apply_block1_rx(rx), Err(BlockTransferError::MissingBlock));
+        e.release_rx(rx).unwrap();
+        let rx = packet(&mut e, 1, 0, false, b"x");
+        assert_eq!(e.apply_block1_rx(rx), Err(BlockTransferError::NoBodyPools));
+        assert_eq!(
+            e.apply_q_block1_rx(rx),
+            Err(BlockTransferError::MissingBlock)
+        );
+        let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+        let size = encode_uint(1);
+        for q2 in [false, true] {
+            let opt = if q2 {
+                Opt::q_block2(&block)
+            } else {
+                Opt::q_block1(&block)
+            };
+            let options = [opt];
+            let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(9))
+                .with_options(&options)
+                .with_payload(b"x");
+            let (wire, n) = encode_into(&msg);
+            e.write_rx(rx, &wire[..n], ep).unwrap();
+            let result = if q2 {
+                e.apply_q_block2_rx(rx)
+            } else {
+                e.apply_q_block1_rx(rx)
+            };
+            assert_eq!(result, Err(BlockTransferError::MissingSize));
+            let options = if q2 {
+                [Opt::size2(&size), opt]
+            } else {
+                [opt, Opt::size1(&size)]
+            };
+            let msg = msg.with_options(&options);
+            let (wire, n) = encode_into(&msg);
+            e.write_rx(rx, &wire[..n], ep).unwrap();
+            let result = if q2 {
+                e.apply_q_block2_rx(rx)
+            } else {
+                e.apply_q_block1_rx(rx)
+            };
+            assert_eq!(result, Err(BlockTransferError::MissingIdentity));
+        }
+    }
+    #[test]
+    fn malformed_and_missing_rx_precede_absent_body_pools() {
+        no_pool_order(build_default());
+        #[cfg(feature = "alloc")]
+        no_pool_order(
+            EngineBuilder::new()
+                .profile::<profiles::Default>()
+                .block_wise(false)
+                .build_alloc(crate::storage::Capacities::from_profile::<profiles::Default>())
+                .unwrap(),
+        );
+    }
+    fn variants<S: Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
+        mut e: Engine<S>,
+    ) {
+        for kind in 0..6 {
+            let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+            let size = encode_uint(4);
+            let option = match kind {
+                0 => Opt::block1(&block),
+                1 | 4 => Opt::block2(&block),
+                2 => Opt::q_block1(&block),
+                _ => Opt::q_block2(&block),
+            };
+            let sizeopt = if kind == 0 || kind == 2 {
+                Opt::size1(&size)
+            } else {
+                Opt::size2(&size)
+            };
+            let identity = if kind == 0 || kind == 2 {
+                Opt::request_tag(b"id")
+            } else {
+                Opt::etag(b"id")
+            };
+            let mut opts = crate::message::OptionsBuilder::<3>::new();
+            opts.push(option).unwrap();
+            opts.push(sizeopt).unwrap();
+            opts.push(identity).unwrap();
+            let msg = Message::new(
+                Type::Confirmable,
+                if kind == 0 || kind == 2 {
+                    Code::PUT
+                } else {
+                    Code::CONTENT
+                },
+                MessageId::new(5),
+            )
+            .with_token(Token::new(&[kind as u8]).unwrap())
+            .with_options(opts.as_slice())
+            .with_payload(b"data");
+            let (wire, n) = encode_into(&msg);
+            let rx = e.acquire_rx().unwrap();
+            e.write_rx(rx, &wire[..n], Endpoint::v4([192, 0, 2, 1], 5683))
+                .unwrap();
+            let rx_cursor = e.rx_cursor();
+            let progress = match kind {
+                0 => e.apply_block1_rx(rx),
+                1 => e.apply_block2_rx(rx),
+                2 => e.apply_q_block1_rx(rx),
+                3 => e.apply_q_block2_rx(rx),
+                4 => e.apply_call_block2_rx(rx, false),
+                _ => e.apply_call_block2_rx(rx, true),
+            }
+            .unwrap();
+            assert!(progress.complete());
+            assert_eq!(e.rx_body_payload(progress.id()), Some(b"data".as_slice()));
+            assert_eq!(e.storage().rx_payload(rx), Some(&wire[..n]));
+            assert_eq!(e.rx_cursor(), rx_cursor);
+            #[cfg(feature = "diagnostics")]
+            assert_eq!(e.work_metrics().block_rx_staged_bytes, 0);
+            e.release_rx_body(progress.id()).unwrap();
+            e.release_rx(rx).unwrap();
+        }
+        assert_eq!(e.metrics().block1_assemble, 2);
+        assert_eq!(e.metrics().block2_assemble, 4);
+    }
+    #[test]
+    fn all_incoming_variants_preserve_wire_and_final_body_fixed_and_allocated() {
+        variants(build_default_bodies());
+        #[cfg(feature = "alloc")]
+        variants(
+            EngineBuilder::new()
+                .profile::<profiles::Default>()
+                .block_wise(true)
+                .build_alloc(
+                    crate::storage::Capacities::from_profile::<profiles::Default>()
+                        .with_block_wise::<profiles::Default>(),
+                )
+                .unwrap(),
+        );
+    }
 }

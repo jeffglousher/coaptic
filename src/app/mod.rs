@@ -202,9 +202,10 @@ use crate::message::{
 };
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
-    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, MemoryLayout, MemoryProfile,
-    Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
-    PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, IncomingRxSlots,
+    MemoryLayout, MemoryProfile, Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource,
+    ObserveSlots, OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit, SlotError,
+    SlotId, Storage,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -286,11 +287,26 @@ impl std::error::Error for OscoreInstallError {}
 /// Fixed [`crate::storage::Memory`] and allocator-backed `AllocMemory` (with
 /// `alloc`) use the same routing, request builders and protocol reactor.
 pub trait AppStorage:
-    Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots
+    Storage
+    + DatagramSlots
+    + PendingCons
+    + ObserveSlots
+    + BodySlots
+    + IncomingRxSlots
+    + Exchanges
+    + DedupSlots
 {
 }
-impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots>
-    AppStorage for S
+impl<
+    S: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + IncomingRxSlots
+        + Exchanges
+        + DedupSlots,
+> AppStorage for S
 {
 }
 
@@ -2686,7 +2702,14 @@ fn poll_engine<
     mut ingress: Option<&mut AppIngress<'_>>,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + IncomingRxSlots
+        + Exchanges
+        + DedupSlots,
     T: DatagramIo,
 {
     oscore_checkpoint.flush(oscore, &mut checkpoint_commit)?;
@@ -3004,7 +3027,7 @@ fn assemble_inbound_body<Mem>(
     oscore_request: oscore::Request,
 ) -> InboundBody
 where
-    Mem: Storage + DatagramSlots + BodySlots,
+    Mem: Storage + DatagramSlots + BodySlots + IncomingRxSlots,
 {
     #[cfg(not(feature = "oscore"))]
     let _ = oscore_request;
@@ -3357,7 +3380,14 @@ fn dispatch_rx<
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodySlots
+        + IncomingRxSlots
+        + Exchanges
+        + DedupSlots,
     T: DatagramIo,
 {
     let Some(peer) = engine.rx_endpoint(rx) else {

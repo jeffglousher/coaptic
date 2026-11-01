@@ -1127,7 +1127,9 @@ struct AllocBodySlot<T: OwnedToken = Token> {
     transfer: Option<BlockTransfer<T>>,
 }
 
-struct AllocBodyPool<T: OwnedToken = Token> {
+/// Opaque allocated body backing for the advanced `BodySlots` borrow contract.
+/// Storage is reserved when `AllocMemory` is constructed and never grows.
+pub struct AllocBodyPool<T: OwnedToken = Token> {
     slots: Vec<AllocBodySlot<T>>,
     slot_bytes: usize,
     occ: HeapOccupancy,
@@ -2051,5 +2053,15 @@ mod tests {
         }
         assert_eq!(memory.exchange.take(row.key()), Some(row));
         assert_eq!(memory.exchange.occupied_count(), 0);
+    }
+}
+
+impl<T: OwnedToken> super::IncomingRxSlots for AllocMemory<T> {
+    type IncomingBody = AllocBodyPool<T>;
+    fn split_incoming_rx(
+        &mut self,
+        id: SlotId,
+    ) -> (Option<&[u8]>, Option<&mut Self::IncomingBody>) {
+        (self.rx.payload(id), self.rx_body.as_mut())
     }
 }

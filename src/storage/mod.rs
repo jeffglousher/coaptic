@@ -53,12 +53,12 @@ mod tests;
 
 pub use access::{Access, AccessMut};
 #[cfg(feature = "alloc")]
-pub use alloc_memory::AllocMemory;
+pub use alloc_memory::{AllocBodyPool, AllocMemory};
 pub use async_io::{AsyncDatagramIo, InitialConSendError};
 pub(crate) use block::classic_block2_range;
 pub use block::{
-    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyTag, OutgoingBlock, QBlockReceiveWait,
-    QBlockRecover,
+    BlockKey, BlockProgress, BlockRole, BlockTransfer, BodyOps, BodyTag, OutgoingBlock,
+    QBlockReceiveWait, QBlockRecover,
 };
 pub use builder::{EngineBuilder, Missing, Present};
 pub use capacities::Capacities;
@@ -627,3 +627,29 @@ pub trait BodySlots: Storage {
 
 #[cfg(test)]
 mod token_capacity_tests;
+
+/// Incoming datagram assembly with disjoint typed body backing.
+///
+/// This capability is required only by RX block assembly and App storage.
+/// Body-only backends can implement `BodySlots` without implementing it.
+/// Custom implementations must preserve the incoming policies of `BodySlots`.
+pub trait IncomingRxSlots: BodySlots + DatagramSlots {
+    /// Typed incoming backing used while RX bytes remain borrowed.
+    ///
+    /// Operations on this view must enforce the same admission, write, sidecar,
+    /// release and pin policies as this backend's incoming `BodySlots` methods.
+    /// A wrapper with additional policies must expose a view enforcing them too.
+    type IncomingBody: BodyOps<Self::Token> + SlotPool;
+
+    /// Borrow the occupied RX datagram and incoming body backing independently.
+    ///
+    /// Both views share this borrow's lifetime. RX bytes must remain stable
+    /// throughout assembly. `None` backing means absent pools; a configured
+    /// zero-slot pool must be returned as `Some`, preserving saturation errors.
+    /// The views must expose the same datagram, occupied body bytes, sidecars,
+    /// slots and cursors as `DatagramSlots`, `Storage` and `BodySlots`. Splitting
+    /// itself must not admit, release, rotate, write or otherwise change state.
+    /// Missing/invalid RX returns `None` without changing any pool or cursor.
+    fn split_incoming_rx(&mut self, id: SlotId)
+    -> (Option<&[u8]>, Option<&mut Self::IncomingBody>);
+}

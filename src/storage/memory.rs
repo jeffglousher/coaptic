@@ -11,6 +11,7 @@ use super::Endpoint;
 use super::ExchangeEntry;
 use super::ExchangeKey;
 use super::Exchanges;
+use super::IncomingRxSlots;
 use super::ObserveInterest;
 use super::ObserveKey;
 use super::ObserveSlots;
@@ -99,6 +100,7 @@ pub trait MemoryLayout<const BLOCK_WISE: bool>: MemoryProfile {
         + PendingCons
         + ObserveSlots
         + BodySlots
+        + IncomingRxSlots
         + Exchanges
         + DedupSlots
         + Default;
@@ -112,6 +114,7 @@ where
         + PendingCons
         + ObserveSlots
         + BodySlots
+        + IncomingRxSlots
         + Exchanges
         + DedupSlots,
 {
@@ -126,6 +129,7 @@ where
         + PendingCons
         + ObserveSlots
         + BodySlots
+        + IncomingRxSlots
         + Exchanges
         + DedupSlots,
 {
@@ -1272,5 +1276,38 @@ impl<P: MemoryProfile> core::fmt::Debug for Memory<P, WithBodies<P>> {
         f.debug_struct("Memory")
             .field("capacities", &self.capacities())
             .finish_non_exhaustive()
+    }
+}
+
+impl<P: MemoryProfile> IncomingRxSlots for Memory<P>
+where
+    P::RxDatagram: DatagramBytes,
+    P::TxDatagram: DatagramBytes,
+{
+    type IncomingBody = super::BodyPool<0, 0, P::Token>;
+    fn split_incoming_rx(
+        &mut self,
+        id: SlotId,
+    ) -> (Option<&[u8]>, Option<&mut Self::IncomingBody>) {
+        (self.rx_payload(id), None)
+    }
+}
+
+impl<P: MemoryProfile> IncomingRxSlots for Memory<P, WithBodies<P>>
+where
+    P::RxBody: BodyOps<P::Token>,
+    P::TxBody: BodyOps<P::Token>,
+    P::RxDatagram: DatagramBytes,
+    P::TxDatagram: DatagramBytes,
+{
+    type IncomingBody = P::RxBody;
+    fn split_incoming_rx(
+        &mut self,
+        id: SlotId,
+    ) -> (Option<&[u8]>, Option<&mut Self::IncomingBody>) {
+        (
+            DatagramBytes::payload(&self.rx, id),
+            Some(&mut self.bodies.rx),
+        )
     }
 }
