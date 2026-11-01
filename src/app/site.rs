@@ -415,10 +415,10 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
 
     fn indexed_entry(&self, segments: &[&str]) -> Option<&Entry<T>> {
         // Keep a hit in slot zero on the direct path before consulting the index.
-        if let Some(entry) = self.entries.first().and_then(Option::as_ref) {
-            if entry.path.matches(segments) {
-                return Some(entry);
-            }
+        if let Some(entry) = self.entries.first().and_then(Option::as_ref)
+            && entry.path.matches(segments)
+        {
+            return Some(entry);
         }
         let position = self.route_lower_bound(segments);
         let &slot = self.route_order[..self.len].get(position)?;

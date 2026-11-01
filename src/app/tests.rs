@@ -110,7 +110,7 @@ mod request_route_permutation {
         }
         // Replacement must succeed even when full; invalid registration cannot
         // alter handlers, identities, occupancy, or the lookup's refusal recovery.
-        for id in 0..34 {
+        for (id, path) in PATHS.iter().enumerate() {
             if model.iter().flatten().any(|&(p, _)| p == id) {
                 register(&mut site, &mut model, id, true);
             }
@@ -130,7 +130,7 @@ mod request_route_permutation {
             let slot = model
                 .iter()
                 .position(|row| row.is_some_and(|(p, _)| p == id));
-            assert_eq!(site.remove_route(PATHS[id]), Ok(slot.is_some()));
+            assert_eq!(site.remove_route(*path), Ok(slot.is_some()));
             if let Some(slot) = slot {
                 model[slot] = None;
             }
