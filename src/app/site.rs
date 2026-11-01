@@ -136,8 +136,14 @@ struct Entry<T: OwnedToken = Token> {
 /// payload buffer is added to the Site or its discovery scratch.
 /// `T` selects the handlers' token type. The Site stores function pointers,
 /// so choosing larger token storage does not enlarge the routing table.
+/// A private route index adds `N * size_of::<usize>()` bytes of inline backing,
+/// including at small capacities that retain linear request lookup. Enclosing
+/// object padding and runtime costs require separate qualification.
 pub struct Site<const N: usize = DEFAULT_ROUTES, T: OwnedToken = Token> {
     entries: [Option<Entry<T>>; N],
+    // The occupied prefix is a sorted permutation of occupied stable slots.
+    // Entries stay in place for resource identities and discovery catalog order.
+    route_order: [usize; N],
     len: usize,
     well_known: bool,
 }
@@ -148,6 +154,7 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
     pub const fn new() -> Self {
         Self {
             entries: [const { None }; N],
+            route_order: [0; N],
             len: 0,
             well_known: false,
         }
@@ -277,6 +284,10 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
             .iter()
             .position(Option::is_none)
             .ok_or(RouteError::Full)?;
+        let position = self.route_lower_bound(path.segments());
+        self.route_order
+            .copy_within(position..self.len, position + 1);
+        self.route_order[position] = index;
         self.entries[index] = Some(Entry {
             path,
             methods,
@@ -316,6 +327,12 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
             return false;
         };
         self.entries[index] = None;
+        let position = self.route_order[..self.len]
+            .iter()
+            .position(|&slot| slot == index)
+            .expect("occupied route is indexed");
+        self.route_order
+            .copy_within(position + 1..self.len, position);
         self.len -= 1;
         true
     }
@@ -354,10 +371,18 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
         request: Request<'_, T>,
         catalog: impl FnOnce() -> &'a mut [u8],
     ) -> Response<'a, T> {
-        for entry in self.entries.iter().flatten() {
-            if !entry.path.matches(request.path()) {
-                continue;
+        // Small sites keep the direct scan; the index serves larger tables.
+        if N <= 8 {
+            for entry in self.entries.iter().flatten() {
+                if !entry.path.matches(request.path()) {
+                    continue;
+                }
+                return match request.method() {
+                    Some(method) => entry.methods.call(method, request),
+                    None => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
+                };
             }
+        } else if let Some(entry) = self.indexed_entry(request.path()) {
             return match request.method() {
                 Some(method) => entry.methods.call(method, request),
                 None => Response::problem(Code::METHOD_NOT_ALLOWED).title("Method Not Allowed"),
@@ -370,6 +395,36 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
             };
         }
         Response::problem(Code::NOT_FOUND).title("Not Found")
+    }
+
+    // Count first, then compare decoded segments without flattening boundaries
+    // or decoding wire bytes again. partition_point uses constant scratch.
+    fn route_lower_bound(&self, segments: &[&str]) -> usize {
+        self.route_order[..self.len].partition_point(|&slot| {
+            let path = self.entries[slot]
+                .as_ref()
+                .expect("indexed route is occupied")
+                .path
+                .segments();
+            path.len()
+                .cmp(&segments.len())
+                .then_with(|| path.cmp(segments))
+                .is_lt()
+        })
+    }
+
+    fn indexed_entry(&self, segments: &[&str]) -> Option<&Entry<T>> {
+        // Keep a hit in slot zero on the direct path before consulting the index.
+        if let Some(entry) = self.entries.first().and_then(Option::as_ref) {
+            if entry.path.matches(segments) {
+                return Some(entry);
+            }
+        }
+        let position = self.route_lower_bound(segments);
+        let &slot = self.route_order[..self.len].get(position)?;
+        self.entries[slot]
+            .as_ref()
+            .filter(|entry| entry.path.matches(segments))
     }
 
     /// Stable local identity, selected by exact segment comparison.
@@ -394,6 +449,69 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
                 .filter(|_| ObserveResource::app_route(index) == resource)
                 .and_then(|entry| entry.methods.observe_source())
         })
+    }
+}
+
+#[cfg(test)]
+mod permutation_invariants {
+    use super::*;
+
+    fn handler(_: Request<'_>) -> Response<'static> {
+        Response::content(b"ok")
+    }
+
+    fn check<const N: usize>(site: &Site<N>) {
+        let order = &site.route_order[..site.len];
+        assert_eq!(order.len(), site.entries.iter().flatten().count());
+        for (slot, entry) in site.entries.iter().enumerate() {
+            assert_eq!(
+                order.iter().filter(|&&index| index == slot).count(),
+                usize::from(entry.is_some())
+            );
+        }
+        for pair in order.windows(2) {
+            let a = site.entries[pair[0]].as_ref().unwrap().path.segments();
+            let b = site.entries[pair[1]].as_ref().unwrap().path.segments();
+            assert!(a.len() < b.len() || (a.len() == b.len() && a < b));
+        }
+    }
+
+    fn exercise<const N: usize>() {
+        const PATHS: &[&str] = &[
+            "z", "a/b", "a", "", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+            "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "a/a", "b/a", "b/b", "c/a",
+            "c/b",
+        ];
+        let mut site = Site::<N>::new();
+        check(&site);
+        for step in 0..132 {
+            let path = PATHS[(step * 13) % PATHS.len()];
+            let _ = site.try_route(path, super::super::get(handler));
+            check(&site);
+            let _ = site.try_route(path, super::super::get(handler));
+            check(&site);
+            if step % 3 == 0 {
+                site.remove_route(PATHS[(step * 7) % PATHS.len()]).unwrap();
+                check(&site);
+            }
+        }
+        for path in PATHS {
+            site.remove_route(*path).unwrap();
+            check(&site);
+        }
+        assert!(site.is_empty());
+    }
+
+    #[test]
+    fn occupied_prefix_is_complete_unique_and_sorted_after_every_mutation() {
+        exercise::<0>();
+        exercise::<1>();
+        exercise::<4>();
+        exercise::<8>();
+        exercise::<9>();
+        exercise::<16>();
+        exercise::<17>();
+        exercise::<32>();
     }
 }
 

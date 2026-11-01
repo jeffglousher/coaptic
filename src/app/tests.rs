@@ -1,5 +1,353 @@
 //! Site and [`App::poll`] against a loopback [`DatagramIo`].
 
+// Independent stable-slot model: no sorted index or binary search in the oracle.
+mod request_route_permutation {
+    use super::*;
+
+    const PATHS: &[&[&str]] = &[
+        &["z"],
+        &[],
+        &["a/b"],
+        &["a", "b"],
+        &["%2F"],
+        &["%"],
+        &["a"],
+        &["a", "a"],
+        &["a", "b", "c"],
+        &["a", "b/c"],
+        &["shared", "prefix", "z"],
+        &["shared", "prefix", "a"],
+        &["a", "b", "c", "d", "e", "f", "g", "h"],
+        &["b"],
+        &["c"],
+        &["d"],
+        &["e"],
+        &["f"],
+        &["g"],
+        &["h"],
+        &["i"],
+        &["j"],
+        &["k"],
+        &["l"],
+        &["m"],
+        &["n"],
+        &["o"],
+        &["p"],
+        &["q"],
+        &["r"],
+        &["s"],
+        &["t"],
+        &["u"],
+        &["v"],
+        &["missing"],
+        &[".well-known", "core"],
+    ];
+    const PEER: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
+
+    fn check<const N: usize>(site: &Site<N>, model: &[Option<(usize, bool)>; N]) {
+        assert_eq!(site.len(), model.iter().flatten().count());
+        for (id, path) in PATHS.iter().enumerate() {
+            let found = model
+                .iter()
+                .position(|row| row.is_some_and(|(p, _)| p == id));
+            let expected_identity = found
+                .map(crate::storage::ObserveResource::app_route)
+                .unwrap_or(crate::storage::ObserveResource::NONE);
+            assert_eq!(site.observe_resource(path), expected_identity);
+            for code in [Code::GET, Code::POST, Code::from_raw(31)] {
+                let (wire, n) = encode_req(code, path, &[]);
+                let req = Request::from_decoded(decode(&wire[..n]).unwrap(), PEER, None).unwrap();
+                let mut scratch = [0; RESPONSE_BODY];
+                let response = site.dispatch(req, &mut scratch);
+                let expected = match found {
+                    Some(slot) if code == Code::GET => {
+                        let (_, alternate) = model[slot].unwrap();
+                        assert_eq!(
+                            response.payload(),
+                            if alternate { &b"21.5"[..] } else { &b"off"[..] }
+                        );
+                        Code::CONTENT
+                    }
+                    Some(_) => Code::METHOD_NOT_ALLOWED,
+                    None => Code::NOT_FOUND,
+                };
+                assert_eq!(
+                    response.code(),
+                    expected,
+                    "N={N} path={path:?} code={code:?}"
+                );
+            }
+        }
+    }
+
+    fn register<const N: usize>(
+        site: &mut Site<N>,
+        model: &mut [Option<(usize, bool)>; N],
+        id: usize,
+        alternate: bool,
+    ) {
+        let slot = model
+            .iter()
+            .position(|row| row.is_some_and(|(p, _)| p == id))
+            .or_else(|| model.iter().position(Option::is_none));
+        let result = site.try_route(PATHS[id], get(if alternate { get_temp } else { get_led }));
+        if let Some(slot) = slot {
+            result.unwrap();
+            model[slot] = Some((id, alternate));
+        } else {
+            assert_eq!(result.err(), Some(super::super::RouteError::Full));
+        }
+        check(site, model);
+    }
+
+    fn sequence<const N: usize>() {
+        let mut site = Site::<N>::new();
+        let mut model = [None; N];
+        check(&site, &model);
+        // A nonlexical registration permutation fills every supported capacity.
+        for step in 0..34 {
+            register(&mut site, &mut model, (step * 13) % 34, false);
+        }
+        // Replacement must succeed even when full; invalid registration cannot
+        // alter handlers, identities, occupancy, or the lookup's refusal recovery.
+        for id in 0..34 {
+            if model.iter().flatten().any(|&(p, _)| p == id) {
+                register(&mut site, &mut model, id, true);
+            }
+        }
+        for invalid in ["bad//path", ".", "a/b/c/d/e/f/g/h/i"] {
+            assert!(matches!(
+                site.try_route(invalid, post(post_led)),
+                Err(super::super::RouteError::Path(_))
+            ));
+            assert!(site.remove_route(invalid).is_err());
+            check(&site, &model);
+        }
+        // Bounded deterministic churn exercises holes and repeated lowest-slot
+        // reuse. The oracle searches only stable occupied slots, like baseline.
+        for step in 0..136 {
+            let id = (step * 17 + 5) % 34;
+            let slot = model
+                .iter()
+                .position(|row| row.is_some_and(|(p, _)| p == id));
+            assert_eq!(site.remove_route(PATHS[id]), Ok(slot.is_some()));
+            if let Some(slot) = slot {
+                model[slot] = None;
+            }
+            check(&site, &model);
+            register(&mut site, &mut model, (id + 7) % 34, step % 2 == 0);
+        }
+        for id in 0..34 {
+            let slot = model
+                .iter()
+                .position(|row| row.is_some_and(|(p, _)| p == id));
+            assert_eq!(site.remove_route(PATHS[id]), Ok(slot.is_some()));
+            if let Some(slot) = slot {
+                model[slot] = None;
+            }
+            check(&site, &model);
+        }
+        assert!(site.is_empty());
+        register(&mut site, &mut model, 1, false); // root after complete drain
+    }
+
+    #[test]
+    fn linear_capacity_routes_match_legacy_slot_model() {
+        sequence::<0>();
+        sequence::<1>();
+        sequence::<4>();
+        sequence::<8>();
+    }
+
+    #[test]
+    fn indexed_capacity_routes_match_legacy_slot_model() {
+        sequence::<9>();
+        sequence::<16>();
+        sequence::<17>();
+        sequence::<32>();
+    }
+
+    #[test]
+    fn indexed_catalog_keeps_slot_order_metadata_and_explicit_precedence() {
+        static META: crate::link_format::Metadata<'static> = crate::link_format::Metadata {
+            resource_types: Some("sensor"),
+            interfaces: None,
+            content_formats: &[],
+            size_estimate: None,
+            observable: false,
+            extensions: &[],
+        };
+        let mut site = Site::<9>::new();
+        site.route("z", get(get_led))
+            .route("a/b", get(get_temp))
+            .route(&["a/b"], get(get_led))
+            .well_known_core();
+        site.set_discovery_metadata("a/b", Some(&META)).unwrap();
+        let identity = site.observe_resource(&["a", "b"]);
+        site.try_route("a/b", get(get_led)).unwrap();
+        site.remove_route("z").unwrap();
+        site.route(&[], get(get_temp));
+        assert_eq!(site.observe_resource(&["a", "b"]), identity);
+        assert_eq!(
+            dispatch_well_known(&site, &mut [0; 512]).payload(),
+            b"</>,</a/b>;rt=\"sensor\",</a%2Fb>"
+        );
+        site.route(".well-known/core", post(post_led));
+        assert_eq!(
+            dispatch_well_known(&site, &mut [0; 512]).code(),
+            Code::METHOD_NOT_ALLOWED
+        );
+        site.try_route(".well-known/core", get(get_led)).unwrap();
+        assert_eq!(dispatch_well_known(&site, &mut []).payload(), b"off");
+        site.remove_route(".well-known/core").unwrap();
+        assert_eq!(
+            dispatch_well_known(&site, &mut [0; 512]).payload(),
+            b"</>,</a/b>;rt=\"sensor\",</a%2Fb>"
+        );
+    }
+
+    #[test]
+    fn indexed_app_dispatch_and_custom_bypass_preserve_removal_recovery() {
+        let mut app = App::profile::<profiles::Constrained>()
+            .routes::<16>()
+            .block_wise::<false>()
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(Loopback::default())
+            .unwrap();
+        for path in &PATHS[..16] {
+            app.try_route(*path, get(get_led)).unwrap();
+        }
+        let identity = app.site.observe_resource(PATHS[15]);
+        let call = app.get("remote").to(PEER).send(0).unwrap();
+        assert_eq!(
+            app.remove_route(PATHS[15]),
+            Err(super::super::RouteRemovalError::Busy)
+        );
+        assert!(app.cancel(call));
+        assert!(app.take_response(call).unwrap().is_err());
+        assert_eq!(app.remove_route(PATHS[15]), Ok(true));
+        app.try_route(PATHS[15], get(get_temp)).unwrap();
+        assert_eq!(app.site.observe_resource(PATHS[15]), identity);
+        for (mid, (path, expected)) in [
+            (PATHS[0], &b"off"[..]),
+            (PATHS[7], &b"off"[..]),
+            (PATHS[15], &b"21.5"[..]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (wire, n) = encode_req_mid(Code::GET, path, &[], 100 + mid as u16);
+            app.transport_mut().inbox = Some((PEER, wire, n));
+            app.poll(1).unwrap();
+            let (_, bytes, n) = app.transport().last_send.unwrap();
+            assert_eq!(decode(&bytes[..n]).unwrap().payload(), expected);
+        }
+        let (wire, n) = encode_req_mid(Code::GET, PATHS[15], &[], 110);
+        app.transport_mut().inbox = Some((PEER, wire, n));
+        app.poll_with(2, |_, _| Response::content(b"custom"))
+            .unwrap();
+        let (_, bytes, n) = app.transport().last_send.unwrap();
+        assert_eq!(decode(&bytes[..n]).unwrap().payload(), b"custom");
+    }
+
+    struct AsyncIo(Loopback);
+    impl crate::storage::DatagramTransport for AsyncIo {
+        type Error = &'static str;
+    }
+    impl crate::storage::AsyncDatagramIo for AsyncIo {
+        async fn recv(&mut self, _: &mut [u8]) -> Result<(usize, Endpoint), Self::Error> {
+            core::future::pending().await
+        }
+        async fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
+            DatagramIo::send(&mut self.0, peer, bytes)
+        }
+    }
+    struct Timer;
+    impl crate::platform::AsyncTimer for Timer {
+        async fn wait_until(&mut self, _: u64) {
+            core::future::pending().await
+        }
+    }
+
+    fn async_round_trip(protected: bool) {
+        use core::future::Future;
+        use core::task::{Context, Poll, Waker};
+        let mut client = App::profile::<profiles::Constrained>()
+            .block_wise::<false>()
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(Loopback::default())
+            .unwrap();
+        let mut server = App::profile::<profiles::Constrained>()
+            .routes::<16>()
+            .block_wise::<false>()
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(AsyncIo(Loopback::default()))
+            .unwrap();
+        for path in &PATHS[..16] {
+            server.try_route(*path, get(get_led)).unwrap();
+        }
+        server.try_route(PATHS[15], get(get_temp)).unwrap();
+        #[cfg(feature = "oscore")]
+        if protected {
+            use crate::oscore::{DeriveParams, SecurityContext};
+            let make = |sender, recipient| {
+                SecurityContext::derive(DeriveParams {
+                    master_secret: &[3; 16],
+                    master_salt: &[],
+                    sender_id: sender,
+                    recipient_id: recipient,
+                    id_context: &[],
+                })
+                .unwrap()
+            };
+            client.set_oscore(&mut Some(make(&[1], &[2]))).unwrap();
+            server.set_oscore(&mut Some(make(&[2], &[1]))).unwrap();
+        }
+        #[cfg(not(feature = "oscore"))]
+        assert!(!protected);
+        let call = client.get(PATHS[15]).to(PEER).send(0).unwrap();
+        let (_, bytes, n) = client.transport().last_send.unwrap();
+        assert_eq!(decode(&bytes[..n]).unwrap().oscore().is_some(), protected);
+        let rx = server.engine.acquire_rx().unwrap();
+        server.engine.write_rx(rx, &bytes[..n], PEER).unwrap();
+        let mut clock = || Ok::<_, ()>(1);
+        let mut timer = Timer;
+        {
+            let mut progress =
+                core::pin::pin!(server.progress_async(1, &mut clock, &mut timer, 100));
+            assert!(matches!(
+                progress
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Ok(()))
+            ));
+        }
+        let (_, bytes, n) = server.transport().0.last_send.unwrap();
+        assert_eq!(decode(&bytes[..n]).unwrap().oscore().is_some(), protected);
+        client.transport_mut().inbox = Some((PEER, bytes, n));
+        client.poll(2).unwrap();
+        let response = client.take_response(call).unwrap().unwrap();
+        assert_eq!(response.code(), Code::CONTENT);
+        assert_eq!(response.payload(), b"21.5");
+        assert_eq!(server.engine.rx_occupied(), 0);
+        assert_eq!(server.engine.tx_occupied(), 0);
+    }
+
+    #[test]
+    fn indexed_generated_async_app_round_trip() {
+        async_round_trip(false);
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn indexed_generated_async_app_round_trip_is_authenticated() {
+        async_round_trip(true);
+    }
+}
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
