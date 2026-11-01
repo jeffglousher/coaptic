@@ -33,6 +33,17 @@ pub const RESPONSE_BODY: usize = 4096;
 /// [`Response::validate`] reports the error before App sends it.
 pub const LOCATION_MAX: usize = 8;
 
+const _: () = {
+    assert!(
+        core::mem::size_of::<Option<[&str; LOCATION_MAX]>>()
+            == core::mem::size_of::<[&str; LOCATION_MAX]>()
+    );
+    assert!(
+        core::mem::align_of::<Option<[&str; LOCATION_MAX]>>()
+            == core::mem::align_of::<[&str; LOCATION_MAX]>()
+    );
+};
+
 /// A response exceeds a payload or option bound, or contains an invalid option value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseError {
@@ -159,9 +170,10 @@ pub struct Response<'a, T: OwnedToken = Token> {
     peer: Option<Endpoint>,
     assembled: Option<&'a [u8]>,
     echo: Option<Echo>,
-    location_path: [&'a str; LOCATION_MAX],
+    // Reserve fixed backing without initializing absent Location metadata.
+    location_path: Option<[&'a str; LOCATION_MAX]>,
     location_path_len: u8,
-    location_query: [&'a str; LOCATION_MAX],
+    location_query: Option<[&'a str; LOCATION_MAX]>,
     location_query_len: u8,
     separate: bool,
     deferred: bool,
@@ -192,9 +204,9 @@ impl<'a, T: OwnedToken> Response<'a, T> {
             peer: None,
             assembled: None,
             echo: None,
-            location_path: [""; LOCATION_MAX],
+            location_path: None,
             location_path_len: 0,
-            location_query: [""; LOCATION_MAX],
+            location_query: None,
             location_query_len: 0,
             separate: false,
             deferred: false,
@@ -608,7 +620,14 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         {
             return self.invalid(ResponseError::LocationDotSegment);
         }
-        self.location_path[n] = segment;
+        match &mut self.location_path {
+            Some(values) => values[n] = segment,
+            None => {
+                let mut values = [""; LOCATION_MAX];
+                values[n] = segment;
+                self.location_path = Some(values);
+            }
+        }
         self.location_path_len += 1;
         self
     }
@@ -632,7 +651,14 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         if n >= LOCATION_MAX || query.len() > 255 {
             return self.invalid(ResponseError::LocationQueryBounds);
         }
-        self.location_query[n] = query;
+        match &mut self.location_query {
+            Some(values) => values[n] = query,
+            None => {
+                let mut values = [""; LOCATION_MAX];
+                values[n] = query;
+                self.location_query = Some(values);
+            }
+        }
         self.location_query_len += 1;
         self
     }
@@ -640,13 +666,19 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// Location-Path segments in insertion order.
     #[must_use]
     pub fn location_paths(&self) -> &[&str] {
-        &self.location_path[..usize::from(self.location_path_len)]
+        match &self.location_path {
+            Some(values) => &values[..usize::from(self.location_path_len)],
+            None => &[],
+        }
     }
 
     /// Location-Query values in insertion order.
     #[must_use]
     pub fn location_queries(&self) -> &[&str] {
-        &self.location_query[..usize::from(self.location_query_len)]
+        match &self.location_query {
+            Some(values) => &values[..usize::from(self.location_query_len)],
+            None => &[],
+        }
     }
 
     /// Defer application work accepted by [`super::App::poll_with`].
@@ -1269,5 +1301,346 @@ mod assembled_hold_tests {
         assert_eq!(full.payload(), &BORROWED);
         assert!(!full.payload_truncated());
         assert_eq!(full.payload_src_len(), 200);
+    }
+}
+
+#[cfg(test)]
+mod lazy_location_tests {
+    use super::*;
+    use crate::message::{TokenDecodeError, extended};
+    use core::mem::{align_of, size_of};
+
+    // The accepted eager Response fields, using the same Payload and private
+    // field types. Only the two Location array wrappers differ from Response.
+    #[allow(dead_code)]
+    struct EagerResponse<'a, T: OwnedToken = Token> {
+        invalid: Option<ResponseError>,
+        received_header: Option<crate::message::ParsedMessage<'a, T>>,
+        received_at_ms: Option<u64>,
+        code: Code,
+        payload: Payload<'a>,
+        content_format: Option<ContentFormat>,
+        etag: [u8; 8],
+        etag_len: u8,
+        max_age: Option<u32>,
+        observe: Option<u32>,
+        ty: Option<Type>,
+        token: Option<T>,
+        mid: Option<MessageId>,
+        peer: Option<Endpoint>,
+        assembled: Option<&'a [u8]>,
+        echo: Option<Echo>,
+        location_path: [&'a str; LOCATION_MAX],
+        location_path_len: u8,
+        location_query: [&'a str; LOCATION_MAX],
+        location_query_len: u8,
+        separate: bool,
+        deferred: bool,
+        fresh_piv: bool,
+        /// Length of the source before [`INLINE_PAYLOAD`] / [`RESPONSE_BODY`]
+        /// copy. Greater than [`Self::payload`] when truncated.
+        payload_src_len: usize,
+    }
+
+    #[derive(Clone, Copy)]
+    struct EagerLocations<'a> {
+        path: [&'a str; LOCATION_MAX],
+        path_len: usize,
+        query: [&'a str; LOCATION_MAX],
+        query_len: usize,
+        invalid: Option<ResponseError>,
+    }
+
+    impl<'a> EagerLocations<'a> {
+        fn new() -> Self {
+            Self {
+                path: [""; LOCATION_MAX],
+                path_len: 0,
+                query: [""; LOCATION_MAX],
+                query_len: 0,
+                invalid: None,
+            }
+        }
+
+        fn reject(&mut self, error: ResponseError) {
+            if self.invalid.is_none() {
+                self.invalid = Some(error);
+            }
+        }
+
+        fn path(&mut self, value: &'a str) {
+            if self.path_len >= LOCATION_MAX || value.len() > 255 {
+                self.reject(ResponseError::LocationPathBounds);
+                return;
+            }
+            if matches!(value, "." | "..") {
+                self.reject(ResponseError::LocationDotSegment);
+                return;
+            }
+            self.path[self.path_len] = value;
+            self.path_len += 1;
+        }
+
+        fn query(&mut self, value: &'a str) {
+            if self.query_len >= LOCATION_MAX || value.len() > 255 {
+                self.reject(ResponseError::LocationQueryBounds);
+                return;
+            }
+            self.query[self.query_len] = value;
+            self.query_len += 1;
+        }
+
+        fn check(&self, response: &Response<'_, Token>) {
+            assert_eq!(response.location_paths(), &self.path[..self.path_len]);
+            assert_eq!(response.location_queries(), &self.query[..self.query_len]);
+            assert_eq!(response.location_path_len as usize, self.path_len);
+            assert_eq!(response.location_query_len as usize, self.query_len);
+            assert_eq!(response.validate(), self.invalid.map_or(Ok(()), Err));
+        }
+    }
+
+    #[test]
+    fn ordinary_response_keeps_location_backing_absent() {
+        for response in [
+            Response::<Token>::new(Code::CONTENT),
+            Response::<Token>::content(b"representation")
+                .content_format(ContentFormat::OCTET_STREAM)
+                .etag(b"fixture"),
+            Response::<Token>::not_found(),
+        ] {
+            assert!(response.location_path.is_none());
+            assert!(response.location_query.is_none());
+            assert_eq!(response.location_path_len, 0);
+            assert_eq!(response.location_query_len, 0);
+            assert!(response.location_paths().is_empty());
+            assert!(response.location_queries().is_empty());
+            assert_eq!(response.validate(), Ok(()));
+        }
+    }
+
+    #[test]
+    fn lazy_locations_match_eager_bounds_prefixes_and_sticky_errors() {
+        let max_bytes = [b'x'; 255];
+        let over_bytes = [b'y'; 256];
+        let max = core::str::from_utf8(&max_bytes).unwrap();
+        let over = core::str::from_utf8(&over_bytes).unwrap();
+        let values = ["", "segment", ".", "..", "a=b", max, over];
+        for first in values {
+            for second in values {
+                let mut response = Response::<Token>::created();
+                let mut eager = EagerLocations::new();
+                for (is_path, value) in [
+                    (true, first),
+                    (false, second),
+                    (true, second),
+                    (false, first),
+                ] {
+                    response = if is_path {
+                        eager.path(value);
+                        response.location_path(value)
+                    } else {
+                        eager.query(value);
+                        response.location_query(value)
+                    };
+                    eager.check(&response);
+                }
+                for _ in 0..=LOCATION_MAX {
+                    response = response.location_path("tail").location_query("");
+                    eager.path("tail");
+                    eager.query("");
+                    eager.check(&response);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lazy_locations_keep_first_empty_value_and_independent_backing() {
+        let path = Response::<Token>::created().location_path("");
+        assert!(path.location_path.is_some());
+        assert!(path.location_query.is_none());
+        assert_eq!(path.location_paths(), &[""]);
+        assert!(path.location_queries().is_empty());
+        let query = Response::<Token>::created().location_query("");
+        assert!(query.location_path.is_none());
+        assert!(query.location_query.is_some());
+        assert!(query.location_paths().is_empty());
+        assert_eq!(query.location_queries(), &[""]);
+        let both = path.location_query("").location_path("next");
+        assert_eq!(both.location_paths(), &["", "next"]);
+        assert_eq!(both.location_queries(), &[""]);
+        assert_eq!(both.validate(), Ok(()));
+    }
+
+    #[test]
+    fn invalid_first_location_does_not_materialize_backing() {
+        let over_bytes = [b'y'; 256];
+        let over = core::str::from_utf8(&over_bytes).unwrap();
+        for (value, error) in [
+            (".", ResponseError::LocationDotSegment),
+            ("..", ResponseError::LocationDotSegment),
+            (over, ResponseError::LocationPathBounds),
+        ] {
+            let invalid = Response::<Token>::created().location_path(value);
+            assert!(invalid.location_path.is_none());
+            assert!(invalid.location_query.is_none());
+            assert_eq!(invalid.validate(), Err(error));
+            let appended = invalid.location_path("valid").location_query("q=1");
+            assert_eq!(appended.location_paths(), &["valid"]);
+            assert_eq!(appended.location_queries(), &["q=1"]);
+            assert_eq!(appended.validate(), Err(error));
+        }
+        let invalid = Response::<Token>::created().location_query(over);
+        assert!(invalid.location_query.is_none());
+        assert!(invalid.location_path.is_none());
+        let appended = invalid.location_query("").location_path(".");
+        assert_eq!(appended.location_queries(), &[""]);
+        assert!(appended.location_path.is_none());
+        assert_eq!(appended.validate(), Err(ResponseError::LocationQueryBounds));
+    }
+
+    #[test]
+    fn lazy_location_const_builders_preserve_valid_and_invalid_metadata() {
+        const EMPTY: Response<'static> = Response::new(Code::CONTENT);
+        const LOCATED: Response<'static> = Response::created()
+            .location_path("")
+            .location_path("next")
+            .location_query("")
+            .location_query("a=b");
+        const INVALID: Response<'static> = Response::created()
+            .location_path("..")
+            .location_path("kept")
+            .location_query("q=1");
+        assert!(EMPTY.location_path.is_none());
+        assert!(EMPTY.location_query.is_none());
+        assert_eq!(LOCATED.location_paths(), &["", "next"]);
+        assert_eq!(LOCATED.location_queries(), &["", "a=b"]);
+        assert_eq!(LOCATED.validate(), Ok(()));
+        assert_eq!(INVALID.location_paths(), &["kept"]);
+        assert_eq!(INVALID.location_queries(), &["q=1"]);
+        assert_eq!(INVALID.validate(), Err(ResponseError::LocationDotSegment));
+    }
+
+    #[test]
+    fn lazy_locations_survive_copy_clone_payload_and_received_header_updates() {
+        fn cloned<T: Clone>(value: &T) -> T {
+            value.clone()
+        }
+        fn copied<T: Copy>(value: T) -> T {
+            value
+        }
+        let wire = [
+            0x61, 0x45, 0x12, 0x34, 0xaa, 0x84, b'w', b'i', b'r', b'e', 0xc3, b'q', b'=', b'1',
+            0xff, b'B',
+        ];
+        let header = crate::message::decode(&wire).unwrap();
+        let original = Response::<Token>::created()
+            .location_path("")
+            .location_path("retained")
+            .location_query("x=1")
+            .with_received_header(header, 77);
+        for response in [copied(original), cloned(&original)] {
+            for updated in [
+                response.with_static(b"static"),
+                response.payload_copy(b"inline"),
+                response.payload_borrowed(b"borrowed"),
+                response.with_received_header(header, 88),
+            ] {
+                assert_eq!(updated.location_paths(), &["", "retained"]);
+                assert_eq!(updated.location_queries(), &["x=1"]);
+                assert_eq!(updated.validate(), Ok(()));
+                let retained = updated.received_header.unwrap();
+                assert_eq!(retained.header(), header.header());
+                assert_eq!(retained.token(), header.token());
+                assert_eq!(retained.payload(), b"B");
+                assert!(matches!(updated.received_at_ms(), Some(77 | 88)));
+                assert_eq!(updated.received_options().count(), 2);
+                assert!(updated.received_options().eq(header.options()));
+            }
+        }
+        assert_eq!(original.location_paths(), &["", "retained"]);
+        assert_eq!(original.location_queries(), &["x=1"]);
+        assert_eq!(original.received_at_ms(), Some(77));
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+    struct TinyToken {
+        byte: [u8; 1],
+        len: u8,
+    }
+
+    impl OwnedToken for TinyToken {
+        const EMPTY: Self = Self { byte: [0], len: 0 };
+        const MAX_LEN: usize = 1;
+
+        fn try_from_bytes(bytes: &[u8]) -> Result<Self, extended::CapacityError> {
+            let mut token = Self::try_zeroed(bytes.len())?;
+            token.as_bytes_mut().copy_from_slice(bytes);
+            Ok(token)
+        }
+
+        fn try_zeroed(len: usize) -> Result<Self, extended::CapacityError> {
+            if len > Self::MAX_LEN {
+                return Err(extended::CapacityError {
+                    required: len,
+                    available: Self::MAX_LEN,
+                });
+            }
+            Ok(Self {
+                len: len as u8,
+                ..Self::EMPTY
+            })
+        }
+
+        fn as_bytes_mut(&mut self) -> &mut [u8] {
+            &mut self.byte[..usize::from(self.len)]
+        }
+
+        fn as_bytes(&self) -> &[u8] {
+            &self.byte[..usize::from(self.len)]
+        }
+    }
+
+    fn no_layout_growth<Current, Eager>() {
+        assert!(size_of::<Current>() <= size_of::<Eager>());
+        assert_eq!(align_of::<Current>(), align_of::<Eager>());
+    }
+
+    fn check_response_layout<T: OwnedToken>() {
+        type Error = ResponseError;
+        no_layout_growth::<Response<'static, T>, EagerResponse<'static, T>>();
+        no_layout_growth::<Option<Response<'static, T>>, Option<EagerResponse<'static, T>>>();
+        no_layout_growth::<
+            Result<Response<'static, T>, Error>,
+            Result<EagerResponse<'static, T>, Error>,
+        >();
+        no_layout_growth::<
+            Result<Option<Response<'static, T>>, Error>,
+            Result<Option<EagerResponse<'static, T>>, Error>,
+        >();
+        no_layout_growth::<
+            Option<Result<Response<'static, T>, Error>>,
+            Option<Result<EagerResponse<'static, T>, Error>>,
+        >();
+        no_layout_growth::<
+            Result<Response<'static, T>, TokenDecodeError>,
+            Result<EagerResponse<'static, T>, TokenDecodeError>,
+        >();
+    }
+
+    #[test]
+    fn lazy_response_locations_preserve_whole_object_layouts() {
+        assert_eq!(LOCATION_MAX, 8);
+        assert_eq!(INLINE_PAYLOAD, 128);
+        assert_eq!(RESPONSE_BODY, 4096);
+        assert_eq!(size_of::<TinyToken>(), 2);
+        check_response_layout::<Token>();
+        check_response_layout::<TinyToken>();
+        check_response_layout::<extended::Token<0>>();
+        check_response_layout::<extended::Token<1>>();
+        check_response_layout::<extended::Token<8>>();
+        check_response_layout::<extended::Token<16>>();
+        check_response_layout::<extended::Token<64>>();
+        check_response_layout::<extended::Token<512>>();
     }
 }
