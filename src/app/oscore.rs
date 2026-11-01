@@ -494,7 +494,6 @@ pub(crate) fn encode_generated<'a, S: Storage + DatagramSlots, E, const R: usize
 ///
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to unprotected traffic.
-#[cfg(test)]
 pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS, S::Token>,
     peer: Endpoint,

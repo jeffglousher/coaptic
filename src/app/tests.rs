@@ -16400,6 +16400,7 @@ fn generated_response_matches_legacy_builder_metadata_and_tx() {
                 assert_eq!(parts.encode(&mut a[..cut]), legacy.encode(&mut b[..cut]));
                 assert_eq!(a, b);
             }
+            drop(access);
             #[cfg(feature = "diagnostics")]
             assert_eq!(
                 actual.work_metrics().tx_payload_encoded_bytes,
