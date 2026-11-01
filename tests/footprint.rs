@@ -67,6 +67,9 @@ const OBSERVE_FORMAT_BUDGET: usize = 4 * 8;
 // Each route borrows one static discovery descriptor; descriptor contents stay
 // caller-owned. Independent whole-App ceilings above remain unchanged.
 const DISCOVERY_METADATA_BUDGET: usize = DEFAULT_ROUTES * size_of::<usize>();
+// The sorted request-route permutation retains one stable-slot byte per route.
+// This is explicit routing metadata; independent whole-App ceilings stay fixed.
+const ROUTE_INDEX_BUDGET: usize = size_of::<[u8; DEFAULT_ROUTES]>();
 
 // Complete-response retention adds one optional RX slot identity per Call.
 // App also retains the deferred generation/deadline, retention flag and padding;
@@ -105,9 +108,10 @@ fn assert_datagram_omits_assembled(
                 + RETAINED_CONDITIONS_BUDGET
                 + OBSERVE_FORMAT_BUDGET
                 + DISCOVERY_METADATA_BUDGET
+                + ROUTE_INDEX_BUDGET
                 + FULL_RESPONSE_STATE_BUDGET
                 + SECURITY_CONTEXT_BUDGET,
-        "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
+        "datagram App must not carry an assembled body beyond its bounded query/response/cancellation/condition/routing metadata (App {datagram_app}, Memory {datagram_mem}, overhead {overhead})"
     );
     let mem_delta = block_wise_mem - datagram_mem;
     let app_delta = block_wise_app - datagram_app;
