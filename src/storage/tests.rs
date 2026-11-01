@@ -6295,7 +6295,9 @@ mod incoming_rx_borrow {
         e.storage_mut().rx_body_mut().unpin(old).unwrap();
         assert!(e.apply_block1_rx(rx).unwrap().complete());
     }
-    fn no_pool_order<S: Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
+    fn no_pool_order<
+        S: Storage<Token = Token> + DatagramSlots + crate::storage::IncomingRxSlots,
+    >(
         mut e: Engine<S>,
     ) {
         let invalid = SlotId::from_index(usize::MAX);
@@ -6375,7 +6377,7 @@ mod incoming_rx_borrow {
                 .unwrap(),
         );
     }
-    fn variants<S: Storage<Token = Token> + DatagramSlots + super::IncomingRxSlots>(
+    fn variants<S: Storage<Token = Token> + DatagramSlots + crate::storage::IncomingRxSlots>(
         mut e: Engine<S>,
     ) {
         for kind in 0..6 {
