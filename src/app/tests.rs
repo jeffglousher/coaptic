@@ -16081,3 +16081,534 @@ fn admission_failed_completion_releases_rx_credit_before_collection() {
     assert!(app.take_response(failed).unwrap().is_err());
     assert!(app.cancel(next));
 }
+
+// These differential oracles retain the owned-row routines from c655b3a. They
+// intentionally preserve key-based removal even when duplicate keys occupy
+// different slots; the selected pin and the removed row need not share a slot.
+mod dedup_retirement {
+    use super::super::DedupClosed;
+    use super::{DedupEntry, DedupKey, Endpoint, Message, MessageId, encode, profiles};
+    use crate::storage::{
+        Capacities, DatagramSlots, DedupSlots, Engine, Memory, SlotId, SlotPool, Storage,
+    };
+
+    fn baseline_release_existing_dedup<S: Storage + DedupSlots>(
+        engine: &mut Engine<S>,
+        key: DedupKey,
+    ) {
+        let Some(id) = engine.lookup_dedup(key) else {
+            return;
+        };
+        if let Some(old) = engine.dedup_entry(id) {
+            baseline_release_dedup_row(engine, old);
+        } else {
+            let _ = engine.remove_dedup(key);
+        }
+    }
+
+    fn baseline_release_dedup_row<S: Storage + DedupSlots>(
+        engine: &mut Engine<S>,
+        entry: DedupEntry,
+    ) {
+        if let Some(pin) = entry.tx_pin() {
+            let _ = engine.release_tx(pin);
+        }
+        let _ = engine.remove_dedup(entry.key());
+    }
+
+    fn baseline_expire_request_dedup<S: Storage + DedupSlots>(
+        engine: &mut Engine<S>,
+        dedup_closed: &mut Option<DedupClosed>,
+        now_ms: u64,
+    ) {
+        if let Some(closed) = *dedup_closed
+            && closed.due_ms != 0
+            && now_ms >= closed.due_ms
+        {
+            *dedup_closed = None;
+        }
+        if engine.storage_mut().dedup().is_empty() {
+            return;
+        }
+        let n = engine.capacities().dedup_entries;
+        for i in 0..n {
+            let Some(entry) = engine
+                .dedup_entry_ref(SlotId::from_index(i))
+                .filter(|entry| entry.due_ms() != 0 && now_ms >= entry.due_ms())
+                .copied()
+            else {
+                continue;
+            };
+            baseline_release_dedup_row(engine, entry);
+        }
+    }
+
+    fn baseline_evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
+        let n = engine.capacities().dedup_entries;
+        let mut best: Option<DedupEntry> = None;
+        for i in 0..n {
+            let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+                continue;
+            };
+            if entry.tx_pin().is_none() || entry.due_ms() == 0 {
+                continue;
+            }
+            match best {
+                Some(cur) if entry.due_ms() >= cur.due_ms() => {}
+                _ => best = Some(entry),
+            }
+        }
+        let Some(entry) = best else {
+            return false;
+        };
+        if let Some(pin) = entry.tx_pin() {
+            let _ = engine.release_tx(pin);
+        }
+        let _ = engine.remove_dedup(entry.key());
+        let mut buf = [0u8; 16];
+        if let Ok(n) = encode(&Message::empty_ack(entry.message_id()), &mut buf) {
+            let row = DedupEntry::new(entry.message_id(), entry.endpoint())
+                .with_due_ms(entry.due_ms())
+                .with_replay(&buf[..n]);
+            let _ = engine.insert_dedup(row);
+        }
+        true
+    }
+
+    fn baseline_evict_oldest_app_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
+        let n = engine.capacities().dedup_entries;
+        let mut best: Option<DedupEntry> = None;
+        for i in 0..n {
+            let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+                continue;
+            };
+            if entry.due_ms() == 0 {
+                continue;
+            }
+            match best {
+                Some(cur) if entry.due_ms() >= cur.due_ms() => {}
+                _ => best = Some(entry),
+            }
+        }
+        let Some(entry) = best else {
+            return false;
+        };
+        baseline_release_dedup_row(engine, entry);
+        true
+    }
+
+    fn key(index: usize) -> DedupKey {
+        let peer = Endpoint::v6_scoped([0x42; 16], 5683, 7);
+        #[cfg(feature = "oscore")]
+        let peer = peer.with_association(19);
+        DedupKey::new(MessageId::new(400 + index as u16), peer)
+    }
+
+    fn seed<S: Storage + DatagramSlots + DedupSlots>(engine: &mut Engine<S>, pattern: usize) {
+        let n = engine.capacities().dedup_entries;
+        if pattern == 0 {
+            return;
+        }
+        let count = if pattern == 1 { n / 2 } else { n };
+        for i in 0..count {
+            if pattern == 5 && i == 0 {
+                engine.storage_mut().dedup().acquire().unwrap();
+                continue;
+            }
+            let due = match pattern {
+                1 => 0,
+                2 => 100,
+                3 => [90, 20, 20, 70][i % 4],
+                4 => u64::MAX,
+                _ if i == 1 => 0,
+                _ => 10 + i as u64,
+            };
+            let k = key(i);
+            let mut entry = DedupEntry::new(k.message_id(), k.endpoint())
+                .with_due_ms(due)
+                .with_replay(&[0x80 + i as u8; DedupEntry::REPLAY_MAX]);
+            if i == 1 || i == 2 {
+                let tx = engine.acquire_tx().unwrap();
+                engine
+                    .write_tx(tx, &[0x20 + i as u8; 37], k.endpoint())
+                    .unwrap();
+                entry = entry.with_tx_pin(tx);
+            }
+            engine.insert_dedup(entry).unwrap();
+        }
+    }
+
+    fn assert_same<S: Storage + DatagramSlots + DedupSlots>(a: &mut Engine<S>, b: &mut Engine<S>) {
+        assert_eq!(a.capacities(), b.capacities());
+        assert_eq!(a.metrics(), b.metrics());
+        assert_eq!(a.storage_usage(), b.storage_usage());
+        assert_eq!(
+            a.storage_mut().dedup().cursor(),
+            b.storage_mut().dedup().cursor()
+        );
+        for i in 0..a.capacities().dedup_entries {
+            let id = SlotId::from_index(i);
+            assert_eq!(a.dedup_entry(id), b.dedup_entry(id), "row {i}");
+            assert_eq!(
+                a.storage_mut().dedup().is_occupied(id),
+                b.storage_mut().dedup().is_occupied(id),
+                "occupied row {i}"
+            );
+        }
+        assert_eq!(a.tx_cursor(), b.tx_cursor());
+        for i in 0..a.capacities().tx_datagram_slots {
+            let id = SlotId::from_index(i);
+            assert_eq!(
+                a.storage_mut().tx_datagram().is_occupied(id),
+                b.storage_mut().tx_datagram().is_occupied(id)
+            );
+            assert_eq!(a.tx_is_pinned(id), b.tx_is_pinned(id));
+            assert_eq!(a.storage().tx_payload(id), b.storage().tx_payload(id));
+            assert_eq!(a.tx_endpoint(id), b.tx_endpoint(id));
+        }
+    }
+
+    fn assert_same_reuse<S: Storage + DatagramSlots + DedupSlots>(
+        a: &mut Engine<S>,
+        b: &mut Engine<S>,
+    ) {
+        for _ in 0..=a.capacities().dedup_entries {
+            assert_eq!(
+                a.storage_mut().dedup().acquire(),
+                b.storage_mut().dedup().acquire()
+            );
+        }
+        for _ in 0..=a.capacities().tx_datagram_slots {
+            assert_eq!(a.acquire_tx(), b.acquire_tx());
+        }
+        assert_same(a, b);
+    }
+
+    fn matrix<S: Storage + DatagramSlots + DedupSlots>(make: impl Fn() -> Engine<S>) {
+        for pattern in 0..6 {
+            for operation in 0..10 {
+                let (mut a, mut b) = (make(), make());
+                seed(&mut a, pattern);
+                seed(&mut b, pattern);
+                assert_same(&mut a, &mut b);
+                match operation {
+                    0 => assert_eq!(
+                        baseline_evict_oldest_app_dedup(&mut a),
+                        super::super::evict_oldest_app_dedup(&mut b)
+                    ),
+                    1 => assert_eq!(
+                        baseline_evict_one_dedup_pin(&mut a),
+                        super::super::evict_one_dedup_pin(&mut b)
+                    ),
+                    2..=7 => {
+                        let now = [0, 19, 20, 99, 100, u64::MAX][operation - 2];
+                        for due in [0, 20, u64::MAX] {
+                            let mut closed_a = Some(DedupClosed {
+                                key: key(99),
+                                due_ms: due,
+                            });
+                            let mut closed_b = closed_a;
+                            baseline_expire_request_dedup(&mut a, &mut closed_a, now);
+                            super::super::expire_request_dedup(&mut b, &mut closed_b, now);
+                            assert_eq!(
+                                closed_a.map(|c| (c.key, c.due_ms)),
+                                closed_b.map(|c| (c.key, c.due_ms))
+                            );
+                            assert_same(&mut a, &mut b);
+                        }
+                    }
+                    _ => {
+                        let k = key(if operation == 8 { 1 } else { 99 });
+                        baseline_release_existing_dedup(&mut a, k);
+                        super::super::release_existing_dedup(&mut b, k);
+                    }
+                }
+                assert_same(&mut a, &mut b);
+                assert_same_reuse(&mut a, &mut b);
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_retirement_matches_owned_row_baseline() {
+        matrix(|| Engine::from_storage(Memory::<profiles::Constrained>::new()));
+        matrix(|| Engine::from_storage(Memory::<profiles::Default>::new()));
+    }
+
+    #[test]
+    fn zero_capacity_retirement_matches_owned_row_baseline() {
+        type Zero = profiles::WithDedup<profiles::Constrained, 0>;
+        matrix(|| Engine::from_storage(Memory::<Zero>::new()));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn allocated_retirement_matches_owned_row_baseline() {
+        for c in [
+            Capacities::from_profile::<profiles::Constrained>(),
+            Capacities::from_profile::<profiles::Default>(),
+        ] {
+            matrix(|| {
+                Engine::from_storage(
+                    crate::storage::AllocMemory::<crate::message::Token>::try_new(c, 64 * 1024)
+                        .unwrap(),
+                )
+            });
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn allocated_zero_capacity_retirement_matches_owned_row_baseline() {
+        matrix(|| {
+            let c = Capacities {
+                dedup_entries: 0,
+                ..Capacities::from_profile::<profiles::Constrained>()
+            };
+            Engine::from_storage(
+                crate::storage::AllocMemory::<crate::message::Token>::try_new(c, 64 * 1024)
+                    .unwrap(),
+            )
+        });
+    }
+
+    fn duplicate_fixture() -> Engine<Memory<profiles::Constrained>> {
+        let mut engine = Engine::from_storage(Memory::<profiles::Constrained>::new());
+        for i in 0..2 {
+            let tx = engine.acquire_tx().unwrap();
+            engine
+                .write_tx(tx, &[0x50 + i as u8; 31], key(0).endpoint())
+                .unwrap();
+            let row = DedupEntry::new(key(0).message_id(), key(0).endpoint())
+                .with_due_ms(if i == 0 { 200 } else { 100 })
+                .with_tx_pin(tx);
+            let id = engine.storage_mut().dedup_mut().acquire().unwrap();
+            engine.storage_mut().dedup_mut().set_entry(id, row).unwrap();
+        }
+        engine
+    }
+
+    #[test]
+    fn duplicate_key_retirement_releases_selected_pin_but_removes_first_key() {
+        for operation in 0..3 {
+            let (mut a, mut b) = (duplicate_fixture(), duplicate_fixture());
+            let (old_result, new_result) = match operation {
+                0 => (
+                    baseline_evict_one_dedup_pin(&mut a),
+                    super::super::evict_one_dedup_pin(&mut b),
+                ),
+                1 => (
+                    baseline_evict_oldest_app_dedup(&mut a),
+                    super::super::evict_oldest_app_dedup(&mut b),
+                ),
+                _ => {
+                    baseline_expire_request_dedup(&mut a, &mut None, 100);
+                    super::super::expire_request_dedup(&mut b, &mut None, 100);
+                    (true, true)
+                }
+            };
+            assert_eq!((old_result, new_result), (true, true));
+            assert_same(&mut a, &mut b);
+            assert!(b.dedup_entry(SlotId::from_index(0)).is_none());
+            let survivor = b.dedup_entry(SlotId::from_index(1)).unwrap();
+            assert_eq!(survivor.due_ms(), 100);
+            assert_eq!(survivor.tx_pin(), Some(SlotId::from_index(1)));
+            assert!(
+                b.storage_mut()
+                    .tx_datagram()
+                    .is_occupied(SlotId::from_index(0))
+            );
+            assert!(
+                !b.storage_mut()
+                    .tx_datagram()
+                    .is_occupied(SlotId::from_index(1))
+            );
+            assert_same_reuse(&mut a, &mut b);
+        }
+    }
+
+    #[test]
+    fn failed_pin_release_preserves_owned_row_retirement_behavior() {
+        for downgrade in [false, true] {
+            let (mut a, mut b) = (duplicate_fixture(), duplicate_fixture());
+            a.storage_mut()
+                .tx_datagram_mut()
+                .pin(SlotId::from_index(1))
+                .unwrap();
+            b.storage_mut()
+                .tx_datagram_mut()
+                .pin(SlotId::from_index(1))
+                .unwrap();
+            if downgrade {
+                assert_eq!(
+                    baseline_evict_one_dedup_pin(&mut a),
+                    super::super::evict_one_dedup_pin(&mut b)
+                );
+            } else {
+                assert_eq!(
+                    baseline_evict_oldest_app_dedup(&mut a),
+                    super::super::evict_oldest_app_dedup(&mut b)
+                );
+            }
+            assert_same(&mut a, &mut b);
+            assert!(b.tx_is_pinned(SlotId::from_index(1)));
+            assert_eq!(b.tx_occupied(), 2, "release refusal remains ignored");
+            a.storage_mut()
+                .tx_datagram_mut()
+                .unpin(SlotId::from_index(1))
+                .unwrap();
+            b.storage_mut()
+                .tx_datagram_mut()
+                .unpin(SlotId::from_index(1))
+                .unwrap();
+            assert_same_reuse(&mut a, &mut b);
+        }
+    }
+
+    // A forwarding backend needs only Storage + DedupSlots for these routines.
+    // It injects missing-payload and remove refusals without implementing the
+    // unrelated protocol traits. Removal checks the real TX pool at the exact
+    // call boundary, so reversing release/remove order fails this assertion.
+    struct RefusingRemoval {
+        inner: Memory<profiles::Constrained>,
+        missing_payload: bool,
+        refuse_remove: bool,
+        selected_pin: Option<SlotId>,
+        removes: usize,
+    }
+
+    impl Storage for RefusingRemoval {
+        type Token = crate::message::Token;
+        fn capacities(&self) -> Capacities {
+            self.inner.capacities()
+        }
+        fn rx_datagram(&mut self) -> &mut dyn SlotPool {
+            Storage::rx_datagram(&mut self.inner)
+        }
+        fn tx_datagram(&mut self) -> &mut dyn SlotPool {
+            Storage::tx_datagram(&mut self.inner)
+        }
+        fn dedup(&mut self) -> &mut dyn SlotPool {
+            Storage::dedup(&mut self.inner)
+        }
+        fn observe(&mut self) -> &mut dyn SlotPool {
+            Storage::observe(&mut self.inner)
+        }
+        fn rx_body(&mut self) -> Option<&mut dyn SlotPool> {
+            Storage::rx_body(&mut self.inner)
+        }
+        fn tx_body(&mut self) -> Option<&mut dyn SlotPool> {
+            Storage::tx_body(&mut self.inner)
+        }
+    }
+
+    impl DedupSlots for RefusingRemoval {
+        fn insert_dedup(&mut self, row: DedupEntry) -> Option<SlotId> {
+            self.inner.insert_dedup(row)
+        }
+        fn lookup_dedup(&self, k: DedupKey) -> Option<SlotId> {
+            self.inner.lookup_dedup(k)
+        }
+        fn remove_dedup(&mut self, k: DedupKey) -> bool {
+            self.removes += 1;
+            if let Some(pin) = self.selected_pin {
+                assert!(
+                    !self.inner.tx_datagram().is_occupied(pin),
+                    "release precedes removal"
+                );
+            }
+            !self.refuse_remove && self.inner.remove_dedup(k)
+        }
+        fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
+            if self.missing_payload {
+                None
+            } else {
+                self.inner.dedup_entry_ref(id)
+            }
+        }
+    }
+
+    fn refusal_fixture(missing_payload: bool, refuse_remove: bool) -> Engine<RefusingRemoval> {
+        let mut inner = Memory::<profiles::Constrained>::new();
+        let pin = inner.tx_datagram_mut().acquire().unwrap();
+        inner
+            .tx_datagram_mut()
+            .write(pin, &[0x76; 64], key(0).endpoint())
+            .unwrap();
+        inner
+            .insert_dedup(
+                DedupEntry::new(key(0).message_id(), key(0).endpoint())
+                    .with_due_ms(100)
+                    .with_tx_pin(pin),
+            )
+            .unwrap();
+        Engine::from_storage(RefusingRemoval {
+            inner,
+            missing_payload,
+            refuse_remove,
+            selected_pin: if missing_payload { None } else { Some(pin) },
+            removes: 0,
+        })
+    }
+
+    #[test]
+    fn custom_missing_payload_fallback_and_remove_refusal_match_baseline() {
+        for missing in [false, true] {
+            for refuse in [false, true] {
+                for operation in 0..4 {
+                    let (mut a, mut b) = (
+                        refusal_fixture(missing, refuse),
+                        refusal_fixture(missing, refuse),
+                    );
+                    match operation {
+                        0 => {
+                            baseline_release_existing_dedup(&mut a, key(0));
+                            super::super::release_existing_dedup(&mut b, key(0));
+                        }
+                        1 => assert_eq!(
+                            baseline_evict_oldest_app_dedup(&mut a),
+                            super::super::evict_oldest_app_dedup(&mut b)
+                        ),
+                        2 => assert_eq!(
+                            baseline_evict_one_dedup_pin(&mut a),
+                            super::super::evict_one_dedup_pin(&mut b)
+                        ),
+                        _ => {
+                            baseline_expire_request_dedup(&mut a, &mut None, 100);
+                            super::super::expire_request_dedup(&mut b, &mut None, 100);
+                        }
+                    }
+                    let removed = !missing || operation == 0;
+                    assert_eq!(a.storage().removes, usize::from(removed));
+                    assert_eq!(b.storage().removes, usize::from(removed));
+                    assert_eq!(a.lookup_dedup(key(0)), b.lookup_dedup(key(0)));
+                    assert_eq!(
+                        b.lookup_dedup(key(0)).is_some(),
+                        refuse || !removed || operation == 2
+                    );
+                    assert_eq!(a.tx_occupied(), b.tx_occupied());
+                    assert_eq!(b.tx_occupied(), usize::from(missing));
+                    assert_eq!(
+                        a.storage().inner.dedup().entry(SlotId::from_index(0)),
+                        b.storage().inner.dedup().entry(SlotId::from_index(0)),
+                    );
+                    assert_eq!(
+                        a.storage_mut().dedup().cursor(),
+                        b.storage_mut().dedup().cursor()
+                    );
+                    assert_eq!(a.tx_cursor(), b.tx_cursor());
+                    assert_eq!(
+                        a.storage()
+                            .inner
+                            .tx_datagram()
+                            .payload(SlotId::from_index(0)),
+                        b.storage()
+                            .inner
+                            .tx_datagram()
+                            .payload(SlotId::from_index(0))
+                    );
+                }
+            }
+        }
+    }
+}
