@@ -136,14 +136,15 @@ struct Entry<T: OwnedToken = Token> {
 /// payload buffer is added to the Site or its discovery scratch.
 /// `T` selects the handlers' token type. The Site stores function pointers,
 /// so choosing larger token storage does not enlarge the routing table.
-/// A private route index adds `N * size_of::<usize>()` bytes of inline backing,
-/// including at small capacities that retain linear request lookup. Enclosing
+/// A private route index adds `N` bytes of inline backing,
+/// including at capacities that retain linear request lookup. Capacities above
+/// 256 routes use linear lookup so every stable slot remains representable. Enclosing
 /// object padding and runtime costs require separate qualification.
 pub struct Site<const N: usize = DEFAULT_ROUTES, T: OwnedToken = Token> {
     entries: [Option<Entry<T>>; N],
     // The occupied prefix is a sorted permutation of occupied stable slots.
     // Entries stay in place for resource identities and discovery catalog order.
-    route_order: [usize; N],
+    route_order: [u8; N],
     len: usize,
     well_known: bool,
 }
@@ -284,10 +285,13 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
             .iter()
             .position(Option::is_none)
             .ok_or(RouteError::Full)?;
-        let position = self.route_lower_bound(path.segments());
-        self.route_order
-            .copy_within(position..self.len, position + 1);
-        self.route_order[position] = index;
+        if N <= 256 {
+            let position = self.route_lower_bound(path.segments());
+            self.route_order
+                .copy_within(position..self.len, position + 1);
+            // N <= 256 and index < N; all stable slots fit without truncation.
+            self.route_order[position] = index as u8;
+        }
         self.entries[index] = Some(Entry {
             path,
             methods,
@@ -327,12 +331,14 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
             return false;
         };
         self.entries[index] = None;
-        let position = self.route_order[..self.len]
-            .iter()
-            .position(|&slot| slot == index)
-            .expect("occupied route is indexed");
-        self.route_order
-            .copy_within(position + 1..self.len, position);
+        if N <= 256 {
+            let position = self.route_order[..self.len]
+                .iter()
+                .position(|&slot| usize::from(slot) == index)
+                .expect("occupied route is indexed");
+            self.route_order
+                .copy_within(position + 1..self.len, position);
+        }
         self.len -= 1;
         true
     }
@@ -372,7 +378,7 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
         catalog: impl FnOnce() -> &'a mut [u8],
     ) -> Response<'a, T> {
         // Small sites keep the direct scan; the index serves larger tables.
-        if N <= 8 {
+        if N <= 8 || N > 256 {
             for entry in self.entries.iter().flatten() {
                 if !entry.path.matches(request.path()) {
                     continue;
@@ -401,7 +407,7 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
     // or decoding wire bytes again. partition_point uses constant scratch.
     fn route_lower_bound(&self, segments: &[&str]) -> usize {
         self.route_order[..self.len].partition_point(|&slot| {
-            let path = self.entries[slot]
+            let path = self.entries[usize::from(slot)]
                 .as_ref()
                 .expect("indexed route is occupied")
                 .path
@@ -422,7 +428,7 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
         }
         let position = self.route_lower_bound(segments);
         let &slot = self.route_order[..self.len].get(position)?;
-        self.entries[slot]
+        self.entries[usize::from(slot)]
             .as_ref()
             .filter(|entry| entry.path.matches(segments))
     }
@@ -461,17 +467,32 @@ mod permutation_invariants {
     }
 
     fn check<const N: usize>(site: &Site<N>) {
+        if N > 256 {
+            assert_eq!(site.len, site.entries.iter().flatten().count());
+            return;
+        }
         let order = &site.route_order[..site.len];
         assert_eq!(order.len(), site.entries.iter().flatten().count());
         for (slot, entry) in site.entries.iter().enumerate() {
             assert_eq!(
-                order.iter().filter(|&&index| index == slot).count(),
+                order
+                    .iter()
+                    .filter(|&&index| usize::from(index) == slot)
+                    .count(),
                 usize::from(entry.is_some())
             );
         }
         for pair in order.windows(2) {
-            let a = site.entries[pair[0]].as_ref().unwrap().path.segments();
-            let b = site.entries[pair[1]].as_ref().unwrap().path.segments();
+            let a = site.entries[usize::from(pair[0])]
+                .as_ref()
+                .unwrap()
+                .path
+                .segments();
+            let b = site.entries[usize::from(pair[1])]
+                .as_ref()
+                .unwrap()
+                .path
+                .segments();
             assert!(a.len() < b.len() || (a.len() == b.len() && a < b));
         }
     }
@@ -512,6 +533,8 @@ mod permutation_invariants {
         exercise::<16>();
         exercise::<17>();
         exercise::<32>();
+        exercise::<256>();
+        exercise::<257>();
     }
 }
 

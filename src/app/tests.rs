@@ -110,7 +110,7 @@ mod request_route_permutation {
         }
         // Replacement must succeed even when full; invalid registration cannot
         // alter handlers, identities, occupancy, or the lookup's refusal recovery.
-        for (id, path) in PATHS.iter().enumerate() {
+        for id in 0..34 {
             if model.iter().flatten().any(|&(p, _)| p == id) {
                 register(&mut site, &mut model, id, true);
             }
@@ -130,18 +130,18 @@ mod request_route_permutation {
             let slot = model
                 .iter()
                 .position(|row| row.is_some_and(|(p, _)| p == id));
-            assert_eq!(site.remove_route(*path), Ok(slot.is_some()));
+            assert_eq!(site.remove_route(PATHS[id]), Ok(slot.is_some()));
             if let Some(slot) = slot {
                 model[slot] = None;
             }
             check(&site, &model);
             register(&mut site, &mut model, (id + 7) % 34, step % 2 == 0);
         }
-        for id in 0..34 {
+        for (id, path) in PATHS.iter().take(34).enumerate() {
             let slot = model
                 .iter()
                 .position(|row| row.is_some_and(|(p, _)| p == id));
-            assert_eq!(site.remove_route(PATHS[id]), Ok(slot.is_some()));
+            assert_eq!(site.remove_route(*path), Ok(slot.is_some()));
             if let Some(slot) = slot {
                 model[slot] = None;
             }
@@ -165,6 +165,56 @@ mod request_route_permutation {
         sequence::<16>();
         sequence::<17>();
         sequence::<32>();
+    }
+
+    #[test]
+    fn byte_index_boundary_preserves_last_slot_and_larger_linear_tables() {
+        const fn paths() -> [[&'static str; 8]; 257] {
+            let mut paths = [["a"; 8]; 257];
+            let mut index = 0;
+            while index < 256 {
+                let mut bit = 0;
+                while bit < 8 {
+                    if index & (1 << bit) != 0 {
+                        paths[index][bit] = "b";
+                    }
+                    bit += 1;
+                }
+                index += 1;
+            }
+            paths[256][0] = "c";
+            paths
+        }
+        static PATHS: [[&str; 8]; 257] = paths();
+        fn boundary<const N: usize>() {
+            let mut site = Site::<N>::new();
+            for path in PATHS.iter().take(N) {
+                site.try_route(&path[..], get(get_led)).unwrap();
+            }
+            assert!(site.is_full());
+            for (index, path) in PATHS.iter().take(N).enumerate() {
+                let (wire, n) = encode_req(Code::GET, path, &[]);
+                let request =
+                    Request::from_decoded(decode(&wire[..n]).unwrap(), PEER, None).unwrap();
+                let mut scratch = [0; RESPONSE_BODY];
+                let response = site.dispatch(request, &mut scratch);
+                assert_eq!(response.code(), Code::CONTENT);
+                assert_eq!(response.payload(), b"off");
+                assert_eq!(
+                    site.observe_resource(path),
+                    crate::storage::ObserveResource::app_route(index)
+                );
+            }
+            let last = &PATHS[N - 1][..];
+            assert_eq!(site.remove_route(last), Ok(true));
+            site.try_route(last, get(get_temp)).unwrap();
+            let (wire, n) = encode_req(Code::GET, last, &[]);
+            let request = Request::from_decoded(decode(&wire[..n]).unwrap(), PEER, None).unwrap();
+            let mut scratch = [0; RESPONSE_BODY];
+            assert_eq!(site.dispatch(request, &mut scratch).payload(), b"21.5");
+        }
+        boundary::<256>();
+        boundary::<257>();
     }
 
     #[test]
