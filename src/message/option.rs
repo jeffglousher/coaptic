@@ -192,6 +192,7 @@ impl<'a> Iterator for Options<'a> {
     }
 }
 
+#[inline]
 pub(crate) fn read_option<'a>(
     bytes: &'a [u8],
     i: &mut usize,
@@ -200,18 +201,13 @@ pub(crate) fn read_option<'a>(
     let head = *bytes.get(*i).ok_or(ParseError::TruncatedOption)?;
     *i += 1;
 
-    let mut delta = u32::from(head >> 4);
-    let mut len = u32::from(head & 0x0f);
-
-    if delta == 15 {
-        return Err(ParseError::ReservedOptionDelta);
-    }
-    if len == 15 {
-        return Err(ParseError::ReservedOptionLength);
-    }
-
-    take_extended(bytes, i, &mut delta)?;
-    take_extended(bytes, i, &mut len)?;
+    let delta = u32::from(head >> 4);
+    let len = u32::from(head & 0x0f);
+    let (delta, len) = if delta < 13 && len < 13 {
+        (delta, len)
+    } else {
+        read_extended(bytes, i, delta, len)?
+    };
 
     let number = prev
         .checked_add(delta)
@@ -235,6 +231,26 @@ pub(crate) fn read_option<'a>(
     ))
 }
 
+// Keep extension handling out of the inline regular-header path. Reserved-field
+// priority and cursor updates remain the same for malformed extended options.
+#[inline(never)]
+fn read_extended(
+    bytes: &[u8],
+    i: &mut usize,
+    mut delta: u32,
+    mut len: u32,
+) -> Result<(u32, u32), ParseError> {
+    if delta == 15 {
+        return Err(ParseError::ReservedOptionDelta);
+    }
+    if len == 15 {
+        return Err(ParseError::ReservedOptionLength);
+    }
+    take_extended(bytes, i, &mut delta)?;
+    take_extended(bytes, i, &mut len)?;
+    Ok((delta, len))
+}
+
 fn take_extended(bytes: &[u8], i: &mut usize, n: &mut u32) -> Result<(), ParseError> {
     match *n {
         13 => {
@@ -252,5 +268,159 @@ fn take_extended(bytes: &[u8], i: &mut usize, n: &mut u32) -> Result<(), ParseEr
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Independent pre-split parser, including its cursor/error commit order.
+    fn legacy<'a>(bytes: &'a [u8], i: &mut usize, prev: &mut u32) -> Result<Opt<'a>, ParseError> {
+        let head = *bytes.get(*i).ok_or(ParseError::TruncatedOption)?;
+        *i += 1;
+        let mut delta = u32::from(head >> 4);
+        let mut len = u32::from(head & 0x0f);
+        if delta == 15 {
+            return Err(ParseError::ReservedOptionDelta);
+        }
+        if len == 15 {
+            return Err(ParseError::ReservedOptionLength);
+        }
+        for n in [&mut delta, &mut len] {
+            match *n {
+                13 => {
+                    let extra = bytes.get(*i).copied().ok_or(ParseError::TruncatedOption)?;
+                    *n = 13 + u32::from(extra);
+                    *i += 1;
+                }
+                14 => {
+                    if *i + 1 >= bytes.len() {
+                        return Err(ParseError::TruncatedOption);
+                    }
+                    *n = 269 + u32::from(super::super::decode_u16_be([bytes[*i], bytes[*i + 1]]));
+                    *i += 2;
+                }
+                _ => {}
+            }
+        }
+        let number = prev
+            .checked_add(delta)
+            .filter(|&n| n <= u32::from(u16::MAX))
+            .ok_or(ParseError::OptionNumberOverflow)?;
+        *prev = number;
+        let start = *i;
+        let value_len = usize::try_from(len).map_err(|_| ParseError::TruncatedOption)?;
+        let end = start
+            .checked_add(value_len)
+            .ok_or(ParseError::TruncatedOption)?;
+        if end > bytes.len() {
+            return Err(ParseError::TruncatedOption);
+        }
+        *i = end;
+        Ok(Opt::new(
+            OptionNumber::new(number as u16),
+            &bytes[start..end],
+        ))
+    }
+
+    fn compare(bytes: &[u8], cursor: usize, number: u32) {
+        let (mut i, mut prev) = (cursor, number);
+        let (mut old_i, mut old_prev) = (cursor, number);
+        let actual = read_option(bytes, &mut i, &mut prev);
+        let expected = legacy(bytes, &mut old_i, &mut old_prev);
+        assert_eq!(actual, expected, "cursor={cursor}, number={number}");
+        assert_eq!((i, prev), (old_i, old_prev));
+        if let (Ok(actual), Ok(expected)) = (actual, expected) {
+            assert!(core::ptr::eq(actual.value(), expected.value()));
+        }
+    }
+
+    #[test]
+    fn regular_parser_matches_legacy_for_every_header_and_short_prefix() {
+        for head in 0..=u8::MAX {
+            for tail in [0, 1, 12, 255] {
+                let mut bytes = [tail; 48];
+                for cursor in 0..=3 {
+                    bytes[cursor] = head;
+                    for end in cursor..=bytes.len() {
+                        for prev in [0, 65_522, 65_523, 65_524, 65_535, 65_536, u32::MAX] {
+                            compare(&bytes[..end], cursor, prev);
+                        }
+                    }
+                    bytes[cursor] = tail;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn regular_parser_matches_legacy_at_extension_and_number_boundaries() {
+        let mut bytes = [0x5a; 65_812];
+        for head in [0x0d, 0x0e, 0xd0, 0xe0, 0xdd, 0xde, 0xed, 0xee] {
+            bytes[0] = head;
+            for extra in [0, 1, 254, 255] {
+                bytes[1..5].fill(extra);
+                for end in [0, 1, 2, 3, 4, 5, 12, 13, 14, 268, 269, 270, 65_804, 65_812] {
+                    for prev in [0, 1, 65_266, 65_267, 65_534, 65_535, u32::MAX] {
+                        compare(&bytes[..end], 0, prev);
+                    }
+                }
+            }
+        }
+        for cursor in [bytes.len(), bytes.len() + 1, usize::MAX] {
+            compare(&bytes, cursor, u32::MAX);
+        }
+    }
+
+    #[test]
+    fn regular_parser_preserves_failure_priority_and_partial_state() {
+        for (bytes, number, error, cursor, next_number) in [
+            (&[0xff][..], 0, ParseError::ReservedOptionDelta, 1, 0),
+            (&[0xdf][..], 0, ParseError::ReservedOptionLength, 1, 0),
+            (&[0xdd, 0][..], 0, ParseError::TruncatedOption, 2, 0),
+            (
+                &[0x11][..],
+                65_535,
+                ParseError::OptionNumberOverflow,
+                1,
+                65_535,
+            ),
+            (&[0x11][..], 1, ParseError::TruncatedOption, 1, 2),
+            (&[0xd1, 0][..], 1, ParseError::TruncatedOption, 2, 14),
+        ] {
+            let (mut i, mut prev) = (0, number);
+            assert_eq!(read_option(bytes, &mut i, &mut prev), Err(error));
+            assert_eq!((i, prev), (cursor, next_number));
+            compare(bytes, 0, number);
+        }
+    }
+
+    #[test]
+    fn regular_parser_mixed_options_roundtrip_through_public_decoder() {
+        use crate::message::{Code, Message, MessageId, Token, Type, decode, encode};
+
+        let medium = [0x31; 13];
+        let long = [0x72; 270];
+        let opts = [
+            Opt::new(OptionNumber::new(11), b"bench"),
+            Opt::new(OptionNumber::new(11), b""),
+            Opt::new(OptionNumber::new(25), &[0x42]),
+            Opt::new(OptionNumber::new(26), &medium),
+            Opt::new(OptionNumber::new(300), &long),
+        ];
+        let msg = Message::new(Type::Confirmable, Code::GET, MessageId::new(42))
+            .with_token(Token::new(&[0xa5, 0x5a]).unwrap())
+            .with_options(&opts)
+            .with_payload(b"\xffpayload");
+        let mut wire = [0; 512];
+        let n = encode(&msg, &mut wire).unwrap();
+        let parsed = decode(&wire[..n]).unwrap();
+        assert_eq!(parsed.token(), msg.token());
+        assert_eq!(parsed.payload(), msg.payload());
+        assert!(parsed.options().eq(opts));
+        let mut again = [0; 512];
+        let again_n = parsed.encode(&mut again).unwrap();
+        assert_eq!(&again[..again_n], &wire[..n]);
     }
 }
