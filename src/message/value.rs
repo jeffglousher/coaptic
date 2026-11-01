@@ -830,7 +830,7 @@ impl<'a, T: super::OwnedToken> ParsedMessage<'a, T> {
     #[must_use]
     pub fn get_options(self, number: OptionNumber) -> OptionsByNumber<'a> {
         OptionsByNumber {
-            inner: self.options(),
+            inner: self.options_for_search(number),
             number,
         }
     }

@@ -1104,3 +1104,388 @@ fn transmission_initial_timeout_clamps_jitter() {
             * u32::from(Transmission::ACK_RANDOM_FACTOR_NUM - Transmission::ACK_RANDOM_FACTOR_DEN)
     );
 }
+
+// The oracle walks all validated wire options without using get_option's
+// absence shortcut. Keep tests independent of how the private summary is packed.
+mod decoded_option_ceiling {
+    use super::{Code, Message, MessageId, Opt, OptionNumber, ParseError, Token, Type, decode};
+    use crate::message::{
+        Header, OwnedToken, ParsedMessage, TokenDecodeError, decode_with_token, extended,
+    };
+
+    fn all_queries<T: OwnedToken>(parsed: ParsedMessage<'_, T>) {
+        let critical = parsed.unknown_critical();
+        for raw in 0..=u16::MAX {
+            let number = OptionNumber::new(raw);
+            let expected = parsed.options().filter(|option| option.number() == number);
+            assert_eq!(
+                parsed.get_option(number),
+                expected.clone().next(),
+                "first {raw}"
+            );
+            let mut actual = parsed.get_options(number);
+            assert!(actual.by_ref().eq(expected), "all values for {raw}");
+            for _ in 0..2 {
+                assert_eq!(actual.next(), None, "exhausted {raw}");
+                assert_eq!(actual.clone().next(), None, "cloned exhausted {raw}");
+            }
+        }
+        assert_eq!(parsed.unknown_critical(), critical);
+    }
+
+    fn check_options(options: &[Opt<'_>]) {
+        let message = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x1234))
+            .with_token(Token::new(&[0x12, 0x34]).unwrap())
+            .with_options(options)
+            .with_payload(b"opaque tail");
+        let mut wire = [0; 2048];
+        let n = message.encode(&mut wire).unwrap();
+        let parsed = decode(&wire[..n]).unwrap();
+        all_queries(parsed);
+        let mut copy = [0; 2048];
+        let copied = parsed.encode(&mut copy).unwrap();
+        assert_eq!(&copy[..copied], &wire[..n]);
+    }
+
+    #[test]
+    fn every_option_query_matches_complete_wire_iteration() {
+        check_options(&[]);
+        // Option zero and an empty options list share a numerical maximum,
+        // but only the first has a value for a query of option zero.
+        check_options(&[Opt::new(OptionNumber::new(0), b"")]);
+        check_options(&[Opt::uri_path("first"), Opt::uri_path("second")]);
+        check_options(&[Opt::new(OptionNumber::new(254), b"edge")]);
+        check_options(&[Opt::new(OptionNumber::new(255), b"edge")]);
+        check_options(&[Opt::new(OptionNumber::new(256), b"edge")]);
+        check_options(&[
+            Opt::new(OptionNumber::new(u16::MAX), b"first"),
+            Opt::new(OptionNumber::new(u16::MAX), b"second"),
+        ]);
+        let long = [0x5a; 269];
+        let thirteen = [0x7a; 13];
+        check_options(&[
+            Opt::new(OptionNumber::new(0), b"zero"),
+            Opt::uri_path("first"),
+            Opt::uri_path("second"),
+            Opt::new(OptionNumber::new(254), &thirteen),
+            Opt::new(OptionNumber::new(255), &long),
+            Opt::new(OptionNumber::new(256), b"next"),
+            Opt::new(OptionNumber::new(65001), b"critical"),
+            Opt::new(OptionNumber::new(u16::MAX), b"last"),
+        ]);
+    }
+
+    #[test]
+    fn absent_queries_preserve_critical_options_and_repeatable_iterator_state() {
+        let options = [
+            Opt::uri_path("first"),
+            Opt::uri_path("second"),
+            Opt::new(OptionNumber::new(65001), b"critical"),
+        ];
+        let message = Message::new(Type::NonConfirmable, Code::FETCH, MessageId::new(0xabcd))
+            .with_options(&options);
+        let mut wire = [0; 64];
+        let n = message.encode(&mut wire).unwrap();
+        let parsed = decode(&wire[..n]).unwrap();
+        assert_eq!(parsed.get_option(OptionNumber::new(u16::MAX)), None);
+        assert_eq!(parsed.unknown_critical(), Some(OptionNumber::new(65001)));
+        let mut paths = parsed.get_options(OptionNumber::URI_PATH);
+        assert_eq!(paths.next(), Some(options[0]));
+        let mut cloned = paths.clone();
+        assert_eq!(cloned.next(), Some(options[1]));
+        assert_eq!(paths.next(), Some(options[1]));
+        assert_eq!(paths.next(), None);
+        assert_eq!(cloned.next(), None);
+        assert_eq!(parsed.options().count(), options.len());
+    }
+
+    fn assert_header<T: OwnedToken>(wire: &[u8], token: &[u8]) {
+        let parsed = decode_with_token::<T>(wire).unwrap();
+        let borrowed = extended::decode(wire).unwrap();
+        assert_eq!(parsed.header(), borrowed.header());
+        assert_eq!(parsed.header().version(), wire[0] >> 6);
+        assert_eq!(parsed.header().token_length(), wire[0] & 0x0f);
+        assert_eq!(parsed.ty(), borrowed.ty());
+        assert_eq!(parsed.code(), borrowed.code());
+        assert_eq!(parsed.message_id(), borrowed.message_id());
+        assert_eq!(parsed.token().as_bytes(), token);
+        assert_eq!(parsed.payload(), borrowed.payload());
+        assert!(parsed.options().eq(borrowed.options()));
+        assert_eq!(
+            parsed.get_option(OptionNumber::URI_PATH).unwrap().value(),
+            b"bench"
+        );
+        assert_eq!(parsed.get_option(OptionNumber::REQUEST_TAG), None);
+        let mut copy = [0; 1024];
+        let n = parsed.encode(&mut copy).unwrap();
+        assert_eq!(&copy[..n], wire);
+    }
+
+    #[test]
+    fn all_header_fields_and_original_extended_token_nibbles_survive() {
+        let tokens = [0x61; 269];
+        let options = [Opt::uri_path("bench")];
+        let mut wire = [0; 1024];
+        for ty in [
+            Type::Confirmable,
+            Type::NonConfirmable,
+            Type::Acknowledgement,
+            Type::Reset,
+        ] {
+            for code in [Code::GET, Code::CONTENT] {
+                for len in [0, 1, 8, 9, 12, 13, 268, 269] {
+                    let token = &tokens[..len];
+                    let message = extended::Message {
+                        ty,
+                        code,
+                        id: MessageId::new(0xa55a),
+                        token,
+                        options: &options,
+                        payload: b"full body",
+                    };
+                    let n = message.encode(&mut wire).unwrap();
+                    assert_header::<extended::Token<512>>(&wire[..n], token);
+                    if len <= 8 {
+                        assert_header::<Token>(&wire[..n], token);
+                        assert_eq!(
+                            decode(&wire[..n]).unwrap(),
+                            decode_with_token::<Token>(&wire[..n]).unwrap()
+                        );
+                    }
+                }
+            }
+        }
+        let empty = decode(&[0x60, 0, 0x12, 0x34]).unwrap();
+        assert_eq!(empty.header().version(), 1);
+        assert_eq!(empty.header().token_length(), 0);
+        assert_eq!(empty.ty(), Type::Acknowledgement);
+        assert_eq!(empty.code(), Code::EMPTY);
+        assert_eq!(empty.message_id(), MessageId::new(0x1234));
+        assert_eq!(empty.get_option(OptionNumber::new(0)), None);
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn tokenless_decode_preserves_original_header_but_keeps_empty_local_token() {
+        let tokens = [0x62; 269];
+        let options = [Opt::uri_path("bench")];
+        let mut wire = [0; 1024];
+        for len in [1, 8, 12, 13, 268, 269] {
+            let message = extended::Message {
+                ty: Type::Confirmable,
+                code: Code::POST,
+                id: MessageId::new(0x55aa),
+                token: &tokens[..len],
+                options: &options,
+                payload: b"body",
+            };
+            let n = message.encode(&mut wire).unwrap();
+            let parsed = crate::message::decode_without_token::<Token>(&wire[..n]).unwrap();
+            assert_eq!(
+                parsed.header(),
+                extended::decode(&wire[..n]).unwrap().header()
+            );
+            assert_eq!(parsed.header().token_length(), wire[0] & 0x0f);
+            assert_eq!(parsed.token(), Token::EMPTY);
+            assert_eq!(parsed.get_option(OptionNumber::URI_PATH), Some(options[0]));
+            assert_eq!(parsed.get_option(OptionNumber::REQUEST_TAG), None);
+            assert_eq!(parsed.payload(), b"body");
+            // This internal view deliberately does not retain the wire token;
+            // encoding it has always emitted the local empty token instead.
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+    struct TinyToken {
+        bytes: [u8; 1],
+        len: u8,
+    }
+
+    impl OwnedToken for TinyToken {
+        const EMPTY: Self = Self { bytes: [0], len: 0 };
+        const MAX_LEN: usize = 1;
+        fn try_from_bytes(bytes: &[u8]) -> Result<Self, extended::CapacityError> {
+            let mut token = Self::try_zeroed(bytes.len())?;
+            token.as_bytes_mut().copy_from_slice(bytes);
+            Ok(token)
+        }
+        fn try_zeroed(len: usize) -> Result<Self, extended::CapacityError> {
+            if len > Self::MAX_LEN {
+                return Err(extended::CapacityError {
+                    required: len,
+                    available: Self::MAX_LEN,
+                });
+            }
+            Ok(Self {
+                bytes: [0],
+                len: len as u8,
+            })
+        }
+        fn as_bytes_mut(&mut self) -> &mut [u8] {
+            &mut self.bytes[..usize::from(self.len)]
+        }
+        fn as_bytes(&self) -> &[u8] {
+            &self.bytes[..usize::from(self.len)]
+        }
+    }
+
+    // Reproduce the baseline view's field types. This checks object layouts on
+    // the actual test target; it is not a peak-stack or whole-App assertion.
+    struct LegacyParsed<'a, T: OwnedToken> {
+        _header: Header,
+        _token: T,
+        _options: &'a [u8],
+        _payload: &'a [u8],
+    }
+
+    struct LegacyParts<'a> {
+        _header: Header,
+        _token: &'a [u8],
+        _options: &'a [u8],
+        _payload: &'a [u8],
+    }
+
+    fn same_layout<T: OwnedToken>() {
+        assert_eq!(
+            core::mem::size_of::<ParsedMessage<'_, T>>(),
+            core::mem::size_of::<LegacyParsed<'_, T>>(),
+            "view size for {}",
+            core::any::type_name::<T>()
+        );
+        assert_eq!(
+            core::mem::align_of::<ParsedMessage<'_, T>>(),
+            core::mem::align_of::<LegacyParsed<'_, T>>(),
+            "view alignment for {}",
+            core::any::type_name::<T>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<ParsedMessage<'_, T>>>(),
+            core::mem::size_of::<Option<LegacyParsed<'_, T>>>(),
+            "optional view size for {}",
+            core::any::type_name::<T>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Result<ParsedMessage<'_, T>, TokenDecodeError>>(),
+            core::mem::size_of::<Result<LegacyParsed<'_, T>, TokenDecodeError>>(),
+            "decode result size for {}",
+            core::any::type_name::<T>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Result<Option<ParsedMessage<'_, T>>, TokenDecodeError>>(),
+            core::mem::size_of::<Result<Option<LegacyParsed<'_, T>>, TokenDecodeError>>(),
+            "optional decode result size for {}",
+            core::any::type_name::<T>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<Result<ParsedMessage<'_, T>, TokenDecodeError>>>(),
+            core::mem::size_of::<Option<Result<LegacyParsed<'_, T>, TokenDecodeError>>>(),
+            "nested decode result size for {}",
+            core::any::type_name::<T>()
+        );
+    }
+
+    #[test]
+    fn compact_custom_and_extended_token_view_layouts_preserve_baseline_size() {
+        assert_eq!(core::mem::size_of::<TinyToken>(), 2);
+        assert_eq!(core::mem::size_of::<Header>(), 6);
+        assert_eq!(
+            core::mem::size_of::<crate::message::decode::Parts<'_>>(),
+            core::mem::size_of::<LegacyParts<'_>>()
+        );
+        assert_eq!(
+            core::mem::align_of::<crate::message::decode::Parts<'_>>(),
+            core::mem::align_of::<LegacyParts<'_>>()
+        );
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(core::mem::size_of::<ParsedMessage<'_, Token>>(), 48);
+        same_layout::<Token>();
+        same_layout::<TinyToken>();
+        same_layout::<extended::Token<0>>();
+        same_layout::<extended::Token<1>>();
+        same_layout::<extended::Token<8>>();
+        same_layout::<extended::Token<16>>();
+        same_layout::<extended::Token<64>>();
+        same_layout::<extended::Token<512>>();
+    }
+
+    #[test]
+    fn malformed_tail_is_not_hidden_by_an_earlier_ordinary_option() {
+        for (tail, expected) in [
+            (&[0xf0][..], ParseError::ReservedOptionDelta),
+            (&[0x0f][..], ParseError::ReservedOptionLength),
+            (&[0xff][..], ParseError::PayloadMarkerWithoutPayload),
+            (&[0xd0][..], ParseError::TruncatedOption),
+            (&[0xe0, 0][..], ParseError::TruncatedOption),
+            (&[0x0d][..], ParseError::TruncatedOption),
+            (&[0x0e, 0][..], ParseError::TruncatedOption),
+            (&[0x02, b'x'][..], ParseError::TruncatedOption),
+            (&[0xe0, 0xff, 0xff][..], ParseError::OptionNumberOverflow),
+        ] {
+            let mut wire = [0; 16];
+            wire[..6].copy_from_slice(&[0x40, 1, 0, 1, 0xb1, b'b']);
+            wire[6..6 + tail.len()].copy_from_slice(tail);
+            let bytes = &wire[..6 + tail.len()];
+            assert_eq!(decode(bytes), Err(expected));
+            assert_eq!(
+                decode_with_token::<TinyToken>(bytes),
+                Err(TokenDecodeError::Malformed(expected))
+            );
+            assert_eq!(extended::decode(bytes), Err(expected));
+        }
+        // A valid highest option cannot turn a following overflow into absence.
+        assert_eq!(
+            decode(&[0x40, 1, 0, 1, 0xe0, 0xfe, 0xf2, 0x10]),
+            Err(ParseError::OptionNumberOverflow)
+        );
+    }
+
+    #[test]
+    fn syntax_and_capacity_error_precedence_remains_unchanged() {
+        for (bytes, error) in [
+            (&[0x40, 1, 0][..], ParseError::TruncatedHeader),
+            (&[0x80, 1, 0, 1][..], ParseError::UnsupportedVersion),
+            (&[0x41, 0, 0, 1][..], ParseError::TruncatedToken),
+            (&[0x41, 0, 0, 1, 0x55][..], ParseError::EmptyMessageNotEmpty),
+            (&[0x40, 0, 0, 1, 0][..], ParseError::EmptyMessageNotEmpty),
+        ] {
+            assert_eq!(decode(bytes), Err(error));
+            assert_eq!(
+                decode_with_token::<TinyToken>(bytes),
+                Err(TokenDecodeError::Malformed(error))
+            );
+        }
+        assert_eq!(decode(&[0x49, 1, 0, 1]), Err(ParseError::BadTokenLength));
+        assert_eq!(
+            decode_with_token::<TinyToken>(&[0x4f, 1, 0, 1]),
+            Err(TokenDecodeError::Malformed(ParseError::BadTokenLength))
+        );
+        let valid = [0x42, 1, 0, 1, 0x11, 0x22, 0xb1, b'b'];
+        assert_eq!(
+            decode_with_token::<TinyToken>(&valid),
+            Err(TokenDecodeError::Capacity(extended::CapacityError {
+                required: 2,
+                available: 1
+            }))
+        );
+        let mut malformed = [0; 9];
+        malformed[..8].copy_from_slice(&valid);
+        malformed[8] = 0xd0;
+        assert_eq!(
+            decode_with_token::<TinyToken>(&malformed),
+            Err(TokenDecodeError::Malformed(ParseError::TruncatedOption))
+        );
+        let options = [Opt::uri_path("bench")];
+        let message = Message::con(
+            Code::GET,
+            MessageId::new(7),
+            TinyToken::try_from_bytes(&[0x77]).unwrap(),
+        )
+        .with_options(&options);
+        let mut wire = [0; 32];
+        let n = message.encode(&mut wire).unwrap();
+        let tiny = decode_with_token::<TinyToken>(&wire[..n]).unwrap();
+        assert_eq!(tiny.token().as_bytes(), &[0x77]);
+        assert_eq!(tiny.get_option(OptionNumber::URI_PATH), Some(options[0]));
+        assert_eq!(tiny.get_option(OptionNumber::REQUEST_TAG), None);
+    }
+}

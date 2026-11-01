@@ -5,12 +5,44 @@ use crate::error::ParseError;
 use super::option::{OptionNumber, Options, read_option};
 use super::{Code, Header, MessageId, OwnedToken, Token, Type};
 
+// A decoded view only represents version 1. Reuse that redundant header byte
+// for a bounded lookup hint, keeping the original Type (and its enum niches)
+// and the original TKL, including 13/14 in tokenless OSCORE views.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DecodedHeader {
+    id: MessageId,
+    code: Code,
+    ty: Type,
+    tkl: u8,
+    option_ceiling: u8,
+}
+
+const _: () = assert!(core::mem::size_of::<DecodedHeader>() == core::mem::size_of::<Header>());
+const _: () = assert!(core::mem::align_of::<DecodedHeader>() == core::mem::align_of::<Header>());
+
+impl DecodedHeader {
+    const fn new(header: Header, option_ceiling: u8) -> Self {
+        debug_assert!(header.version() == 1);
+        Self {
+            id: header.message_id(),
+            code: header.code(),
+            ty: header.ty(),
+            tkl: header.token_length(),
+            option_ceiling,
+        }
+    }
+
+    const fn header(self) -> Header {
+        Header::new(1, self.ty, self.tkl, self.code, self.id)
+    }
+}
+
 /// Zero-copy view of a decoded CoAP datagram.
 ///
 /// Options and payload borrow `buf` from [`decode`]. No allocator is used.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParsedMessage<'a, T: OwnedToken = Token> {
-    header: Header,
+    header: DecodedHeader,
     token: T,
     options: &'a [u8],
     payload: &'a [u8],
@@ -20,25 +52,25 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
     /// Parsed header.
     #[must_use]
     pub const fn header(self) -> Header {
-        self.header
+        self.header.header()
     }
 
     /// Message type.
     #[must_use]
     pub const fn ty(self) -> Type {
-        self.header.ty()
+        self.header.ty
     }
 
     /// Code.
     #[must_use]
     pub const fn code(self) -> Code {
-        self.header.code()
+        self.header.code
     }
 
     /// Message ID.
     #[must_use]
     pub const fn message_id(self) -> MessageId {
-        self.header.message_id()
+        self.header.id
     }
 
     /// Token.
@@ -81,6 +113,18 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
     #[must_use]
     pub const fn options(self) -> Options<'a> {
         Options::new(self.options)
+    }
+
+    // The complete syntax pass established an exact bound below 255; 255 is
+    // unknown and keeps the full scan. Raw iteration and critical checks never
+    // use this hint, and option zero still takes the ordinary lookup path.
+    pub(super) const fn options_for_search(self, number: OptionNumber) -> Options<'a> {
+        if self.header.option_ceiling != u8::MAX && number.get() > self.header.option_ceiling as u16
+        {
+            Options::new(&[])
+        } else {
+            self.options()
+        }
     }
 
     /// First critical option whose number is not defined in RFC 7252.
@@ -145,7 +189,7 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
 pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {
     let parts = decode_parts(buf, false)?;
     Ok(ParsedMessage {
-        header: parts.header,
+        header: DecodedHeader::new(parts.header, parts.option_ceiling),
         token: Token::from_checked(parts.token),
         options: parts.options,
         payload: parts.payload,
@@ -172,7 +216,7 @@ pub fn decode_with_token<T: OwnedToken>(
     let parts = decode_parts(buf, true).map_err(TokenDecodeError::Malformed)?;
     let token = T::try_from_bytes(parts.token).map_err(TokenDecodeError::Capacity)?;
     Ok(ParsedMessage {
-        header: parts.header,
+        header: DecodedHeader::new(parts.header, parts.option_ceiling),
         token,
         options: parts.options,
         payload: parts.payload,
@@ -188,7 +232,7 @@ pub(crate) fn decode_without_token<T: OwnedToken>(
 ) -> Result<ParsedMessage<'_, T>, ParseError> {
     let parts = decode_parts(buf, true)?;
     Ok(ParsedMessage {
-        header: parts.header,
+        header: DecodedHeader::new(parts.header, parts.option_ceiling),
         token: T::EMPTY,
         options: parts.options,
         payload: parts.payload,
@@ -197,6 +241,7 @@ pub(crate) fn decode_without_token<T: OwnedToken>(
 
 pub(super) struct Parts<'a> {
     pub header: Header,
+    pub option_ceiling: u8,
     pub token: &'a [u8],
     pub options: &'a [u8],
     pub payload: &'a [u8],
@@ -250,15 +295,17 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
         }
         return Ok(Parts {
             header: Header::new(version, ty, tkl, code, id),
+            option_ceiling: 0,
             token: token_bytes,
             options: &[],
             payload: &[],
         });
     }
 
-    let (options, payload) = split_options_and_payload(buf, options_start)?;
+    let (options, payload, option_ceiling) = split_options_and_payload(buf, options_start)?;
     Ok(Parts {
         header: Header::new(version, ty, tkl, code, id),
+        option_ceiling,
         token: token_bytes,
         options,
         payload,
@@ -267,11 +314,11 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
 
 #[cfg(feature = "oscore")]
 pub(crate) fn decode_options_payload(bytes: &[u8]) -> Result<(Options<'_>, &[u8]), ParseError> {
-    let (options, payload) = split_options_and_payload(bytes, 0)?;
+    let (options, payload, _) = split_options_and_payload(bytes, 0)?;
     Ok((Options::new(options), payload))
 }
 
-fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]), ParseError> {
+fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8], u8), ParseError> {
     let mut i = start;
     let mut prev = 0u32;
     while i < bytes.len() {
@@ -280,10 +327,14 @@ fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]
                 return Err(ParseError::PayloadMarkerWithoutPayload);
             }
             let options = bytes.get(start..i).ok_or(ParseError::TruncatedOption)?;
-            return Ok((options, &bytes[i + 1..]));
+            return Ok((
+                options,
+                &bytes[i + 1..],
+                u8::try_from(prev).unwrap_or(u8::MAX),
+            ));
         }
         let _ = read_option(bytes, &mut i, &mut prev)?;
     }
     let options = bytes.get(start..).ok_or(ParseError::TruncatedOption)?;
-    Ok((options, &[]))
+    Ok((options, &[], u8::try_from(prev).unwrap_or(u8::MAX)))
 }
