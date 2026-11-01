@@ -1906,6 +1906,16 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
     }
 }
 
+impl<T: OwnedToken> super::IncomingRxSlots for AllocMemory<T> {
+    type IncomingBody = AllocBodyPool<T>;
+    fn split_incoming_rx(
+        &mut self,
+        id: SlotId,
+    ) -> (Option<&[u8]>, Option<&mut Self::IncomingBody>) {
+        (self.rx.payload(id), self.rx_body.as_mut())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2053,15 +2063,5 @@ mod tests {
         }
         assert_eq!(memory.exchange.take(row.key()), Some(row));
         assert_eq!(memory.exchange.occupied_count(), 0);
-    }
-}
-
-impl<T: OwnedToken> super::IncomingRxSlots for AllocMemory<T> {
-    type IncomingBody = AllocBodyPool<T>;
-    fn split_incoming_rx(
-        &mut self,
-        id: SlotId,
-    ) -> (Option<&[u8]>, Option<&mut Self::IncomingBody>) {
-        (self.rx.payload(id), self.rx_body.as_mut())
     }
 }
