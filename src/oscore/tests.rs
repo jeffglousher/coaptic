@@ -6482,3 +6482,89 @@ mod rejected_traffic_progress;
 
 #[path = "checkpoint_q_tests.rs"]
 mod checkpoint_q;
+
+#[test]
+fn generated_response_protection_matches_public_bytes_at_every_cut() {
+    use crate::message::{OptionNumber, Parts};
+    let context = || {
+        super::BoundedSecurityContext::<4, crate::message::extended::Token<13>>::derive(
+            DeriveParams {
+                master_secret: &MASTER_SECRET,
+                master_salt: &MASTER_SALT,
+                sender_id: &[1],
+                recipient_id: &[],
+                id_context: &[],
+            },
+        )
+        .unwrap()
+    };
+    let request = client_c1().request_ref(PartialIv::from_seq(0).unwrap());
+    for fresh in [false, true] {
+        for observe in [None, Some(0), Some(0x00ff_ffff)] {
+            for exhausted in [false, true] {
+                let seq = observe.map(encode_uint);
+                let cf = encode_uint(u16::MAX.into());
+                let age = encode_uint(u32::MAX);
+                let block = BlockValue::from_size(0xfffff, true, 1024).unwrap().encode();
+                let size = encode_uint(u32::MAX);
+                let mut builder = OptionsBuilder::<24>::new();
+                builder.push(Opt::etag(b"12345678")).unwrap();
+                if let Some(ref seq) = seq {
+                    builder.push(Opt::observe(seq)).unwrap();
+                }
+                for s in ["", "a", "a", "b", "c", "d", "e", "f"] {
+                    builder.push(Opt::location_path(s)).unwrap();
+                }
+                builder.push(Opt::content_format(&cf)).unwrap();
+                builder.push(Opt::max_age(&age)).unwrap();
+                builder.push(Opt::q_block1(&block)).unwrap();
+                for s in ["", "a", "a", "b", "c", "d", "e", "f"] {
+                    builder.push(Opt::location_query(s)).unwrap();
+                }
+                builder.push(Opt::size2(&size)).unwrap();
+                builder.push(Opt::q_block2(&block)).unwrap();
+                builder.push(Opt::new(OptionNumber::ECHO, b"e")).unwrap();
+                let legacy = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(42))
+                    .with_token(
+                        crate::message::extended::Token::<13>::new(b"extendedtoken").unwrap(),
+                    )
+                    .with_options(builder.as_slice())
+                    .with_payload(b"payload");
+                let parts = Parts {
+                    ty: legacy.ty(),
+                    code: legacy.code(),
+                    id: legacy.message_id(),
+                    token: legacy.token(),
+                    payload: legacy.payload(),
+                    options: builder.as_slice().iter().copied(),
+                    observe: seq.as_ref().map(|s| s.as_bytes()),
+                };
+                for cut in 0..=256 {
+                    let mut actual = context();
+                    let mut expected = context();
+                    if exhausted {
+                        actual.set_sender_seq(1 << 40).unwrap();
+                        expected.set_sender_seq(1 << 40).unwrap();
+                    }
+                    let mut a = [0xa5; 256];
+                    let mut b = a;
+                    let result = actual.protect_generated(&parts, request, fresh, &mut a[..cut]);
+                    let reference = if fresh {
+                        expected.protect_response_with_piv(&legacy, request, &mut b[..cut])
+                    } else {
+                        expected.protect_response(&legacy, request, &mut b[..cut])
+                    };
+                    assert_eq!(
+                        result, reference,
+                        "fresh={fresh} observe={observe:?} exhausted={exhausted} cut={cut}"
+                    );
+                    assert_eq!(a, b);
+                    assert_eq!(actual.sender_seq(), expected.sender_seq());
+                    if fresh && !exhausted {
+                        assert_eq!(actual.sender_seq(), 1);
+                    }
+                }
+            }
+        }
+    }
+}

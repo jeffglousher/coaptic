@@ -16081,3 +16081,585 @@ fn admission_failed_completion_releases_rx_credit_before_collection() {
     assert!(app.take_response(failed).unwrap().is_err());
     assert!(app.cancel(next));
 }
+
+use super::{BlockOpt, LOCATION_MAX, encode_options_full_500, oscore, push_opt};
+#[allow(clippy::too_many_arguments)]
+fn reference_encode_response<
+    S: crate::storage::Storage + crate::storage::DatagramSlots,
+    E,
+    const REQUESTS: usize,
+>(
+    engine: &mut crate::storage::Engine<S>,
+    peer: Endpoint,
+    tx: crate::storage::SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    response.validate().map_err(Error::Response)?;
+    let cf = response.format().map(crate::ContentFormat::encode);
+    let max_age = response.max_age_secs().map(EncodedUint::new);
+    let observe = response
+        .observe_seq()
+        .map(|seq| encode_uint(seq & 0x00ff_ffff));
+    let block_enc = block.map(|b| b.value.encode());
+    let size2_enc = block
+        .and_then(|b| b.size2)
+        .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
+    let block1_enc = block1.map(|b| b.value.encode());
+    let echo = response.echo_option();
+    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(etag) = response.etag_bytes() {
+            push_opt(&mut opts, Opt::etag(etag))?;
+        }
+        if let Some(ref encoded) = observe {
+            push_opt(&mut opts, Opt::observe(encoded))?;
+        }
+        for segment in response.location_paths() {
+            push_opt(&mut opts, Opt::location_path(segment))?;
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if let Some(ref encoded) = max_age {
+            push_opt(&mut opts, Opt::max_age(encoded))?;
+        }
+        for query in response.location_queries() {
+            push_opt(&mut opts, Opt::location_query(query))?;
+        }
+        if let Some(ref encoded) = block_enc {
+            if block.is_some_and(|b| b.q_block) {
+                if let Some(ref size2) = size2_enc {
+                    push_opt(&mut opts, Opt::size2(size2))?;
+                }
+                push_opt(&mut opts, Opt::q_block2(encoded))?;
+            } else {
+                push_opt(&mut opts, Opt::block2(encoded))?;
+            }
+        }
+        if let Some(ref encoded) = block1_enc {
+            push_opt(
+                &mut opts,
+                if block1.is_some_and(|b| b.q_block) {
+                    Opt::q_block1(encoded)
+                } else {
+                    Opt::block1(encoded)
+                },
+            )?;
+        }
+        if let Some(ref echo) = echo {
+            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+        }
+        Ok(())
+    })();
+    match filled {
+        Ok(()) => {
+            let msg = Message::new(ty, response.code(), mid)
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(payload);
+            if response.fresh_piv()
+                || block.is_some_and(|b| b.q_block)
+                || (response.observe_seq().is_some() && ty != Type::Acknowledgement)
+            {
+                oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
+            } else {
+                oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
+            }
+        }
+        Err(EncodeError::OptionsFull) => {
+            encode_options_full_500(engine, peer, tx, ty, mid, token, oscore_ctx, oscore_req)
+        }
+        Err(e) => Err(Error::Message(SlotMessageError::Encode(e))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reference_encode_notification<
+    S: crate::storage::Storage + crate::storage::DatagramSlots,
+    E,
+    const REQUESTS: usize,
+>(
+    engine: &mut crate::storage::Engine<S>,
+    peer: Endpoint,
+    tx: crate::storage::SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    response.validate().map_err(Error::Response)?;
+    let cf = response.format().map(crate::ContentFormat::encode);
+    let max_age = response.max_age_secs().map(EncodedUint::new);
+    let observe = response
+        .observe_seq()
+        .map(|seq| encode_uint(seq & 0x00ff_ffff));
+    // Only ETag, Observe, Content-Format and Max-Age are reachable here.
+    let mut opts = OptionsBuilder::<4>::new();
+    let filled = (|| -> Result<(), EncodeError> {
+        if let Some(etag) = response.etag_bytes() {
+            push_opt(&mut opts, Opt::etag(etag))?;
+        }
+        if let Some(ref encoded) = observe {
+            push_opt(&mut opts, Opt::observe(encoded))?;
+        }
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if let Some(ref encoded) = max_age {
+            push_opt(&mut opts, Opt::max_age(encoded))?;
+        }
+        Ok(())
+    })();
+    match filled {
+        Ok(()) => {
+            let msg = Message::new(ty, response.code(), mid)
+                .with_token(token)
+                .with_options(opts.as_slice())
+                .with_payload(payload);
+            oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
+        }
+        Err(EncodeError::OptionsFull) => {
+            encode_options_full_500(engine, peer, tx, ty, mid, token, oscore_ctx, oscore_req)
+        }
+        Err(e) => Err(Error::Message(SlotMessageError::Encode(e))),
+    }
+}
+
+#[test]
+fn generated_response_matches_legacy_builder_metadata_and_tx() {
+    use crate::storage::{EngineBuilder, Memory};
+    let peer = Endpoint::v4([127, 0, 0, 1], 5683);
+    for mask in 0..256 {
+        for notification in [false, true] {
+            let mut response = Response::content(b"payload");
+            if mask & 1 != 0 {
+                response = response.etag(b"12345678");
+            }
+            if mask & 2 != 0 {
+                response = response.observe(u32::MAX);
+            }
+            if mask & 4 != 0 {
+                response = response.content_format(ContentFormat::OCTET_STREAM);
+            }
+            if mask & 8 != 0 {
+                response = response.max_age(u32::MAX);
+            }
+            if mask & 16 != 0 {
+                for s in ["", "a", "a", "b", "c", "d", "e", "f"] {
+                    response = response.location_path(s).location_query(s);
+                }
+            }
+            if mask & 32 != 0 {
+                response = response.echo(EchoOpt::mint(0, &[]).unwrap());
+            }
+            let block = (mask & 64 != 0).then_some(super::BlockOpt {
+                value: BlockValue::from_size(0, false, 16).unwrap(),
+                q_block: mask & 1 != 0,
+                size2: Some(usize::MAX),
+            });
+            let block1 = (mask & 128 != 0).then_some(super::BlockOpt {
+                value: BlockValue::from_size(0xfffff, true, 1024).unwrap(),
+                q_block: mask & 4 != 0,
+                size2: None,
+            });
+            let mut actual = EngineBuilder::new()
+                .profile::<profiles::Default>()
+                .block_wise(false)
+                .build(Memory::<profiles::Default>::new())
+                .unwrap();
+            let mut expected = EngineBuilder::new()
+                .profile::<profiles::Default>()
+                .block_wise(false)
+                .build(Memory::<profiles::Default>::new())
+                .unwrap();
+            let a = actual.acquire_tx().unwrap();
+            let b = expected.acquire_tx().unwrap();
+            actual
+                .encode_tx(
+                    a,
+                    &Message::new(Type::Acknowledgement, Code::CHANGED, MessageId::new(99)),
+                )
+                .unwrap();
+            expected
+                .encode_tx(
+                    b,
+                    &Message::new(Type::Acknowledgement, Code::CHANGED, MessageId::new(99)),
+                )
+                .unwrap();
+            let token = Token::new(b"12345678").unwrap();
+            let mut ctx = super::oscore::Store::<4, 1>::new();
+            #[cfg(feature = "oscore")]
+            let request = None;
+            #[cfg(not(feature = "oscore"))]
+            let request = super::oscore::Request;
+            let result: Result<(), Error<()>> = if notification {
+                super::encode_notification(
+                    &mut actual,
+                    peer,
+                    a,
+                    Type::NonConfirmable,
+                    MessageId::new(7),
+                    token,
+                    &response,
+                    b"payload",
+                    &mut ctx,
+                    request,
+                )
+            } else {
+                super::encode_response(
+                    &mut actual,
+                    peer,
+                    a,
+                    Type::Acknowledgement,
+                    MessageId::new(7),
+                    token,
+                    &response,
+                    b"payload",
+                    block,
+                    block1,
+                    &mut ctx,
+                    request,
+                )
+            };
+            let reference: Result<(), Error<()>> = if notification {
+                reference_encode_notification(
+                    &mut expected,
+                    peer,
+                    b,
+                    Type::NonConfirmable,
+                    MessageId::new(7),
+                    token,
+                    &response,
+                    b"payload",
+                    &mut ctx,
+                    request,
+                )
+            } else {
+                reference_encode_response(
+                    &mut expected,
+                    peer,
+                    b,
+                    Type::Acknowledgement,
+                    MessageId::new(7),
+                    token,
+                    &response,
+                    b"payload",
+                    block,
+                    block1,
+                    &mut ctx,
+                    request,
+                )
+            };
+            assert_eq!(result, reference);
+            assert_eq!(
+                actual.access_tx(a).unwrap().as_bytes(),
+                expected.access_tx(b).unwrap().as_bytes()
+            );
+            // The legacy builder above is the independent option oracle. Reuse
+            // its resulting borrowed options to compare every plain output cut.
+            let access = expected.access_tx(b).unwrap();
+            let parsed = decode(access.as_bytes()).unwrap();
+            let mut opts = OptionsBuilder::<24>::new();
+            for opt in parsed.options() {
+                opts.push(opt).unwrap();
+            }
+            let legacy = Message::new(parsed.ty(), parsed.code(), parsed.message_id())
+                .with_token(parsed.token())
+                .with_options(opts.as_slice())
+                .with_payload(parsed.payload());
+            let backing = super::ResponseOptions::new(
+                &response,
+                if notification { None } else { block },
+                if notification { None } else { block1 },
+                notification,
+            );
+            let parts = crate::message::Parts {
+                ty: parsed.ty(),
+                code: response.code(),
+                id: parsed.message_id(),
+                token,
+                payload: b"payload",
+                options: backing.iter(),
+                #[cfg(feature = "oscore")]
+                observe: backing.observe.as_ref().map(EncodedUint::as_bytes),
+            };
+            for cut in 0..=access.as_bytes().len() + 1 {
+                let mut a = [0xa5; 512];
+                let mut b = a;
+                assert_eq!(parts.encode(&mut a[..cut]), legacy.encode(&mut b[..cut]));
+                assert_eq!(a, b);
+            }
+            #[cfg(feature = "diagnostics")]
+            assert_eq!(
+                actual.work_metrics().tx_payload_encoded_bytes,
+                expected.work_metrics().tx_payload_encoded_bytes
+            );
+        }
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn generated_response_app_refusals_preserve_legacy_tx_and_sequences() {
+    use crate::oscore::{BoundedSecurityContext, DeriveParams, PartialIv, RequestRef};
+    use crate::storage::{EngineBuilder, Memory};
+    let context = || {
+        BoundedSecurityContext::<4>::derive(DeriveParams {
+            master_secret: &[1; 16],
+            master_salt: &[],
+            sender_id: &[1],
+            recipient_id: &[],
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let request = RequestRef::from_kid(&[], PartialIv::from_seq(0).unwrap()).unwrap();
+    for notification in [false, true] {
+        for occupied in [false, true] {
+            for mode in 0..6 {
+                for payload in [&b"p"[..], &[0; 1300][..]] {
+                    let mut actual = EngineBuilder::new()
+                        .profile::<profiles::Default>()
+                        .block_wise(false)
+                        .build(Memory::<profiles::Default>::new())
+                        .unwrap();
+                    let mut expected = EngineBuilder::new()
+                        .profile::<profiles::Default>()
+                        .block_wise(false)
+                        .build(Memory::<profiles::Default>::new())
+                        .unwrap();
+                    let a = actual.acquire_tx().unwrap();
+                    let b = expected.acquire_tx().unwrap();
+                    if occupied {
+                        actual
+                            .write_tx(a, b"retained", Endpoint::v4([127, 0, 0, 1], 5683))
+                            .unwrap();
+                        expected
+                            .write_tx(b, b"retained", Endpoint::v4([127, 0, 0, 1], 5683))
+                            .unwrap();
+                    }
+                    let mut ac = Some(context());
+                    let mut ec = Some(context());
+                    if mode == 3 {
+                        ac.as_mut().unwrap().set_sender_seq(1 << 40).unwrap();
+                        ec.as_mut().unwrap().set_sender_seq(1 << 40).unwrap();
+                    }
+                    let peer = Endpoint::v4([127, 0, 0, 1], 5683).with_association(if mode == 2 {
+                        99
+                    } else {
+                        0
+                    });
+                    let binding = if mode == 1 { None } else { Some(request) };
+                    let response = if mode == 4 {
+                        Response::content(payload).etag(&[])
+                    } else {
+                        Response::content(payload).observe(u32::MAX).max_age(0)
+                    };
+                    let response = if mode == 5 {
+                        response.with_fresh_piv()
+                    } else {
+                        response
+                    };
+                    let token = Token::new(b"t").unwrap();
+                    let result: Result<(), Error<()>> = if notification {
+                        super::encode_notification(
+                            &mut actual,
+                            peer,
+                            a,
+                            Type::NonConfirmable,
+                            MessageId::new(1),
+                            token,
+                            &response,
+                            payload,
+                            &mut ac,
+                            binding,
+                        )
+                    } else {
+                        super::encode_response(
+                            &mut actual,
+                            peer,
+                            a,
+                            Type::Acknowledgement,
+                            MessageId::new(1),
+                            token,
+                            &response,
+                            payload,
+                            None,
+                            None,
+                            &mut ac,
+                            binding,
+                        )
+                    };
+                    let reference: Result<(), Error<()>> = if notification {
+                        reference_encode_notification(
+                            &mut expected,
+                            peer,
+                            b,
+                            Type::NonConfirmable,
+                            MessageId::new(1),
+                            token,
+                            &response,
+                            payload,
+                            &mut ec,
+                            binding,
+                        )
+                    } else {
+                        reference_encode_response(
+                            &mut expected,
+                            peer,
+                            b,
+                            Type::Acknowledgement,
+                            MessageId::new(1),
+                            token,
+                            &response,
+                            payload,
+                            None,
+                            None,
+                            &mut ec,
+                            binding,
+                        )
+                    };
+                    assert_eq!(result, reference);
+                    assert_eq!(
+                        actual.access_tx(a).unwrap().as_bytes(),
+                        expected.access_tx(b).unwrap().as_bytes()
+                    );
+                    assert_eq!(
+                        ac.as_ref().unwrap().sender_seq(),
+                        ec.as_ref().unwrap().sender_seq()
+                    );
+                    #[cfg(feature = "diagnostics")]
+                    assert_eq!(
+                        actual.work_metrics().tx_payload_encoded_bytes,
+                        expected.work_metrics().tx_payload_encoded_bytes
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn generated_response_selects_installed_association_like_legacy() {
+    use crate::oscore::{BoundedSecurityContext, DeriveParams, PartialIv, RequestRef};
+    use crate::storage::{EngineBuilder, Memory};
+    let context = || {
+        BoundedSecurityContext::<4>::derive(DeriveParams {
+            master_secret: &[1; 16],
+            master_salt: &[],
+            sender_id: &[1],
+            recipient_id: &[],
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let physical = Endpoint::v4([127, 0, 0, 1], 5683);
+    for notification in [false, true] {
+        let mut ac = super::oscore::Store::<4, 1>::new();
+        let mut ec = super::oscore::Store::<4, 1>::new();
+        let aa = ac
+            .install(physical, [7; 32], 1, &mut Some(context()))
+            .unwrap();
+        let ea = ec
+            .install(physical, [7; 32], 1, &mut Some(context()))
+            .unwrap();
+        let mut actual = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(Memory::<profiles::Default>::new())
+            .unwrap();
+        let mut expected = EngineBuilder::new()
+            .profile::<profiles::Default>()
+            .block_wise(false)
+            .build(Memory::<profiles::Default>::new())
+            .unwrap();
+        let a = actual.acquire_tx().unwrap();
+        let b = expected.acquire_tx().unwrap();
+        let response = Response::content(b"p").observe(u32::MAX).max_age(0);
+        let token = Token::new(b"t").unwrap();
+        let binding = Some(RequestRef::from_kid(&[], PartialIv::from_seq(0).unwrap()).unwrap());
+        let result: Result<(), Error<()>> = if notification {
+            super::encode_notification(
+                &mut actual,
+                aa.route,
+                a,
+                Type::NonConfirmable,
+                MessageId::new(1),
+                token,
+                &response,
+                b"p",
+                &mut ac,
+                binding,
+            )
+        } else {
+            super::encode_response(
+                &mut actual,
+                aa.route,
+                a,
+                Type::Acknowledgement,
+                MessageId::new(1),
+                token,
+                &response,
+                b"p",
+                None,
+                None,
+                &mut ac,
+                binding,
+            )
+        };
+        let reference: Result<(), Error<()>> = if notification {
+            reference_encode_notification(
+                &mut expected,
+                ea.route,
+                b,
+                Type::NonConfirmable,
+                MessageId::new(1),
+                token,
+                &response,
+                b"p",
+                &mut ec,
+                binding,
+            )
+        } else {
+            reference_encode_response(
+                &mut expected,
+                ea.route,
+                b,
+                Type::Acknowledgement,
+                MessageId::new(1),
+                token,
+                &response,
+                b"p",
+                None,
+                None,
+                &mut ec,
+                binding,
+            )
+        };
+        assert_eq!(result, reference);
+        assert_eq!(
+            actual.access_tx(a).unwrap().as_bytes(),
+            expected.access_tx(b).unwrap().as_bytes()
+        );
+        assert_eq!(
+            ac.rows[0].as_ref().unwrap().context.sender_seq(),
+            if notification { 1 } else { 0 }
+        );
+        assert_eq!(
+            ac.rows[0].as_ref().unwrap().context.sender_seq(),
+            ec.rows[0].as_ref().unwrap().context.sender_seq()
+        );
+    }
+}

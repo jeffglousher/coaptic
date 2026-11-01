@@ -401,6 +401,7 @@ pub(crate) fn encode_request<S: Storage + DatagramSlots, E, const REQUESTS: usiz
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to unprotected traffic. Size misses stay
 /// [`EncodeError::BufferTooSmall`] so the server may start Inner Block2.
+#[cfg(test)]
 pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &Field<REQUESTS, S::Token>,
     peer: Endpoint,
@@ -425,10 +426,75 @@ pub(crate) fn encode_message<S: Storage + DatagramSlots, E, const REQUESTS: usiz
         .map_err(super::Error::from)
 }
 
+/// Encode only the ordered, bounded response stream constructed by App.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_generated<'a, S: Storage + DatagramSlots, E, const R: usize>(
+    ctx: &mut Field<R, S::Token>,
+    peer: Endpoint,
+    request: Request,
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    msg: &crate::message::Parts<
+        'a,
+        S::Token,
+        impl Iterator<Item = crate::message::Opt<'a>> + Clone,
+    >,
+    fresh: bool,
+) -> Result<(), super::Error<E>> {
+    #[cfg(not(feature = "oscore"))]
+    let _ = (ctx, peer, request, fresh);
+    #[cfg(feature = "oscore")]
+    if fresh && ctx.is_some() {
+        return protect_into_tx(engine, tx, |out| {
+            if let Some(ctx) =
+                selected_mut(ctx, peer.association()).map_err(super::Error::Oscore)?
+            {
+                let request = request.ok_or_else(|| protect_err(OscoreError::Context))?;
+                return ctx
+                    .protect_generated(msg, request, true, out)
+                    .map_err(protect_err);
+            }
+            msg.encode(out)
+                .map_err(|e| super::Error::Message(SlotMessageError::Encode(e)))
+        });
+    } else {
+        // Preserve ordinary-response selection before acquiring TX access.
+        if let Some(ctx) = selected(ctx, peer.association()).map_err(super::Error::Oscore)? {
+            let request = request.ok_or_else(|| protect_err(OscoreError::Context))?;
+            return protect_into_tx(engine, tx, |out| {
+                ctx.protect_generated_response(msg, request, out)
+                    .map_err(protect_err)
+            });
+        }
+    }
+    let out = engine
+        .storage_mut()
+        .tx_payload_mut(tx)
+        .ok_or(crate::storage::SlotError::NotOccupied)
+        .map_err(SlotMessageError::Slot)
+        .map_err(super::Error::from)?;
+    let n = msg
+        .encode(out)
+        .map_err(SlotMessageError::Encode)
+        .map_err(super::Error::from)?;
+    engine
+        .storage_mut()
+        .set_tx_len(tx, n)
+        .map_err(SlotMessageError::Slot)
+        .map_err(super::Error::from)?;
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(
+        &mut engine.work_metrics_mut().tx_payload_encoded_bytes,
+        msg.payload.len(),
+    );
+    Ok(())
+}
+
 /// Protect a notification with a new Partial IV (RFC 8613 §4.1.3.5.2).
 ///
 /// Fail-closed: an attached context without a stored [`RequestRef`] does
 /// not fall back to unprotected traffic.
+#[cfg(test)]
 pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     ctx: &mut Field<REQUESTS, S::Token>,
     peer: Endpoint,

@@ -260,32 +260,29 @@ pub fn protect_response<const REQUESTS: usize, T: OwnedToken>(
     if !plain.code().is_response() {
         return Err(Error::MessageLength);
     }
-    let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
-    let nonce = aead::nonce(ctx.common_iv(), request.kid(), request.piv());
-    let mut ciphertext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
-    let ct_len = aead::seal_in_place(
-        ctx.sender_key(),
-        &nonce,
-        aad.as_bytes(),
-        pt_len,
-        &mut ciphertext,
-    )?;
-    encode_outer(
-        plain.ty(),
-        outer_code(plain.code(), plain.options()),
-        plain.message_id(),
-        plain.token(),
-        plain.options(),
+    seal_response(
+        ctx,
+        request,
         None,
-        None,
-        None,
-        &ciphertext[..ct_len],
-        out,
+        |out| encode_plaintext(plain, out),
+        |ciphertext| {
+            encode_outer(
+                plain.ty(),
+                outer_code(plain.code(), plain.options()),
+                plain.message_id(),
+                plain.token(),
+                plain.options(),
+                None,
+                None,
+                None,
+                ciphertext,
+                out,
+            )
+        },
     )
 }
 
-/// Protect a response and optionally include a new Partial IV.
+/// Protect a response and include a new Partial IV.
 pub fn protect_response_piv<const REQUESTS: usize, T: OwnedToken>(
     ctx: &mut BoundedSecurityContext<REQUESTS, T>,
     plain: &Message<'_, T>,
@@ -296,10 +293,43 @@ pub fn protect_response_piv<const REQUESTS: usize, T: OwnedToken>(
         return Err(Error::MessageLength);
     }
     let piv = ctx.take_sender_piv()?;
+    seal_response(
+        ctx,
+        request,
+        Some(piv),
+        |out| encode_plaintext(plain, out),
+        |ciphertext| {
+            encode_outer(
+                plain.ty(),
+                outer_code(plain.code(), plain.options()),
+                plain.message_id(),
+                plain.token(),
+                plain.options(),
+                Some(piv),
+                None,
+                None,
+                ciphertext,
+                out,
+            )
+        },
+    )
+}
+
+/// One sealing core for legacy public messages and private generated responses.
+fn seal_response<const R: usize, T: OwnedToken>(
+    ctx: &BoundedSecurityContext<R, T>,
+    request: RequestRef,
+    piv: Option<PartialIv>,
+    plaintext: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
+    outer: impl FnOnce(&[u8]) -> Result<usize, Error>,
+) -> Result<usize, Error> {
     let aad = Aad::new(request.kid(), request.piv().as_bytes())?;
-    let nonce = ctx.request_nonce(piv);
+    let nonce = match piv {
+        Some(piv) => ctx.request_nonce(piv),
+        None => aead::nonce(ctx.common_iv(), request.kid(), request.piv()),
+    };
     let mut ciphertext = [0u8; INNER];
-    let pt_len = encode_plaintext(plain, &mut ciphertext)?;
+    let pt_len = plaintext(&mut ciphertext)?;
     let ct_len = aead::seal_in_place(
         ctx.sender_key(),
         &nonce,
@@ -307,18 +337,81 @@ pub fn protect_response_piv<const REQUESTS: usize, T: OwnedToken>(
         pt_len,
         &mut ciphertext,
     )?;
-    encode_outer(
-        plain.ty(),
-        outer_code(plain.code(), plain.options()),
-        plain.message_id(),
-        plain.token(),
-        plain.options(),
-        Some(piv),
-        None,
-        None,
-        &ciphertext[..ct_len],
-        out,
-    )
+    outer(&ciphertext[..ct_len])
+}
+
+impl<const R: usize, T: OwnedToken> BoundedSecurityContext<R, T> {
+    /// Only App's generated ordered response options may use this adapter:
+    /// no Class-U-only options, and the actual Observe value is known already.
+    pub(crate) fn protect_generated<'a, I: Iterator<Item = Opt<'a>> + Clone>(
+        &mut self,
+        plain: &crate::message::Parts<'a, T, I>,
+        request: RequestRef,
+        fresh: bool,
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        if !plain.code.is_response() {
+            return Err(Error::MessageLength);
+        }
+        let piv = if fresh {
+            Some(self.take_sender_piv()?)
+        } else {
+            None
+        };
+        self.seal_generated(plain, request, piv, out)
+    }
+
+    pub(crate) fn protect_generated_response<'a, I: Iterator<Item = Opt<'a>> + Clone>(
+        &self,
+        plain: &crate::message::Parts<'a, T, I>,
+        request: RequestRef,
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        if !plain.code.is_response() {
+            return Err(Error::MessageLength);
+        }
+        self.seal_generated(plain, request, None, out)
+    }
+
+    fn seal_generated<'a, I: Iterator<Item = Opt<'a>> + Clone>(
+        &self,
+        plain: &crate::message::Parts<'a, T, I>,
+        request: RequestRef,
+        piv: Option<PartialIv>,
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        seal_response(
+            self,
+            request,
+            piv,
+            |out| encode_plaintext_iter(plain.code, plain.options.clone(), plain.payload, out),
+            |ciphertext| {
+                let mut oscore = [0u8; 1 + MAX_PIV_LEN + 1 + MAX_ID_CONTEXT_LEN + MAX_ID_LEN];
+                let n = header::encode_option(&mut oscore, piv, None, None)?;
+                let opts = plain
+                    .observe
+                    .map(|v| Opt::new(OptionNumber::OBSERVE, v))
+                    .into_iter()
+                    .chain(core::iter::once(Opt::oscore(&oscore[..n])))
+                    .chain(plain.observe.map(|_| Opt::new(OptionNumber::MAX_AGE, &[])));
+                let code = if plain.observe.is_some() {
+                    Code::CONTENT
+                } else {
+                    Code::CHANGED
+                };
+                let outer = crate::message::Parts {
+                    ty: plain.ty,
+                    code,
+                    id: plain.id,
+                    token: plain.token,
+                    payload: ciphertext,
+                    options: opts,
+                    observe: plain.observe,
+                };
+                Ok(outer.encode(out)?)
+            },
+        )
+    }
 }
 
 /// See [`super::SecurityContext::unprotect_response`].
@@ -447,14 +540,28 @@ fn outer_code(inner: Code, opts: &[Opt<'_>]) -> Code {
 }
 
 fn encode_plaintext<T: OwnedToken>(plain: &Message<'_, T>, out: &mut [u8]) -> Result<usize, Error> {
+    encode_plaintext_iter(
+        plain.code(),
+        plain.options().iter().copied(),
+        plain.payload(),
+        out,
+    )
+}
+
+fn encode_plaintext_iter<'a>(
+    code: Code,
+    options: impl Iterator<Item = Opt<'a>>,
+    payload: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Error> {
     if out.is_empty() {
         return Err(Error::BufferTooSmall);
     }
-    out[0] = plain.code().as_raw();
+    out[0] = code.as_raw();
     let mut i = 1;
     let mut prev = 0u16;
-    let notify = plain.code().is_response();
-    for opt in plain.options() {
+    let notify = code.is_response();
+    for opt in options {
         let n = opt.number().get();
         if header::is_oscore(n) || !header::classify(n).in_plaintext() {
             continue;
@@ -471,19 +578,17 @@ fn encode_plaintext<T: OwnedToken>(plain: &Message<'_, T>, out: &mut [u8]) -> Re
         i = write_option(out, i, u32::from(n - prev), value)?;
         prev = n;
     }
-    if !plain.payload().is_empty() {
+    if !payload.is_empty() {
         if i >= out.len() {
             return Err(Error::BufferTooSmall);
         }
         out[i] = 0xff;
         i += 1;
-        let end = i
-            .checked_add(plain.payload().len())
-            .ok_or(Error::BufferTooSmall)?;
+        let end = i.checked_add(payload.len()).ok_or(Error::BufferTooSmall)?;
         if end > out.len() {
             return Err(Error::BufferTooSmall);
         }
-        out[i..end].copy_from_slice(plain.payload());
+        out[i..end].copy_from_slice(payload);
         i = end;
     }
     Ok(i)

@@ -46,6 +46,7 @@ pub use decode::{ParsedMessage, TokenDecodeError, decode, decode_with_token};
 #[cfg(feature = "oscore")]
 pub(crate) use decode::{decode_options_payload, decode_without_token};
 pub use echo::{Echo, EchoFreshness};
+pub(crate) use encode::Parts;
 #[cfg(feature = "oscore")]
 pub(crate) use encode::write_option;
 pub use encode::{Message, encode};

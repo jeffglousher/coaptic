@@ -5,6 +5,39 @@ use crate::error::EncodeError;
 use super::option::Opt;
 use super::{Code, MessageId, OwnedToken, Token, Type};
 
+/// Private App-generated response view. Options are ordered and contain no
+/// Class-U-only values. Observe is known by construction, never rediscovered.
+pub(crate) struct Parts<'a, T, I> {
+    pub(crate) ty: Type,
+    pub(crate) code: Code,
+    pub(crate) id: MessageId,
+    pub(crate) token: T,
+    pub(crate) payload: &'a [u8],
+    pub(crate) options: I,
+    #[cfg(feature = "oscore")]
+    pub(crate) observe: Option<&'a [u8]>,
+}
+impl<'a, T: OwnedToken, I: Iterator<Item = Opt<'a>> + Clone> Parts<'a, T, I> {
+    pub(crate) fn encode(&self, out: &mut [u8]) -> Result<usize, EncodeError> {
+        if self.code.is_empty()
+            && (!self.token.is_empty()
+                || self.options.clone().next().is_some()
+                || !self.payload.is_empty())
+        {
+            return Err(EncodeError::EmptyMessageNotEmpty);
+        }
+        encode_iter(
+            out,
+            self.ty,
+            self.code,
+            self.id,
+            self.token,
+            self.options.clone(),
+            self.payload,
+        )
+    }
+}
+
 /// Maximum option delta or length that fits in a 14-extended field.
 const MAX_EXTENDED: u32 = 269 + 65535;
 

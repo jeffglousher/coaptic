@@ -7206,82 +7206,28 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
-    let cf = response.format().map(crate::ContentFormat::encode);
-    let max_age = response.max_age_secs().map(EncodedUint::new);
-    let observe = response
-        .observe_seq()
-        .map(|seq| encode_uint(seq & 0x00ff_ffff));
-    let block_enc = block.map(|b| b.value.encode());
-    let size2_enc = block
-        .and_then(|b| b.size2)
-        .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
-    let block1_enc = block1.map(|b| b.value.encode());
-    let echo = response.echo_option();
-    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
-    let filled = (|| -> Result<(), EncodeError> {
-        if let Some(etag) = response.etag_bytes() {
-            push_opt(&mut opts, Opt::etag(etag))?;
-        }
-        if let Some(ref encoded) = observe {
-            push_opt(&mut opts, Opt::observe(encoded))?;
-        }
-        for segment in response.location_paths() {
-            push_opt(&mut opts, Opt::location_path(segment))?;
-        }
-        if let Some(ref encoded) = cf {
-            push_opt(&mut opts, Opt::content_format(encoded))?;
-        }
-        if let Some(ref encoded) = max_age {
-            push_opt(&mut opts, Opt::max_age(encoded))?;
-        }
-        for query in response.location_queries() {
-            push_opt(&mut opts, Opt::location_query(query))?;
-        }
-        if let Some(ref encoded) = block_enc {
-            if block.is_some_and(|b| b.q_block) {
-                if let Some(ref size2) = size2_enc {
-                    push_opt(&mut opts, Opt::size2(size2))?;
-                }
-                push_opt(&mut opts, Opt::q_block2(encoded))?;
-            } else {
-                push_opt(&mut opts, Opt::block2(encoded))?;
-            }
-        }
-        if let Some(ref encoded) = block1_enc {
-            push_opt(
-                &mut opts,
-                if block1.is_some_and(|b| b.q_block) {
-                    Opt::q_block1(encoded)
-                } else {
-                    Opt::block1(encoded)
-                },
-            )?;
-        }
-        if let Some(ref echo) = echo {
-            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
-        }
-        Ok(())
-    })();
-    match filled {
-        Ok(()) => {
-            let msg = Message::new(ty, response.code(), mid)
-                .with_token(token)
-                .with_options(opts.as_slice())
-                .with_payload(payload);
-            if response.fresh_piv()
-                || block.is_some_and(|b| b.q_block)
-                || (response.observe_seq().is_some() && ty != Type::Acknowledgement)
-            {
-                oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-            } else {
-                oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-            }
-        }
-        Err(EncodeError::OptionsFull) => {
-            encode_options_full_500(engine, peer, tx, ty, mid, token, oscore_ctx, oscore_req)
-        }
-        Err(e) => Err(Error::Message(SlotMessageError::Encode(e))),
-    }
+    let options = ResponseOptions::new(response, block, block1, false);
+    let parts = crate::message::Parts {
+        ty,
+        code: response.code(),
+        id: mid,
+        token,
+        payload,
+        options: options.iter(),
+        #[cfg(feature = "oscore")]
+        observe: options.observe.as_ref().map(EncodedUint::as_bytes),
+    };
+    oscore::encode_generated(
+        oscore_ctx,
+        peer,
+        oscore_req,
+        engine,
+        tx,
+        &parts,
+        response.fresh_piv()
+            || block.is_some_and(|b| b.q_block)
+            || (response.observe_seq().is_some() && ty != Type::Acknowledgement),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7298,40 +7244,90 @@ fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
-    let cf = response.format().map(crate::ContentFormat::encode);
-    let max_age = response.max_age_secs().map(EncodedUint::new);
-    let observe = response
-        .observe_seq()
-        .map(|seq| encode_uint(seq & 0x00ff_ffff));
-    // Only ETag, Observe, Content-Format and Max-Age are reachable here.
-    let mut opts = OptionsBuilder::<4>::new();
-    let filled = (|| -> Result<(), EncodeError> {
-        if let Some(etag) = response.etag_bytes() {
-            push_opt(&mut opts, Opt::etag(etag))?;
+    let options = ResponseOptions::new(response, None, None, true);
+    let parts = crate::message::Parts {
+        ty,
+        code: response.code(),
+        id: mid,
+        token,
+        payload,
+        options: options.iter(),
+        #[cfg(feature = "oscore")]
+        observe: options.observe.as_ref().map(EncodedUint::as_bytes),
+    };
+    oscore::encode_generated(oscore_ctx, peer, oscore_req, engine, tx, &parts, true)
+}
+
+/// Transient scalar backing borrowing Response. Two bounded Location lists and
+/// eight scalar kinds permit at most 24 options; notifications permit only four.
+struct ResponseOptions<'a, 'r, K: OwnedToken> {
+    response: &'a Response<'r, K>,
+    cf: Option<EncodedUint>,
+    max_age: Option<EncodedUint>,
+    observe: Option<EncodedUint>,
+    block: Option<EncodedUint>,
+    block1: Option<EncodedUint>,
+    size2: Option<EncodedUint>,
+    echo: Option<Echo>,
+    q2: bool,
+    q1: bool,
+    notification: bool,
+}
+impl<'a, 'r, K: OwnedToken> ResponseOptions<'a, 'r, K> {
+    fn new(
+        response: &'a Response<'r, K>,
+        block: Option<BlockOpt>,
+        block1: Option<BlockOpt>,
+        notification: bool,
+    ) -> Self {
+        Self {
+            response,
+            cf: response.format().map(crate::ContentFormat::encode),
+            max_age: response.max_age_secs().map(EncodedUint::new),
+            observe: response
+                .observe_seq()
+                .map(|seq| encode_uint(seq & 0x00ff_ffff)),
+            block: block.map(|b| b.value.encode()),
+            block1: block1.map(|b| b.value.encode()),
+            size2: block
+                .and_then(|b| b.size2)
+                .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX))),
+            echo: if notification {
+                None
+            } else {
+                response.echo_option()
+            },
+            q2: block.is_some_and(|b| b.q_block),
+            q1: block1.is_some_and(|b| b.q_block),
+            notification,
         }
-        if let Some(ref encoded) = observe {
-            push_opt(&mut opts, Opt::observe(encoded))?;
-        }
-        if let Some(ref encoded) = cf {
-            push_opt(&mut opts, Opt::content_format(encoded))?;
-        }
-        if let Some(ref encoded) = max_age {
-            push_opt(&mut opts, Opt::max_age(encoded))?;
-        }
-        Ok(())
-    })();
-    match filled {
-        Ok(()) => {
-            let msg = Message::new(ty, response.code(), mid)
-                .with_token(token)
-                .with_options(opts.as_slice())
-                .with_payload(payload);
-            oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-        }
-        Err(EncodeError::OptionsFull) => {
-            encode_options_full_500(engine, peer, tx, ty, mid, token, oscore_ctx, oscore_req)
-        }
-        Err(e) => Err(Error::Message(SlotMessageError::Encode(e))),
+    }
+    fn iter(&self) -> impl Iterator<Item = Opt<'_>> + Clone {
+        let paths = if self.notification {
+            &[][..]
+        } else {
+            self.response.location_paths()
+        };
+        let queries = if self.notification {
+            &[][..]
+        } else {
+            self.response.location_queries()
+        };
+        self.response
+            .etag_bytes()
+            .map(Opt::etag)
+            .into_iter()
+            .chain(self.observe.as_ref().map(Opt::observe))
+            .chain(paths.iter().map(|s| Opt::location_path(s)))
+            .chain(self.cf.as_ref().map(Opt::content_format))
+            .chain(self.max_age.as_ref().map(Opt::max_age))
+            .chain(self.block1.as_ref().filter(|_| self.q1).map(Opt::q_block1))
+            .chain(queries.iter().map(|s| Opt::location_query(s)))
+            .chain(self.block.as_ref().filter(|_| !self.q2).map(Opt::block2))
+            .chain(self.block1.as_ref().filter(|_| !self.q1).map(Opt::block1))
+            .chain(self.size2.as_ref().filter(|_| self.q2).map(Opt::size2))
+            .chain(self.block.as_ref().filter(|_| self.q2).map(Opt::q_block2))
+            .chain(self.echo.as_ref().map(|e| Opt::echo(e.as_slice())))
     }
 }
 
@@ -7349,6 +7345,7 @@ pub(crate) fn push_opt<'a, const N: usize>(
 /// Under attached OSCORE this is OSCORE-protected. It must not fall back
 /// to unprotected traffic.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn encode_options_full_500<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     peer: Endpoint,
