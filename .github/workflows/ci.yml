@@ -152,8 +152,8 @@ jobs:
   validation:
     name: Companion validation
     if: github.event_name == 'workflow_dispatch' && inputs.full_validation
-    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@cdc5b81dede6d8a80145443dce07fced883e0a5b
+    uses: jeffglousher/coaptic-validation/.github/workflows/validation.yml@1b18e19182163a2c6df4ebf9db9dc0e69cd98050
     with:
-      suite_revision: cdc5b81dede6d8a80145443dce07fced883e0a5b
+      suite_revision: 1b18e19182163a2c6df4ebf9db9dc0e69cd98050
       library_repository: ${{ github.repository }}
       library_revision: ${{ github.sha }}
