@@ -457,6 +457,130 @@ fn unrecognized_critical_option_is_bad_option() {
 }
 
 #[test]
+fn validated_request_block_facts_match_public_getters() {
+    let cases: &[&[(OptionNumber, &[u8])]] = &[
+        &[],
+        &[(OptionNumber::BLOCK1, &[0x20])],
+        &[(OptionNumber::BLOCK2, &[0x32])],
+        &[
+            (OptionNumber::Q_BLOCK2, &[0x20]),
+            (OptionNumber::Q_BLOCK2, &[0x30]),
+        ],
+        &[
+            (OptionNumber::BLOCK1, &[0x20]),
+            (OptionNumber::BLOCK1, &[1; 4]),
+        ],
+        &[
+            (OptionNumber::BLOCK2, &[0x32]),
+            (OptionNumber::BLOCK2, &[1; 4]),
+        ],
+        &[
+            (OptionNumber::BLOCK1, &[0x20]),
+            (OptionNumber::BLOCK2, &[0x32]),
+        ],
+        // Q-Block1 presence is deliberately not validation of its value here.
+        &[(OptionNumber::Q_BLOCK1, &[1; 4])],
+    ];
+    for case in cases {
+        let mut options = OptionsBuilder::<4>::new();
+        for &(number, value) in *case {
+            options.push(Opt::new(number, value)).unwrap();
+        }
+        let (wire, n) = encode_req_extra(Code::GET, &[], options.as_slice(), &[]);
+        let parsed = decode(&wire[..n]).unwrap();
+        let facts = super::validated_request_options(&parsed, &super::oscore::Store::<4, 1>::new())
+            .unwrap();
+        assert_eq!(facts.block1, parsed.block1().and_then(Result::ok));
+        assert_eq!(facts.block2, parsed.block2().and_then(Result::ok));
+        assert_eq!(
+            facts.q_block2,
+            parsed.q_block2().next().and_then(Result::ok)
+        );
+    }
+}
+
+#[test]
+fn optionless_root_get_dispatches_without_block_metadata() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let (wire, n) = encode_req_extra(Code::GET, &[], &[], &[]);
+    assert_eq!(decode(&wire[..n]).unwrap().options().count(), 0);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("", get(get_temp))
+        .allow_unprotected()
+        .bind(Loopback {
+            inbox: Some((peer, wire, n)),
+            last_send: None,
+        })
+        .unwrap();
+    app.poll(0).unwrap();
+    let reply = last_reply(&app);
+    assert_eq!(reply.code, Code::CONTENT);
+    assert_eq!(&reply.payload[..reply.payload_len], b"21.5");
+    assert!(reply.block1.is_none());
+    assert!(reply.block2.is_none());
+    assert_eq!(app.engine_mut().rx_occupied(), 0);
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
+fn repeated_block1_validates_and_echoes_only_the_first_value() {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    CALLS.store(0, Ordering::SeqCst);
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for malformed_first in [false, true] {
+        let values: [&[u8]; 2] = if malformed_first {
+            [&[1; 4], &[]]
+        } else {
+            [&[], &[1; 4]]
+        };
+        let options = values.map(|value| Opt::new(OptionNumber::BLOCK1, value));
+        let (wire, n) = encode_req_extra(Code::PUT, &["upload"], &options, b"x");
+        let parsed = decode(&wire[..n]).unwrap();
+        assert_eq!(parsed.block1().unwrap().is_err(), malformed_first);
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .route(
+                "upload",
+                put(|request| {
+                    CALLS.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(request.body().unwrap_or(request.payload()), b"x");
+                    Response::changed()
+                }),
+            )
+            .allow_unprotected()
+            .bind(Loopback {
+                inbox: Some((peer, wire, n)),
+                last_send: None,
+            })
+            .unwrap();
+        app.poll(0).unwrap();
+        let reply = last_reply(&app);
+        assert_eq!(
+            reply.code,
+            if malformed_first {
+                Code::BAD_OPTION
+            } else {
+                Code::CHANGED
+            }
+        );
+        assert_eq!(
+            reply.block1,
+            if malformed_first {
+                None
+            } else {
+                parsed.block1().and_then(Result::ok)
+            }
+        );
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+    }
+}
+
+#[test]
 fn repeated_block2_validates_and_uses_only_the_first_value() {
     static CALLS: AtomicUsize = AtomicUsize::new(0);
     CALLS.store(0, Ordering::SeqCst);
@@ -496,6 +620,76 @@ fn repeated_block2_validates_and_uses_only_the_first_value() {
         );
         assert_eq!(CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(app.engine_mut().rx_occupied(), 0);
+    }
+}
+
+#[cfg(feature = "oscore")]
+#[test]
+fn validated_request_option_errors_remain_authenticated_before_dispatch() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    for unknown in [false, true] {
+        let make = |server| {
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[0x17; 16],
+                master_salt: &[],
+                sender_id: if server { &[2] } else { &[1] },
+                recipient_id: if server { &[1] } else { &[2] },
+                id_context: &[],
+            })
+            .unwrap()
+        };
+        let mut client = make(false);
+        let mut options = OptionsBuilder::<4>::new();
+        options.push(Opt::uri_path("probe")).unwrap();
+        if unknown {
+            options
+                .push(Opt::new(OptionNumber::new(65001), &[]))
+                .unwrap();
+        } else {
+            options
+                .push(Opt::new(OptionNumber::Q_BLOCK2, &[0x20]))
+                .unwrap();
+            options
+                .push(Opt::new(OptionNumber::Q_BLOCK2, &[1; 4]))
+                .unwrap();
+        }
+        let token = Token::new(&[1]).unwrap();
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+            .with_token(token)
+            .with_options(options.as_slice());
+        let mut wire = [0; 256];
+        let n = client.protect_request(&request, &mut wire).unwrap();
+        let mut app = App::profile::<profiles::Default>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .route(
+                "probe",
+                get(|_| -> Response<'static> { panic!("invalid request dispatched") }),
+            )
+            .allow_unprotected()
+            .bind(Loopback {
+                inbox: Some((peer, wire, n)),
+                last_send: None,
+            })
+            .unwrap();
+        app.set_oscore(&mut Some(make(true))).unwrap();
+        app.poll(0).unwrap();
+        let (_, bytes, n) = app.transport().last_send.unwrap();
+        let outer = decode(&bytes[..n]).unwrap();
+        assert!(outer.oscore().is_some());
+        let mut plain = [0; 256];
+        let reply = client
+            .unprotect_response(&outer, client.lookup(token).unwrap(), &mut plain)
+            .unwrap();
+        assert_eq!(reply.code(), Code::BAD_OPTION);
+        if unknown {
+            let details = ProblemDetails::decode(reply.payload()).unwrap();
+            assert!(details.unprocessed_options().eq([65001]));
+        }
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
     }
 }
 

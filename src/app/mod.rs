@@ -3233,78 +3233,100 @@ where
     }
 }
 
+// Request-local facts, consumed before any later packet replacement.
+struct ValidatedRequestOptions {
+    block1: Option<BlockValue>,
+    block2: Option<BlockValue>,
+    q_block2: Option<BlockValue>,
+}
+
 /// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
 /// attached context, or a malformed Block / Q-Block2 value.
-fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
+fn validated_request_options<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
-) -> bool {
+) -> Result<ValidatedRequestOptions, ()> {
     use crate::message::OptionNumber;
 
     let fetch = parsed.code() == Code::FETCH;
     let mut tag = false;
     let mut format = false;
     let mut observe = false;
-    let mut block1 = false;
-    let mut block2 = false;
+    let mut block1 = None;
+    let mut block2 = None;
     let mut q_block1 = false;
-    let mut q_block2 = false;
+    let mut q_block2 = None;
     let mut repeated_q_block2 = false;
     let mut q_block2_start = false;
-    // Decode validated wire options once; values continue to borrow the packet.
+    // Retain only validated scalars from this packet; no packet borrow escapes.
     for option in parsed.options() {
         match option.number() {
             OptionNumber::REQUEST_TAG => {
                 if tag || option.value().len() > 8 {
-                    return true;
+                    return Err(());
                 }
                 tag = true;
             }
             OptionNumber::CONTENT_FORMAT if fetch => {
                 if format || option.as_uint16().is_err() {
-                    return true;
+                    return Err(());
                 }
                 format = true;
             }
             OptionNumber::OBSERVE => observe = true,
-            OptionNumber::OSCORE if !oscore::is_active(oscore) => return true,
+            OptionNumber::OSCORE if !oscore::is_active(oscore) => return Err(()),
             OptionNumber::BLOCK1 => {
                 // Existing singleton accessors validate only the first value.
-                if !block1 && option.as_block().is_err() {
-                    return true;
+                if block1.is_none() {
+                    block1 = Some(option.as_block().map_err(|_| ())?);
                 }
-                block1 = true;
             }
             OptionNumber::BLOCK2 => {
-                if !block2 && option.as_block().is_err() {
-                    return true;
+                if block2.is_none() {
+                    block2 = Some(option.as_block().map_err(|_| ())?);
                 }
-                block2 = true;
             }
             OptionNumber::Q_BLOCK1 => {
                 if q_block1 {
-                    return true;
+                    return Err(());
                 }
                 q_block1 = true;
             }
             OptionNumber::Q_BLOCK2 => {
                 let Ok(value) = option.as_block() else {
-                    return true;
+                    return Err(());
                 };
                 if value.is_bert() {
-                    return true;
+                    return Err(());
                 }
-                repeated_q_block2 |= q_block2;
-                q_block2 = true;
+                repeated_q_block2 |= q_block2.is_some();
+                q_block2.get_or_insert(value);
                 q_block2_start |= value.more()
                     && value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0;
             }
-            number if number.is_critical() && !number.is_known() => return true,
+            number if number.is_critical() && !number.is_known() => return Err(()),
             _ => {}
         }
     }
-    ((block1 || block2) && (q_block1 || q_block2))
+    if ((block1.is_some() || block2.is_some()) && (q_block1 || q_block2.is_some()))
         || (repeated_q_block2 && (observe || q_block2_start))
+    {
+        return Err(());
+    }
+    Ok(ValidatedRequestOptions {
+        block1,
+        block2,
+        q_block2,
+    })
+}
+
+// Keep the independent legacy-predicate differential tests on the same validator.
+#[cfg(test)]
+fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
+    parsed: &ParsedMessage<'_, K>,
+    oscore: &oscore::Field<REQUESTS, K>,
+) -> bool {
+    validated_request_options(parsed, oscore).is_err()
 }
 
 fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
@@ -3718,7 +3740,7 @@ where
     // Known-stack critical check and OSCORE-without-context run here,
     // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
     // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
-    if bad_option_request(&parsed, oscore) {
+    let Ok(validated) = validated_request_options(&parsed, oscore) else {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
@@ -3752,10 +3774,10 @@ where
         );
         let _ = engine.release_rx(rx);
         return outcome;
-    }
-    let block2 = parsed.block2().and_then(Result::ok);
-    let q_block2 = parsed.q_block2().next().and_then(Result::ok);
-    let block1 = parsed.block1().and_then(Result::ok).map(|value| BlockOpt {
+    };
+    let block2 = validated.block2;
+    let q_block2 = validated.q_block2;
+    let block1 = validated.block1.map(|value| BlockOpt {
         value,
         q_block: false,
         size2: None,
