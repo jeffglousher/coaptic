@@ -7664,7 +7664,7 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     {
         *dedup_closed = None;
     }
-    if engine.storage_mut().dedup().is_empty() {
+    if engine.storage_mut().dedup().is_empty() || !engine.storage_mut().dedup_may_expire(now_ms) {
         return;
     }
     let n = engine.capacities().dedup_entries;

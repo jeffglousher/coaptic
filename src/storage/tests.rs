@@ -5965,3 +5965,25 @@ fn allocated_initial_con_reservation_counts_nstart_without_starting_rto() {
         .unwrap();
     initial_con_reservation_contract(engine);
 }
+
+#[test]
+fn custom_dedup_expiry_defaults_to_inspection() {
+    struct Custom;
+    impl super::DedupSlots for Custom {
+        fn insert_dedup(&mut self, _: DedupEntry) -> Option<SlotId> {
+            None
+        }
+        fn lookup_dedup(&self, _: DedupKey) -> Option<SlotId> {
+            None
+        }
+        fn remove_dedup(&mut self, _: DedupKey) -> bool {
+            false
+        }
+        fn dedup_entry_ref(&self, _: SlotId) -> Option<&DedupEntry> {
+            None
+        }
+    }
+    for now in [0, 1, u64::MAX] {
+        assert!(super::DedupSlots::dedup_may_expire(&mut Custom, now));
+    }
+}

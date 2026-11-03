@@ -261,6 +261,17 @@ pub trait DatagramSlots {
 /// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
 /// without a second handler call.
 pub trait DedupSlots {
+    /// Whether a row may have a nonzero deadline at or before `now_ms`.
+    ///
+    /// `false` guarantees that no occupied payload is due. `true` permits the
+    /// caller to inspect rows and release their replay pins in its usual order.
+    /// The default always requests that inspection. Implementations that cache
+    /// deadlines must account for every successful payload write, including
+    /// writes through their raw table interface. Clock values may move backward.
+    fn dedup_may_expire(&mut self, _now_ms: u64) -> bool {
+        true
+    }
+
     /// Insert `entry`, or return the existing slot if the key is present.
     ///
     /// `None` when the table is full and the key is not already stored.
