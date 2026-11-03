@@ -16084,7 +16084,7 @@ fn admission_failed_completion_releases_rx_credit_before_collection() {
 
 #[test]
 fn dedup_expiry_preserves_live_replay_and_releases_only_due_tx_pins() {
-    use crate::storage::{DedupSlots, Storage};
+    use crate::storage::Storage;
     let mut app = record_client();
     let peer = Endpoint::v4([192, 0, 2, 50], 5683);
     let tx = app.engine.acquire_tx().unwrap();
@@ -16115,7 +16115,6 @@ fn dedup_expiry_preserves_live_replay_and_releases_only_due_tx_pins() {
     app.engine.write_tx(reused, b"new owner", peer).unwrap();
     super::expire_request_dedup(&mut app.engine, &mut closed, 11);
     assert!(app.engine.storage_mut().tx_datagram().is_occupied(reused));
-    assert!(!app.engine.storage_mut().dedup_may_expire(11));
     super::expire_request_dedup(&mut app.engine, &mut closed, u64::MAX);
     assert!(app.engine.lookup_dedup(future.key()).is_none());
     assert!(app.engine.lookup_dedup(manual.key()).is_some());

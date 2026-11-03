@@ -593,10 +593,6 @@ impl<P: MemoryProfile, B> DedupSlots for Memory<P, B>
 where
     P::Dedup: DedupStore,
 {
-    fn dedup_may_expire(&mut self, now_ms: u64) -> bool {
-        self.dedup.may_expire(now_ms)
-    }
-
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
     }

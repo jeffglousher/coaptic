@@ -35,7 +35,7 @@ use super::pending::{
     PendingMark, PendingRto, next_due_slot, outstanding_pending, record_admission,
 };
 use super::slot::{SlotError, SlotId};
-use super::table::{DedupExpiry, DedupStore, ObserveStore};
+use super::table::{DedupStore, ObserveStore};
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{BlockValue, MessageId};
 
@@ -1622,6 +1622,45 @@ impl<T: OwnedToken> SlotPool for AllocBodyPool<T> {
     }
 }
 
+// A lower bound on all nonzero deadlines; zero means none are stored.
+// Removal can leave this bound too early, which only causes a rescan. Insertion
+// must lower it before a later query can skip any rows.
+#[derive(Default)]
+struct DedupExpiry {
+    next_due_ms: u64,
+}
+
+impl DedupExpiry {
+    const fn new() -> Self {
+        Self { next_due_ms: 0 }
+    }
+
+    fn note(&mut self, entry: &DedupEntry) {
+        let due = entry.due_ms();
+        if due != 0 && (self.next_due_ms == 0 || due < self.next_due_ms) {
+            self.next_due_ms = due;
+        }
+    }
+
+    fn may_expire<'a>(
+        &mut self,
+        now_ms: u64,
+        entries: impl Iterator<Item = &'a DedupEntry>,
+    ) -> bool {
+        if self.next_due_ms == 0 || now_ms < self.next_due_ms {
+            return false;
+        }
+        // Refresh only at the conservative boundary. Payloads exist only in
+        // occupied slots: release/acquire clear them before reuse.
+        self.next_due_ms = entries
+            .map(DedupEntry::due_ms)
+            .filter(|&due| due != 0)
+            .min()
+            .unwrap_or(0);
+        self.next_due_ms != 0 && now_ms >= self.next_due_ms
+    }
+}
+
 struct AllocDedupTable {
     entries: Vec<Option<DedupEntry>>,
     occ: HeapOccupancy,
@@ -1629,6 +1668,11 @@ struct AllocDedupTable {
 }
 
 impl AllocDedupTable {
+    fn may_expire(&mut self, now_ms: u64) -> bool {
+        self.expiry
+            .may_expire(now_ms, self.entries.iter().flatten())
+    }
+
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
@@ -1645,11 +1689,6 @@ impl AllocDedupTable {
 }
 
 impl DedupStore for AllocDedupTable {
-    fn may_expire(&mut self, now_ms: u64) -> bool {
-        self.expiry
-            .may_expire(now_ms, self.entries.iter().flatten())
-    }
-
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId> {
         if let Some(id) = self.lookup(entry.key()) {
             return Some(id);
@@ -1920,12 +1959,63 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
 mod tests {
     use super::*;
 
+    // Compare the accelerator against the public row view after mixed mutations.
+    // Queries deliberately jump backward as well as forward; no monotonic clock
+    // assumption may turn an occupied expired row into a false negative.
+    fn check_dedup_expiry_mutations(mut table: AllocDedupTable) {
+        let ep = Endpoint::v4([192, 0, 2, 42], 5683);
+        let deadlines = [0, 1, 17, 900, u64::MAX];
+        let n = table.slot_count();
+        for step in 0..500usize {
+            let key = DedupKey::new(MessageId::new((step % 11) as u16), ep);
+            match step % 5 {
+                0 | 1 => {
+                    let _ =
+                        table.insert(DedupEntry::from(key).with_due_ms(deadlines[(step / 5) % 5]));
+                }
+                2 => {
+                    let _ = table.remove(key);
+                }
+                3 => {
+                    let _ = table.acquire();
+                }
+                _ if n != 0 => {
+                    let _ = table.release(SlotId::from_index((step / 5) % n));
+                }
+                _ => {}
+            }
+            let cursor = table.cursor();
+            let occupied = table.occupied_count();
+            for now in [0, 16, u64::MAX, 1, 901, 17] {
+                let expected = (0..n).any(|i| {
+                    table
+                        .entry_ref(SlotId::from_index(i))
+                        .is_some_and(|row| row.due_ms() != 0 && row.due_ms() <= now)
+                });
+                assert_eq!(table.may_expire(now), expected, "step {step}, now {now}");
+                assert_eq!(table.cursor(), cursor);
+                assert_eq!(table.occupied_count(), occupied);
+            }
+        }
+    }
+
+    #[test]
+    fn dedup_expiry_skips_row_reads_before_the_deadline() {
+        let mut expiry = DedupExpiry::new();
+        let row = DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 1], 5683))
+            .with_due_ms(247_000);
+        expiry.note(&row);
+        let no_reads = core::iter::from_fn(|| -> Option<&DedupEntry> {
+            panic!("future deadlines must not read row payloads")
+        });
+        assert!(!expiry.may_expire(246_999, no_reads));
+        assert!(expiry.may_expire(247_000, core::iter::once(&row)));
+    }
+
     #[test]
     fn allocated_dedup_expiry_matches_rows_through_mutation_and_clock_reversal() {
         for capacity in [0, 1, 64] {
-            super::super::tests::check_dedup_expiry_mutations(
-                AllocDedupTable::new(capacity).unwrap(),
-            );
+            check_dedup_expiry_mutations(AllocDedupTable::new(capacity).unwrap());
         }
     }
 
