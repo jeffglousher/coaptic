@@ -2108,8 +2108,8 @@ mod tests {
                     actual.tx.set_len(tx, 1).unwrap();
                     reference.tx.set_len(tx, 1).unwrap();
                     if i == 1 {
-                        actual.tx.occ.pin(tx).unwrap();
-                        reference.tx.occ.pin(tx).unwrap();
+                        actual.tx.occ.try_pin(tx).unwrap();
+                        reference.tx.occ.try_pin(tx).unwrap();
                     }
                     a = a.with_tx_pin(tx);
                     b = b.with_tx_pin(tx);
