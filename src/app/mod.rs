@@ -7419,7 +7419,7 @@ where
         return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     };
     if entry.due_ms() != 0 && now_ms >= entry.due_ms() {
-        release_dedup_row(engine, id, entry);
+        release_dedup_row(engine, entry);
         return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     }
     if let Some(bytes) = entry.replay() {
@@ -7636,21 +7636,17 @@ fn release_existing_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, key: 
         return;
     };
     if let Some(old) = engine.dedup_entry(id) {
-        release_dedup_row(engine, id, old);
+        release_dedup_row(engine, old);
     } else {
         let _ = engine.remove_dedup(key);
     }
 }
 
-fn release_dedup_row<S: Storage + DedupSlots>(
-    engine: &mut Engine<S>,
-    id: SlotId,
-    entry: DedupEntry,
-) {
+fn release_dedup_row<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: DedupEntry) {
     if let Some(pin) = entry.tx_pin() {
         let _ = engine.release_tx(pin);
     }
-    let _ = engine.storage_mut().remove_dedup_at(id, entry.key());
+    let _ = engine.remove_dedup(entry.key());
 }
 
 fn dedup_due_ms(now_ms: u64) -> u64 {
@@ -7668,7 +7664,7 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     {
         *dedup_closed = None;
     }
-    if engine.storage_mut().dedup().is_empty() {
+    if engine.storage_mut().dedup().is_empty() || engine.storage_mut().try_expire_dedup(now_ms) {
         return;
     }
     let refresh = match engine.storage().dedup_expiry_check(now_ms) {
@@ -7690,7 +7686,7 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
         }
         if due != 0 && now_ms >= due {
             let entry = *entry;
-            release_dedup_row(engine, SlotId::from_index(i), entry);
+            release_dedup_row(engine, entry);
         }
     }
     if refresh {
@@ -7712,7 +7708,6 @@ fn acquire_tx_or_evict<S: Storage + DatagramSlots + DedupSlots>(
 fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
     let n = engine.capacities().dedup_entries;
     let mut best: Option<DedupEntry> = None;
-    let mut best_id = SlotId::from_index(0);
     for i in 0..n {
         let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
             continue;
@@ -7722,10 +7717,7 @@ fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool 
         }
         match best {
             Some(cur) if entry.due_ms() >= cur.due_ms() => {}
-            _ => {
-                best = Some(entry);
-                best_id = SlotId::from_index(i);
-            }
+            _ => best = Some(entry),
         }
     }
     let Some(entry) = best else {
@@ -7734,7 +7726,7 @@ fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool 
     if let Some(pin) = entry.tx_pin() {
         let _ = engine.release_tx(pin);
     }
-    let _ = engine.storage_mut().remove_dedup_at(best_id, entry.key());
+    let _ = engine.remove_dedup(entry.key());
     let mut buf = [0u8; 16];
     if let Ok(n) = encode(&Message::empty_ack(entry.message_id()), &mut buf) {
         let row = DedupEntry::new(entry.message_id(), entry.endpoint())
@@ -7748,7 +7740,6 @@ fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool 
 fn evict_oldest_app_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
     let n = engine.capacities().dedup_entries;
     let mut best: Option<DedupEntry> = None;
-    let mut best_id = SlotId::from_index(0);
     for i in 0..n {
         let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
             continue;
@@ -7758,16 +7749,13 @@ fn evict_oldest_app_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bo
         }
         match best {
             Some(cur) if entry.due_ms() >= cur.due_ms() => {}
-            _ => {
-                best = Some(entry);
-                best_id = SlotId::from_index(i);
-            }
+            _ => best = Some(entry),
         }
     }
     let Some(entry) = best else {
         return false;
     };
-    release_dedup_row(engine, best_id, entry);
+    release_dedup_row(engine, entry);
     true
 }
 

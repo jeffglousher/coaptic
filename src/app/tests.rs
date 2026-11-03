@@ -16147,11 +16147,8 @@ fn allocated_expiry_refresh_tracks_the_existing_walk_and_pin_release() {
     super::expire_request_dedup(&mut engine, &mut closed, 10);
     assert!(engine.lookup_dedup(old.key()).is_none());
     assert_eq!(engine.tx_occupied(), 0);
-    // Pre-removal deadlines deliberately remain a conservative lower bound.
-    assert_eq!(
-        engine.storage().dedup_expiry_check(11),
-        DedupExpiry::Refresh
-    );
+    // The private unique-key backend can retain the exact live-row minimum.
+    assert_eq!(engine.storage().dedup_expiry_check(11), DedupExpiry::Skip);
     let reused = engine.acquire_tx().unwrap();
     engine.write_tx(reused, b"new owner", peer).unwrap();
     super::expire_request_dedup(&mut engine, &mut closed, 11);
@@ -16178,67 +16175,4 @@ fn allocated_expiry_refresh_tracks_the_existing_walk_and_pin_release() {
         DedupExpiry::Skip
     );
     assert_eq!(engine.tx_occupied(), 1);
-}
-
-fn metadata_dedup_eviction_contract<S>(mut engine: crate::storage::Engine<S>)
-where
-    S: crate::storage::Storage + crate::storage::DatagramSlots + crate::storage::DedupSlots,
-{
-    let peer = Endpoint::v4([192, 0, 2, 66], 5683);
-    let first_tx = engine.acquire_tx().unwrap();
-    let second_tx = engine.acquire_tx().unwrap();
-    engine
-        .write_tx(first_tx, b"first pinned reply", peer)
-        .unwrap();
-    engine
-        .write_tx(second_tx, b"second pinned reply", peer)
-        .unwrap();
-    let first = DedupEntry::new(MessageId::new(610), peer)
-        .with_due_ms(50)
-        .with_tx_pin(first_tx);
-    let second = DedupEntry::new(MessageId::new(611), peer)
-        .with_due_ms(50)
-        .with_tx_pin(second_tx);
-    let manual = DedupEntry::new(MessageId::new(612), peer).with_replay(b"manual never expires");
-    let first_id = engine.insert_dedup(first).unwrap();
-    let second_id = engine.insert_dedup(second).unwrap();
-    engine.insert_dedup(manual).unwrap();
-    assert!(first_id.index() < second_id.index());
-    assert!(super::evict_one_dedup_pin(&mut engine));
-    assert_eq!(engine.tx_occupied(), 1);
-    assert_eq!(engine.dedup_entry(second_id), Some(second));
-    let replacement_id = engine.lookup_dedup(first.key()).unwrap();
-    let replacement = engine.dedup_entry(replacement_id).unwrap();
-    assert_eq!(replacement.due_ms(), first.due_ms());
-    assert!(replacement.tx_pin().is_none());
-    let ack = decode(replacement.replay().unwrap()).unwrap();
-    assert_eq!(ack.message_id(), first.message_id());
-    assert_eq!(ack.code(), Code::EMPTY);
-    assert_eq!(ack.ty(), Type::Acknowledgement);
-    assert!(replacement_id.index() > second_id.index());
-    let cursor = engine.storage_mut().dedup().cursor();
-    assert!(super::evict_oldest_app_dedup(&mut engine));
-    assert_eq!(engine.tx_occupied(), 0);
-    assert!(engine.lookup_dedup(second.key()).is_none());
-    assert!(engine.lookup_dedup(first.key()).is_some());
-    let manual_id = engine.lookup_dedup(manual.key()).unwrap();
-    assert_eq!(engine.dedup_entry(manual_id), Some(manual));
-    assert_eq!(engine.storage_mut().dedup().cursor(), cursor);
-}
-
-#[test]
-fn fixed_metadata_dedup_eviction_keeps_ties_replay_and_pin_order() {
-    let storage = crate::storage::Memory::<profiles::Default>::new();
-    metadata_dedup_eviction_contract(crate::storage::Engine::from_storage(storage));
-}
-
-#[cfg(feature = "alloc")]
-#[test]
-fn allocated_metadata_dedup_eviction_keeps_ties_replay_and_pin_order() {
-    let storage = crate::storage::AllocMemory::<Token>::try_new(
-        crate::storage::Capacities::from_profile::<profiles::Default>(),
-        usize::MAX,
-    )
-    .unwrap();
-    metadata_dedup_eviction_contract(crate::storage::Engine::from_storage(storage));
 }

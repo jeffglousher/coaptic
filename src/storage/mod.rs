@@ -272,6 +272,17 @@ pub enum DedupExpiry {
 /// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
 /// without a second handler call.
 pub trait DedupSlots {
+    /// Optionally expire due rows using this backend's owned pools.
+    ///
+    /// `true` means all occupied rows with a nonzero deadline at or before
+    /// `now_ms` were processed in ascending slot order. Release each TX pin
+    /// before its row, preserving the same failure handling as App. Unexpired
+    /// and zero-deadline rows remain unchanged. `false` must not mutate rows or
+    /// pins; App then uses its existing generic expiry walk.
+    fn try_expire_dedup(&mut self, _now_ms: u64) -> bool {
+        false
+    }
+
     /// Decide whether App must walk the table for expiry.
     ///
     /// `Skip` guarantees no occupied payload is due. Backends that retain a
@@ -301,17 +312,6 @@ pub trait DedupSlots {
 
     /// Release the slot matching `key`, if occupied.
     fn remove_dedup(&mut self, key: DedupKey) -> bool;
-
-    /// Remove the row selected by `key`, using a just-observed slot as a hint.
-    ///
-    /// Semantics match `remove_dedup`, including first-match selection in
-    /// backends that allow duplicate keys. The default preserves that operation.
-    /// A backend with unique keys may validate the hinted slot/key and release
-    /// it directly; stale or foreign hints must fall back to key lookup. A hint
-    /// is not an ownership token and must not be retained across mutations.
-    fn remove_dedup_at(&mut self, _id: SlotId, key: DedupKey) -> bool {
-        self.remove_dedup(key)
-    }
 
     /// Borrow the occupied payload at `id`, without copying its replay buffer.
     fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry>;

@@ -5984,56 +5984,10 @@ fn custom_dedup_expiry_defaults_to_inspection() {
         }
     }
     for now in [0, 1, u64::MAX] {
+        assert!(!super::DedupSlots::try_expire_dedup(&mut Custom, now));
         assert_eq!(
             super::DedupSlots::dedup_expiry_check(&Custom, now),
             super::DedupExpiry::Scan
         );
     }
-}
-
-#[test]
-fn known_dedup_default_removal_preserves_fixed_duplicate_selection() {
-    use super::DedupSlots;
-    let mut memory = Memory::<profiles::Default>::new();
-    let row = DedupEntry::new(MessageId::new(42), Endpoint::v4([192, 0, 2, 42], 5683));
-    let first = memory.insert_dedup(row.with_replay(b"first")).unwrap();
-    let second = memory.dedup_mut().acquire().unwrap();
-    let retained = row.with_due_ms(100).with_replay(b"second");
-    memory.dedup_mut().set_entry(second, retained).unwrap();
-    let cursor = memory.dedup_mut().cursor();
-    assert!(memory.remove_dedup_at(second, row.key()));
-    assert!(memory.dedup_entry_ref(first).is_none());
-    assert_eq!(memory.dedup_entry_ref(second), Some(&retained));
-    assert_eq!(memory.dedup_mut().cursor(), cursor);
-    assert_eq!(memory.dedup_mut().occupied_count(), 1);
-}
-
-#[test]
-fn known_dedup_default_calls_only_the_existing_key_removal() {
-    struct Custom {
-        removed: Option<DedupKey>,
-    }
-    impl super::DedupSlots for Custom {
-        fn insert_dedup(&mut self, _: DedupEntry) -> Option<SlotId> {
-            None
-        }
-        fn lookup_dedup(&self, _: DedupKey) -> Option<SlotId> {
-            panic!("extra lookup")
-        }
-        fn remove_dedup(&mut self, key: DedupKey) -> bool {
-            self.removed = Some(key);
-            true
-        }
-        fn dedup_entry_ref(&self, _: SlotId) -> Option<&DedupEntry> {
-            panic!("extra payload read")
-        }
-    }
-    let mut custom = Custom { removed: None };
-    let key = DedupKey::new(MessageId::new(43), Endpoint::v4([192, 0, 2, 43], 5683));
-    assert!(super::DedupSlots::remove_dedup_at(
-        &mut custom,
-        SlotId::from_index(999),
-        key
-    ));
-    assert_eq!(custom.removed, Some(key));
 }
