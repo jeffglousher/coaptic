@@ -968,7 +968,9 @@ impl DedupExpiry {
 ///
 /// Insert, lookup, and remove scan every configured entry (O(n) in capacity).
 /// Saturation returns `None` from insert; this type does not evict. [`Self::rotate`]
-/// still advances the occupancy cursor used by acquire.
+/// still advances the occupancy cursor used by acquire. A single `u64` lower
+/// deadline bound lets App skip expiry inspection while all timed rows are live.
+/// It adds no per-row metadata or allocation.
 pub struct DedupTable<const ENTRIES: usize> {
     entries: [Option<DedupEntry>; ENTRIES],
     occ: Occupancy<ENTRIES, 0>,

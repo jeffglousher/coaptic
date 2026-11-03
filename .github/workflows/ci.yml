@@ -42,6 +42,8 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-features --lib
       - run: cargo test --locked --no-default-features --lib
+      - run: cargo test --locked --all-features --test footprint --test dedup_capacity
+      - run: cargo test --locked --no-default-features --test footprint --test dedup_capacity
 
   msrv:
     name: library MSRV
