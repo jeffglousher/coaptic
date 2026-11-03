@@ -50,6 +50,11 @@ Nested objects are already included in their owners. Do not turn finite samples
 into minimum-RAM, peak-memory or maximum-throughput claims.
 See the [qualification checklist](architecture/requirements/VALIDATION-PLAN.md).
 
+For routine performance work, batch coherent changes and use a short matched
+baseline/candidate check of the integrated App. Reuse unchanged passing checks;
+repeat or broaden only to answer a specific unresolved question. Preserve failed
+comparisons, but keep development checks separate from release qualification.
+
 ## Prepare an authorized release
 
 Publication is separate work under

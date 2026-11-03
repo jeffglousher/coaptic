@@ -8,6 +8,15 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The combined allocated reply-retention/expiry draft
+[#733](https://github.com/jeffglousher/coaptic/pull/733) removes repeated key
+searches and row copies using the backend's existing owned pools. All six
+allocated workloads individually improve in the separate thread-cycle check;
+the declared allocated integration uses5.12% fewer cycles. Three fixed-Service
+guards fail, so the overall screen remains NOT_ESTABLISHED and the draft is
+unmerged. Keep the [source, successes and failed controls](architecture/requirements/OWNED-DEDUP-OPERATIONS-20261104.md).
+The two previously merged expiry wins below remain delivered.
+
 The follow-up [#732](https://github.com/jeffglousher/coaptic/pull/732) fuses
 allocated deadline refresh into the existing expiry walk, with no added retained
 storage. In the declared single-CPU idle-expiry comparison, server App poll wall
