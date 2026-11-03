@@ -8,6 +8,14 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The allocated dedup expiry improvement in [#731](https://github.com/jeffglousher/coaptic/pull/731)
+skips repeated expiry walks before the next possible deadline. The matched
+complete-App Service comparison shows 6.53% lower unprotected poll wall time and
+1.77% lower established-OSCORE poll wall time. Fixed storage layout is preserved;
+its percentage regression guards remain statistically unresolved. Keep the
+[exact workload, successes, failed guards and reproduction method](architecture/requirements/DEDUP-EXPIRY-20261103.md).
+This is scoped Windows App wall evidence, not either original CPU50 target.
+
 Windows profiling capability is delivered in companion #226/#227/#229. The
 [retained live proof](https://github.com/jeffglousher/coaptic-validation/tree/de360dd597e030a63525e1e2d44dda895e8d3ea6/tools/benchmark/evidence/windows-live-c1-capability-20261030)
 contains verified exchange counts, server-thread ETW capture, portable
