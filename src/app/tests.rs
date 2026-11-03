@@ -16120,3 +16120,62 @@ fn dedup_expiry_preserves_live_replay_and_releases_only_due_tx_pins() {
     assert!(app.engine.lookup_dedup(manual.key()).is_some());
     assert_eq!(app.engine.tx_occupied(), 1);
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_expiry_refresh_tracks_the_existing_walk_and_pin_release() {
+    use crate::storage::{AllocMemory, Capacities, DedupExpiry, DedupSlots, Engine};
+    let storage =
+        AllocMemory::<Token>::try_new(Capacities::from_profile::<profiles::Default>(), usize::MAX)
+            .unwrap();
+    let mut engine = Engine::from_storage(storage);
+    let peer = Endpoint::v4([192, 0, 2, 51], 5683);
+    let tx = engine.acquire_tx().unwrap();
+    engine.write_tx(tx, b"retained", peer).unwrap();
+    let old = DedupEntry::new(MessageId::new(510), peer)
+        .with_due_ms(10)
+        .with_tx_pin(tx);
+    let live = DedupEntry::new(MessageId::new(511), peer)
+        .with_due_ms(100)
+        .with_replay(b"live");
+    let manual = DedupEntry::new(MessageId::new(512), peer).with_replay(b"manual");
+    engine.insert_dedup(old).unwrap();
+    engine.insert_dedup(live).unwrap();
+    engine.insert_dedup(manual).unwrap();
+    let mut closed = None;
+    assert_eq!(engine.storage().dedup_expiry_check(9), DedupExpiry::Skip);
+    super::expire_request_dedup(&mut engine, &mut closed, 10);
+    assert!(engine.lookup_dedup(old.key()).is_none());
+    assert_eq!(engine.tx_occupied(), 0);
+    // Pre-removal deadlines deliberately remain a conservative lower bound.
+    assert_eq!(
+        engine.storage().dedup_expiry_check(11),
+        DedupExpiry::Refresh
+    );
+    let reused = engine.acquire_tx().unwrap();
+    engine.write_tx(reused, b"new owner", peer).unwrap();
+    super::expire_request_dedup(&mut engine, &mut closed, 11);
+    assert_eq!(engine.storage().dedup_expiry_check(12), DedupExpiry::Skip);
+    assert_eq!(engine.tx_occupied(), 1);
+    let earlier = DedupEntry::new(MessageId::new(513), peer)
+        .with_due_ms(13)
+        .with_replay(b"earlier");
+    engine.insert_dedup(earlier).unwrap();
+    super::expire_request_dedup(&mut engine, &mut closed, 13);
+    assert!(engine.lookup_dedup(earlier.key()).is_none());
+    super::expire_request_dedup(&mut engine, &mut closed, 14);
+    assert_eq!(engine.storage().dedup_expiry_check(99), DedupExpiry::Skip);
+    assert_eq!(
+        engine.dedup_entry(engine.lookup_dedup(live.key()).unwrap()),
+        Some(live)
+    );
+    super::expire_request_dedup(&mut engine, &mut closed, u64::MAX);
+    assert!(engine.lookup_dedup(live.key()).is_none());
+    assert!(engine.lookup_dedup(manual.key()).is_some());
+    super::expire_request_dedup(&mut engine, &mut closed, u64::MAX);
+    assert_eq!(
+        engine.storage().dedup_expiry_check(u64::MAX),
+        DedupExpiry::Skip
+    );
+    assert_eq!(engine.tx_occupied(), 1);
+}

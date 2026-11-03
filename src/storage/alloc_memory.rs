@@ -683,8 +683,16 @@ impl<T: OwnedToken> Exchanges for AllocMemory<T> {
 }
 
 impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
-    fn dedup_may_expire(&mut self, now_ms: u64) -> bool {
-        self.dedup.may_expire(now_ms)
+    fn dedup_expiry_check(&self, now_ms: u64) -> super::DedupExpiry {
+        if self.dedup.expiry.may_expire(now_ms) {
+            super::DedupExpiry::Refresh
+        } else {
+            super::DedupExpiry::Skip
+        }
+    }
+
+    fn finish_dedup_expiry(&mut self, lower_bound_ms: u64) {
+        self.dedup.expiry.next_due_ms = lower_bound_ms;
     }
 
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
@@ -1642,21 +1650,7 @@ impl DedupExpiry {
         }
     }
 
-    fn may_expire<'a>(
-        &mut self,
-        now_ms: u64,
-        entries: impl Iterator<Item = &'a DedupEntry>,
-    ) -> bool {
-        if self.next_due_ms == 0 || now_ms < self.next_due_ms {
-            return false;
-        }
-        // Refresh only at the conservative boundary. Payloads exist only in
-        // occupied slots: release/acquire clear them before reuse.
-        self.next_due_ms = entries
-            .map(DedupEntry::due_ms)
-            .filter(|&due| due != 0)
-            .min()
-            .unwrap_or(0);
+    fn may_expire(&self, now_ms: u64) -> bool {
         self.next_due_ms != 0 && now_ms >= self.next_due_ms
     }
 }
@@ -1668,11 +1662,6 @@ struct AllocDedupTable {
 }
 
 impl AllocDedupTable {
-    fn may_expire(&mut self, now_ms: u64) -> bool {
-        self.expiry
-            .may_expire(now_ms, self.entries.iter().flatten())
-    }
-
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
@@ -1992,7 +1981,20 @@ mod tests {
                         .entry_ref(SlotId::from_index(i))
                         .is_some_and(|row| row.due_ms() != 0 && row.due_ms() <= now)
                 });
-                assert_eq!(table.may_expire(now), expected, "step {step}, now {now}");
+                if table.expiry.may_expire(now) {
+                    let bound = (0..n)
+                        .filter_map(|i| table.entry_ref(SlotId::from_index(i)))
+                        .map(DedupEntry::due_ms)
+                        .filter(|&due| due != 0)
+                        .min()
+                        .unwrap_or(0);
+                    table.expiry.next_due_ms = bound;
+                }
+                assert_eq!(
+                    table.expiry.may_expire(now),
+                    expected,
+                    "step {step}, now {now}"
+                );
                 assert_eq!(table.cursor(), cursor);
                 assert_eq!(table.occupied_count(), occupied);
             }
@@ -2000,16 +2002,20 @@ mod tests {
     }
 
     #[test]
-    fn dedup_expiry_skips_row_reads_before_the_deadline() {
-        let mut expiry = DedupExpiry::new();
-        let row = DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 1], 5683))
-            .with_due_ms(247_000);
-        expiry.note(&row);
-        let no_reads = core::iter::from_fn(|| -> Option<&DedupEntry> {
-            panic!("future deadlines must not read row payloads")
-        });
-        assert!(!expiry.may_expire(246_999, no_reads));
-        assert!(expiry.may_expire(247_000, core::iter::once(&row)));
+    fn stale_expiry_bound_requests_one_caller_walk_without_scanning_payloads() {
+        let mut table = AllocDedupTable::new(64).unwrap();
+        let row = DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 1], 5683));
+        table.insert(row.with_due_ms(10)).unwrap();
+        assert!(table.remove(row.key()));
+        table.insert(row.with_due_ms(100)).unwrap();
+        assert!(!table.expiry.may_expire(9));
+        // No row is actually due, but the predicate must retain the stale
+        // lower bound for App's single walk rather than scan here too.
+        assert!(table.expiry.may_expire(10));
+        assert_eq!(table.expiry.next_due_ms, 10);
+        table.expiry.next_due_ms = 100;
+        assert!(!table.expiry.may_expire(10));
+        assert!(table.expiry.may_expire(100));
     }
 
     #[test]

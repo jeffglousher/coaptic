@@ -7664,19 +7664,33 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     {
         *dedup_closed = None;
     }
-    if engine.storage_mut().dedup().is_empty() || !engine.storage_mut().dedup_may_expire(now_ms) {
+    if engine.storage_mut().dedup().is_empty() {
         return;
     }
+    let refresh = match engine.storage().dedup_expiry_check(now_ms) {
+        crate::storage::DedupExpiry::Skip => return,
+        crate::storage::DedupExpiry::Scan => false,
+        crate::storage::DedupExpiry::Refresh => true,
+    };
+    let mut lower_bound = 0;
     let n = engine.capacities().dedup_entries;
     for i in 0..n {
-        let Some(entry) = engine
-            .dedup_entry_ref(SlotId::from_index(i))
-            .filter(|entry| entry.due_ms() != 0 && now_ms >= entry.due_ms())
-            .copied()
-        else {
+        let Some(entry) = engine.dedup_entry_ref(SlotId::from_index(i)) else {
             continue;
         };
-        release_dedup_row(engine, entry);
+        let due = entry.due_ms();
+        // Include pre-removal observations. Removal is by key and need not
+        // remove this exact slot in a backend that permits duplicate keys.
+        if refresh && due != 0 && (lower_bound == 0 || due < lower_bound) {
+            lower_bound = due;
+        }
+        if due != 0 && now_ms >= due {
+            let entry = *entry;
+            release_dedup_row(engine, entry);
+        }
+    }
+    if refresh {
+        engine.storage_mut().finish_dedup_expiry(lower_bound);
     }
 }
 

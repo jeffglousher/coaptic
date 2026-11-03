@@ -5984,6 +5984,9 @@ fn custom_dedup_expiry_defaults_to_inspection() {
         }
     }
     for now in [0, 1, u64::MAX] {
-        assert!(super::DedupSlots::dedup_may_expire(&mut Custom, now));
+        assert_eq!(
+            super::DedupSlots::dedup_expiry_check(&Custom, now),
+            super::DedupExpiry::Scan
+        );
     }
 }
