@@ -7624,6 +7624,9 @@ fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: D
     if !entry.has_usable_replay() {
         return false;
     }
+    if let Some(stored) = engine.storage_mut().try_store_app_dedup(entry) {
+        return stored;
+    }
     release_existing_dedup(engine, entry.key());
     if engine.insert_dedup(entry).is_some() {
         return true;

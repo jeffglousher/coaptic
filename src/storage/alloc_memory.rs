@@ -683,6 +683,57 @@ impl<T: OwnedToken> Exchanges for AllocMemory<T> {
 }
 
 impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
+    fn try_store_app_dedup(&mut self, entry: DedupEntry) -> Option<bool> {
+        // The private table guarantees unique keys. One walk can therefore
+        // establish absence and select the same first oldest eviction victim.
+        let mut existing = None;
+        let mut oldest = None;
+        let mut oldest_due = u64::MAX;
+        for i in 0..self.dedup.occ.slot_count() {
+            let id = SlotId::from_index(i);
+            let Some(row) = self.dedup.entry_ref(id) else {
+                continue;
+            };
+            if row.key() == entry.key() {
+                existing = Some(id);
+                break;
+            }
+            let due = row.due_ms();
+            if due != 0 && (oldest.is_none() || due < oldest_due) {
+                oldest = Some(id);
+                oldest_due = due;
+            }
+        }
+        if let Some(id) = existing {
+            if let Some(pin) = self.dedup.entry_ref(id).and_then(|row| row.tx_pin()) {
+                let _ = self.tx.release(pin);
+            }
+            if self.dedup.release(id).is_err() {
+                // Ordinary insertion would rediscover the surviving unique row.
+                return Some(true);
+            }
+        }
+        let id = match self.dedup.occ.acquire() {
+            Some(id) => id,
+            None => {
+                let Some(victim) = oldest else {
+                    return Some(false);
+                };
+                if let Some(pin) = self.dedup.entry_ref(victim).and_then(|row| row.tx_pin()) {
+                    let _ = self.tx.release(pin);
+                }
+                let _ = self.dedup.release(victim);
+                let Some(id) = self.dedup.occ.acquire() else {
+                    return Some(false);
+                };
+                id
+            }
+        };
+        self.dedup.expiry.note(&entry);
+        self.dedup.entries[id.index()] = Some(entry);
+        Some(true)
+    }
+
     fn try_expire_dedup(&mut self, now_ms: u64) -> bool {
         if !self.dedup.expiry.may_expire(now_ms) {
             return true;
@@ -2084,6 +2135,121 @@ mod tests {
                 let _ = memory.tx.release(pin);
             }
             let _ = memory.dedup.remove(row.key());
+        }
+    }
+
+    fn reference_store(memory: &mut AllocMemory<Token>, row: DedupEntry) -> bool {
+        if let Some(id) = memory.lookup_dedup(row.key()) {
+            let old = *memory.dedup.entry_ref(id).unwrap();
+            if let Some(pin) = old.tx_pin() {
+                let _ = memory.tx.release(pin);
+            }
+            let _ = memory.remove_dedup(old.key());
+        }
+        if memory.insert_dedup(row).is_some() {
+            return true;
+        }
+        let mut oldest: Option<DedupEntry> = None;
+        for i in 0..memory.dedup.slot_count() {
+            let Some(entry) = memory.dedup.entry_ref(SlotId::from_index(i)) else {
+                continue;
+            };
+            if entry.due_ms() != 0 && oldest.is_none_or(|old| entry.due_ms() < old.due_ms()) {
+                oldest = Some(*entry);
+            }
+        }
+        let Some(old) = oldest else {
+            return false;
+        };
+        if let Some(pin) = old.tx_pin() {
+            let _ = memory.tx.release(pin);
+        }
+        let _ = memory.remove_dedup(old.key());
+        memory.insert_dedup(row).is_some()
+    }
+
+    #[test]
+    fn combined_reply_store_matches_original_replacement_eviction_and_pin_ownership() {
+        let peer = Endpoint::v4([192, 0, 2, 69], 5683);
+        for n in [0, 1, 8, 64] {
+            let mut c = Capacities::from_profile::<super::super::profiles::Default>();
+            c.dedup_entries = n;
+            let mut actual = AllocMemory::<Token>::try_new(c, usize::MAX).unwrap();
+            let mut reference = AllocMemory::<Token>::try_new(c, usize::MAX).unwrap();
+            for step in 0..900usize {
+                let key = DedupKey::new(MessageId::new((step % (n + 3)) as u16), peer);
+                match step % 7 {
+                    0 => {
+                        assert_eq!(actual.dedup.acquire(), reference.dedup.acquire());
+                    }
+                    1 => {
+                        assert_eq!(actual.remove_dedup(key), reference.remove_dedup(key));
+                    }
+                    2 => {
+                        let now = [0, 1, 499, 500, u64::MAX][(step / 7) % 5];
+                        assert!(actual.try_expire_dedup(now));
+                        reference_expire(&mut reference, now);
+                    }
+                    _ => {
+                        let mut row = DedupEntry::from(key)
+                            .with_due_ms([0, 1, 500, u64::MAX][(step / 7) % 4])
+                            .with_replay(&[step as u8; 32]);
+                        if step % 3 == 0 {
+                            let pin = actual.tx.acquire();
+                            assert_eq!(pin, reference.tx.acquire());
+                            if let Some(pin) = pin {
+                                actual.tx.payload_mut(pin).unwrap()[0] = step as u8;
+                                reference.tx.payload_mut(pin).unwrap()[0] = step as u8;
+                                actual.tx.set_len(pin, 1).unwrap();
+                                reference.tx.set_len(pin, 1).unwrap();
+                                if step % 9 == 0 {
+                                    actual.tx.occ.try_pin(pin).unwrap();
+                                    reference.tx.occ.try_pin(pin).unwrap();
+                                }
+                                row = row.with_tx_pin(pin);
+                            }
+                        }
+                        if step % 7 == 3 {
+                            // Ordinary duplicate insertion keeps the prior row.
+                            assert_eq!(actual.insert_dedup(row), reference.insert_dedup(row));
+                        } else {
+                            assert_eq!(
+                                actual.try_store_app_dedup(row),
+                                Some(reference_store(&mut reference, row))
+                            );
+                        }
+                    }
+                }
+                assert_eq!(actual.dedup.cursor(), reference.dedup.cursor());
+                assert_eq!(
+                    actual.dedup.occupied_count(),
+                    reference.dedup.occupied_count()
+                );
+                for i in 0..n {
+                    let id = SlotId::from_index(i);
+                    assert_eq!(
+                        actual.dedup.is_occupied(id),
+                        reference.dedup.is_occupied(id)
+                    );
+                    assert_eq!(actual.dedup.entry_ref(id), reference.dedup.entry_ref(id));
+                }
+                assert_eq!(actual.tx.cursor(), reference.tx.cursor());
+                for i in 0..c.tx_datagram_slots {
+                    let id = SlotId::from_index(i);
+                    assert_eq!(actual.tx.is_occupied(id), reference.tx.is_occupied(id));
+                    assert_eq!(actual.tx.is_pinned(id), reference.tx.is_pinned(id));
+                    assert_eq!(actual.tx.payload(id), reference.tx.payload(id));
+                }
+                for now in [0, 1, 500, u64::MAX] {
+                    if !actual.dedup.expiry.may_expire(now) {
+                        assert!(
+                            (0..n)
+                                .filter_map(|i| actual.dedup.entry_ref(SlotId::from_index(i)))
+                                .all(|row| row.due_ms() == 0 || row.due_ms() > now)
+                        );
+                    }
+                }
+            }
         }
     }
 
