@@ -35,7 +35,7 @@ use super::pending::{
     PendingMark, PendingRto, next_due_slot, outstanding_pending, record_admission,
 };
 use super::slot::{SlotError, SlotId};
-use super::table::{DedupStore, ObserveStore};
+use super::table::{DedupExpiry, DedupStore, ObserveStore};
 use crate::error::{BlockTransferError, BuildError};
 use crate::message::{BlockValue, MessageId};
 
@@ -683,6 +683,10 @@ impl<T: OwnedToken> Exchanges for AllocMemory<T> {
 }
 
 impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
+    fn dedup_may_expire(&mut self, now_ms: u64) -> bool {
+        self.dedup.may_expire(now_ms)
+    }
+
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
     }
@@ -1621,6 +1625,7 @@ impl<T: OwnedToken> SlotPool for AllocBodyPool<T> {
 struct AllocDedupTable {
     entries: Vec<Option<DedupEntry>>,
     occ: HeapOccupancy,
+    expiry: DedupExpiry,
 }
 
 impl AllocDedupTable {
@@ -1628,6 +1633,7 @@ impl AllocDedupTable {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
             occ: HeapOccupancy::new_unpinned(entries)?,
+            expiry: DedupExpiry::new(),
         })
     }
 
@@ -1639,11 +1645,17 @@ impl AllocDedupTable {
 }
 
 impl DedupStore for AllocDedupTable {
+    fn may_expire(&mut self, now_ms: u64) -> bool {
+        self.expiry
+            .may_expire(now_ms, self.entries.iter().flatten())
+    }
+
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId> {
         if let Some(id) = self.lookup(entry.key()) {
             return Some(id);
         }
         let id = self.occ.acquire()?;
+        self.expiry.note(&entry);
         self.entries[id.index()] = Some(entry);
         Some(id)
     }
@@ -1907,6 +1919,15 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allocated_dedup_expiry_matches_rows_through_mutation_and_clock_reversal() {
+        for capacity in [0, 1, 64] {
+            super::super::tests::check_dedup_expiry_mutations(
+                AllocDedupTable::new(capacity).unwrap(),
+            );
+        }
+    }
 
     #[test]
     fn allocated_tables_saturate_rotate_and_reset_without_pins() {

@@ -16081,3 +16081,43 @@ fn admission_failed_completion_releases_rx_credit_before_collection() {
     assert!(app.take_response(failed).unwrap().is_err());
     assert!(app.cancel(next));
 }
+
+#[test]
+fn dedup_expiry_preserves_live_replay_and_releases_only_due_tx_pins() {
+    use crate::storage::{DedupSlots, Storage};
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 50], 5683);
+    let tx = app.engine.acquire_tx().unwrap();
+    app.engine.write_tx(tx, b"retained reply", peer).unwrap();
+    let due = DedupEntry::new(MessageId::new(500), peer)
+        .with_due_ms(10)
+        .with_tx_pin(tx);
+    let future = DedupEntry::new(MessageId::new(501), peer)
+        .with_due_ms(u64::MAX)
+        .with_replay(b"future");
+    let manual = DedupEntry::new(MessageId::new(502), peer).with_replay(b"manual");
+    app.engine.insert_dedup(due).unwrap();
+    app.engine.insert_dedup(future).unwrap();
+    app.engine.insert_dedup(manual).unwrap();
+    let mut closed = None;
+    super::expire_request_dedup(&mut app.engine, &mut closed, 9);
+    assert_eq!(
+        app.engine
+            .dedup_entry(app.engine.lookup_dedup(due.key()).unwrap()),
+        Some(due)
+    );
+    assert_eq!(app.engine.tx_occupied(), 1);
+    super::expire_request_dedup(&mut app.engine, &mut closed, 10);
+    assert!(app.engine.lookup_dedup(due.key()).is_none());
+    assert_eq!(app.engine.tx_occupied(), 0);
+    // Reuse the released TX slot. A stale deadline must not release its new owner.
+    let reused = app.engine.acquire_tx().unwrap();
+    app.engine.write_tx(reused, b"new owner", peer).unwrap();
+    super::expire_request_dedup(&mut app.engine, &mut closed, 11);
+    assert!(app.engine.storage_mut().tx_datagram().is_occupied(reused));
+    assert!(!app.engine.storage_mut().dedup_may_expire(11));
+    super::expire_request_dedup(&mut app.engine, &mut closed, u64::MAX);
+    assert!(app.engine.lookup_dedup(future.key()).is_none());
+    assert!(app.engine.lookup_dedup(manual.key()).is_some());
+    assert_eq!(app.engine.tx_occupied(), 1);
+}

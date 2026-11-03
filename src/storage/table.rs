@@ -171,6 +171,10 @@ impl From<DedupKey> for DedupEntry {
 /// Each operation scans the configured entry count (O(n) in capacity). Capacity
 /// is fixed at construction.
 pub(crate) trait DedupStore {
+    fn may_expire(&mut self, _now_ms: u64) -> bool {
+        true
+    }
+
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId>;
     fn lookup(&self, key: DedupKey) -> Option<SlotId>;
     fn remove(&mut self, key: DedupKey) -> bool;
@@ -921,6 +925,45 @@ pub(crate) trait ObserveStore<T: OwnedToken = Token> {
     fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError>;
 }
 
+// A lower bound on all nonzero deadlines; zero means none are stored.
+// Removal can leave this bound too early, which only causes a rescan. Insertion
+// and set_entry must lower it before a later query can skip any rows.
+#[derive(Default)]
+pub(crate) struct DedupExpiry {
+    next_due_ms: u64,
+}
+
+impl DedupExpiry {
+    pub(crate) const fn new() -> Self {
+        Self { next_due_ms: 0 }
+    }
+
+    pub(crate) fn note(&mut self, entry: &DedupEntry) {
+        let due = entry.due_ms();
+        if due != 0 && (self.next_due_ms == 0 || due < self.next_due_ms) {
+            self.next_due_ms = due;
+        }
+    }
+
+    pub(crate) fn may_expire<'a>(
+        &mut self,
+        now_ms: u64,
+        entries: impl Iterator<Item = &'a DedupEntry>,
+    ) -> bool {
+        if self.next_due_ms == 0 || now_ms < self.next_due_ms {
+            return false;
+        }
+        // Refresh only at the conservative boundary. Payloads exist only in
+        // occupied slots: release/acquire clear them before reuse.
+        self.next_due_ms = entries
+            .map(DedupEntry::due_ms)
+            .filter(|&due| due != 0)
+            .min()
+            .unwrap_or(0);
+        self.next_due_ms != 0 && now_ms >= self.next_due_ms
+    }
+}
+
 /// Dedup table: compact duplicate history slots.
 ///
 /// Insert, lookup, and remove scan every configured entry (O(n) in capacity).
@@ -929,6 +972,7 @@ pub(crate) trait ObserveStore<T: OwnedToken = Token> {
 pub struct DedupTable<const ENTRIES: usize> {
     entries: [Option<DedupEntry>; ENTRIES],
     occ: Occupancy<ENTRIES, 0>,
+    expiry: DedupExpiry,
 }
 
 impl<const ENTRIES: usize> DedupTable<ENTRIES> {
@@ -938,6 +982,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
         Self {
             entries: [None; ENTRIES],
             occ: Occupancy::new(),
+            expiry: DedupExpiry::new(),
         }
     }
 
@@ -950,6 +995,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
             return Some(id);
         }
         let id = self.occ.acquire()?;
+        self.expiry.note(&entry);
         self.entries[id.index()] = Some(entry);
         Some(id)
     }
@@ -1002,6 +1048,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
                 SlotError::InvalidSlot
             });
         }
+        self.expiry.note(&entry);
         self.entries[id.index()] = Some(entry);
         Ok(())
     }
@@ -1020,6 +1067,11 @@ impl<const ENTRIES: usize> Default for DedupTable<ENTRIES> {
 }
 
 impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
+    fn may_expire(&mut self, now_ms: u64) -> bool {
+        self.expiry
+            .may_expire(now_ms, self.entries.iter().flatten())
+    }
+
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId> {
         DedupTable::insert(self, entry)
     }
