@@ -707,6 +707,10 @@ impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
         self.dedup.remove(key)
     }
 
+    fn remove_dedup_at(&mut self, id: SlotId, key: DedupKey) -> bool {
+        self.dedup.remove_at(id, key)
+    }
+
     fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
         self.dedup.entry_ref(id)
     }
@@ -1662,6 +1666,15 @@ struct AllocDedupTable {
 }
 
 impl AllocDedupTable {
+    fn remove_at(&mut self, id: SlotId, key: DedupKey) -> bool {
+        // No payload setter or mutable row access escapes this private table.
+        // Insertion is its only writer and enforces unique keys.
+        if self.entry_ref(id).is_some_and(|row| row.key() == key) {
+            self.release(id).is_ok()
+        } else {
+            self.remove(key)
+        }
+    }
     fn new(entries: usize) -> Result<Self, BuildError> {
         Ok(Self {
             entries: try_array(entries, || Ok(None))?,
@@ -2023,6 +2036,62 @@ mod tests {
         for capacity in [0, 1, 64] {
             check_dedup_expiry_mutations(AllocDedupTable::new(capacity).unwrap());
         }
+    }
+
+    #[test]
+    fn known_dedup_removal_matches_key_removal_for_stale_foreign_and_empty_hints() {
+        let peer = Endpoint::v4([192, 0, 2, 64], 5683);
+        for n in [0, 1, 8, 64] {
+            let mut actual = AllocDedupTable::new(n).unwrap();
+            let mut reference = AllocDedupTable::new(n).unwrap();
+            for step in 0..400usize {
+                let key = DedupKey::new(MessageId::new((step % 17) as u16), peer);
+                match step % 4 {
+                    0 | 1 => {
+                        let row = DedupEntry::from(key)
+                            .with_due_ms(step as u64 + 1)
+                            .with_replay(&[step as u8; 32]);
+                        assert_eq!(actual.insert(row), reference.insert(row));
+                    }
+                    2 => {
+                        let hint = if step % 8 == 2 {
+                            actual.lookup(key).unwrap_or(SlotId::from_index(n))
+                        } else {
+                            SlotId::from_index((step / 4) % (n + 1))
+                        };
+                        assert_eq!(actual.remove_at(hint, key), reference.remove(key));
+                    }
+                    _ => {
+                        assert_eq!(actual.acquire(), reference.acquire());
+                    }
+                }
+                assert_eq!(actual.cursor(), reference.cursor());
+                assert_eq!(actual.occupied_count(), reference.occupied_count());
+                for i in 0..n {
+                    let id = SlotId::from_index(i);
+                    assert_eq!(actual.is_occupied(id), reference.is_occupied(id));
+                    assert_eq!(actual.entry_ref(id), reference.entry_ref(id));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn known_dedup_removal_validates_a_reused_slot_and_preserves_its_new_owner() {
+        let mut table = AllocDedupTable::new(2).unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 65], 5683);
+        let a = DedupEntry::new(MessageId::new(1), peer).with_replay(b"old");
+        let b = DedupEntry::new(MessageId::new(2), peer).with_replay(b"other");
+        let old = table.insert(a).unwrap();
+        table.release(old).unwrap();
+        let other = table.insert(b).unwrap();
+        assert!(!table.remove_at(other, a.key()));
+        assert_eq!(table.entry_ref(other), Some(&b));
+        let new = table.insert(a).unwrap();
+        assert!(table.remove_at(other, a.key()));
+        assert!(table.entry_ref(new).is_none());
+        assert_eq!(table.entry_ref(other), Some(&b));
+        assert!(!table.remove_at(SlotId::from_index(99), a.key()));
     }
 
     #[test]

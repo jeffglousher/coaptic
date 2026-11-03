@@ -302,6 +302,17 @@ pub trait DedupSlots {
     /// Release the slot matching `key`, if occupied.
     fn remove_dedup(&mut self, key: DedupKey) -> bool;
 
+    /// Remove the row selected by `key`, using a just-observed slot as a hint.
+    ///
+    /// Semantics match `remove_dedup`, including first-match selection in
+    /// backends that allow duplicate keys. The default preserves that operation.
+    /// A backend with unique keys may validate the hinted slot/key and release
+    /// it directly; stale or foreign hints must fall back to key lookup. A hint
+    /// is not an ownership token and must not be retained across mutations.
+    fn remove_dedup_at(&mut self, _id: SlotId, key: DedupKey) -> bool {
+        self.remove_dedup(key)
+    }
+
     /// Borrow the occupied payload at `id`, without copying its replay buffer.
     fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry>;
 

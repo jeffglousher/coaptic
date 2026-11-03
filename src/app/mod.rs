@@ -7419,7 +7419,7 @@ where
         return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     };
     if entry.due_ms() != 0 && now_ms >= entry.due_ms() {
-        release_dedup_row(engine, entry);
+        release_dedup_row(engine, DedupCandidate::new(id, &entry));
         return replay_closed(engine, io, peer, parsed, now_ms, dedup_closed);
     }
     if let Some(bytes) = entry.replay() {
@@ -7631,22 +7631,44 @@ fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: D
     evict_oldest_app_dedup(engine) && engine.insert_dedup(entry).is_some()
 }
 
+// Only the metadata needed to release a selected row. Never stage its replay
+// bytes while searching, and never keep a slot hint beyond this operation.
+#[derive(Clone, Copy)]
+struct DedupCandidate {
+    id: SlotId,
+    key: DedupKey,
+    pin: Option<SlotId>,
+    due_ms: u64,
+}
+
+impl DedupCandidate {
+    fn new(id: SlotId, row: &DedupEntry) -> Self {
+        Self {
+            id,
+            key: row.key(),
+            pin: row.tx_pin(),
+            due_ms: row.due_ms(),
+        }
+    }
+}
+
 fn release_existing_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, key: DedupKey) {
     let Some(id) = engine.lookup_dedup(key) else {
         return;
     };
-    if let Some(old) = engine.dedup_entry(id) {
-        release_dedup_row(engine, old);
+    if let Some(old) = engine.dedup_entry_ref(id) {
+        let selected = DedupCandidate::new(id, old);
+        release_dedup_row(engine, selected);
     } else {
         let _ = engine.remove_dedup(key);
     }
 }
 
-fn release_dedup_row<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: DedupEntry) {
-    if let Some(pin) = entry.tx_pin() {
+fn release_dedup_row<S: Storage + DedupSlots>(engine: &mut Engine<S>, row: DedupCandidate) {
+    if let Some(pin) = row.pin {
         let _ = engine.release_tx(pin);
     }
-    let _ = engine.remove_dedup(entry.key());
+    let _ = engine.storage_mut().remove_dedup_at(row.id, row.key);
 }
 
 fn dedup_due_ms(now_ms: u64) -> u64 {
@@ -7685,8 +7707,8 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
             lower_bound = due;
         }
         if due != 0 && now_ms >= due {
-            let entry = *entry;
-            release_dedup_row(engine, entry);
+            let selected = DedupCandidate::new(SlotId::from_index(i), entry);
+            release_dedup_row(engine, selected);
         }
     }
     if refresh {
@@ -7707,55 +7729,54 @@ fn acquire_tx_or_evict<S: Storage + DatagramSlots + DedupSlots>(
 
 fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
     let n = engine.capacities().dedup_entries;
-    let mut best: Option<DedupEntry> = None;
+    let mut best: Option<DedupCandidate> = None;
     for i in 0..n {
-        let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+        let id = SlotId::from_index(i);
+        let Some(entry) = engine.dedup_entry_ref(id) else {
             continue;
         };
         if entry.tx_pin().is_none() || entry.due_ms() == 0 {
             continue;
         }
         match best {
-            Some(cur) if entry.due_ms() >= cur.due_ms() => {}
-            _ => best = Some(entry),
+            Some(cur) if entry.due_ms() >= cur.due_ms => {}
+            _ => best = Some(DedupCandidate::new(id, entry)),
         }
     }
-    let Some(entry) = best else {
+    let Some(row) = best else {
         return false;
     };
-    if let Some(pin) = entry.tx_pin() {
-        let _ = engine.release_tx(pin);
-    }
-    let _ = engine.remove_dedup(entry.key());
+    release_dedup_row(engine, row);
     let mut buf = [0u8; 16];
-    if let Ok(n) = encode(&Message::empty_ack(entry.message_id()), &mut buf) {
-        let row = DedupEntry::new(entry.message_id(), entry.endpoint())
-            .with_due_ms(entry.due_ms())
+    if let Ok(n) = encode(&Message::empty_ack(row.key.message_id()), &mut buf) {
+        let entry = DedupEntry::new(row.key.message_id(), row.key.endpoint())
+            .with_due_ms(row.due_ms)
             .with_replay(&buf[..n]);
-        let _ = engine.insert_dedup(row);
+        let _ = engine.insert_dedup(entry);
     }
     true
 }
 
 fn evict_oldest_app_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
     let n = engine.capacities().dedup_entries;
-    let mut best: Option<DedupEntry> = None;
+    let mut best: Option<DedupCandidate> = None;
     for i in 0..n {
-        let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+        let id = SlotId::from_index(i);
+        let Some(entry) = engine.dedup_entry_ref(id) else {
             continue;
         };
         if entry.due_ms() == 0 {
             continue;
         }
         match best {
-            Some(cur) if entry.due_ms() >= cur.due_ms() => {}
-            _ => best = Some(entry),
+            Some(cur) if entry.due_ms() >= cur.due_ms => {}
+            _ => best = Some(DedupCandidate::new(id, entry)),
         }
     }
-    let Some(entry) = best else {
+    let Some(row) = best else {
         return false;
     };
-    release_dedup_row(engine, entry);
+    release_dedup_row(engine, row);
     true
 }
 
