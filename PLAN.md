@@ -8,6 +8,14 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The follow-up [#732](https://github.com/jeffglousher/coaptic/pull/732) fuses
+allocated deadline refresh into the existing expiry walk, with no added retained
+storage. In the declared single-CPU idle-expiry comparison, server App poll wall
+time falls6.46% unprotected and2.27% with established OSCORE versus #731;
+both steady allocated preservation guards and all descriptive controls pass.
+Keep the [matched fixture, sources, raw hashes, earlier unpinned guard failure
+and scope](architecture/requirements/FUSED-DEDUP-EXPIRY-20261104.md).
+
 The allocated dedup expiry improvement in [#731](https://github.com/jeffglousher/coaptic/pull/731)
 skips repeated expiry walks before the next possible deadline. The matched
 complete-App Service comparison shows 6.53% lower unprotected poll wall time and
