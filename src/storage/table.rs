@@ -146,7 +146,7 @@ impl DedupEntry {
 
     /// Occupied TX slot holding the encoded ACK, if pinned.
     #[must_use]
-    pub const fn tx_pin(&self) -> Option<SlotId> {
+    pub const fn tx_pin(self) -> Option<SlotId> {
         self.tx_pin
     }
 

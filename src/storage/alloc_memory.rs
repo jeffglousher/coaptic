@@ -1666,6 +1666,7 @@ struct AllocDedupTable {
 }
 
 impl AllocDedupTable {
+    #[inline]
     fn remove_at(&mut self, id: SlotId, key: DedupKey) -> bool {
         // No payload setter or mutable row access escapes this private table.
         // Insertion is its only writer and enforces unique keys.
