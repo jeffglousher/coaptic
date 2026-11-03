@@ -251,6 +251,17 @@ pub trait DatagramSlots {
     fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
 }
 
+/// Work required before expiring retained dedup replies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DedupExpiry {
+    /// Walk rows in the existing order; no cached bound needs maintenance.
+    Scan,
+    /// No occupied row can have a nonzero deadline at or before this clock.
+    Skip,
+    /// Walk rows and report their conservative deadline minimum afterward.
+    Refresh,
+}
+
 /// Typed Dedup Table access.
 ///
 /// Insert, lookup, and remove scan the configured entry count (O(n) in
@@ -261,16 +272,24 @@ pub trait DatagramSlots {
 /// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
 /// without a second handler call.
 pub trait DedupSlots {
-    /// Whether a row may have a nonzero deadline at or before `now_ms`.
+    /// Decide whether App must walk the table for expiry.
     ///
-    /// `false` guarantees that no occupied payload is due. `true` permits the
-    /// caller to inspect rows and release their replay pins in its usual order.
-    /// The default always requests that inspection. Implementations that cache
-    /// deadlines must account for every successful payload write, including
-    /// writes through their raw table interface. Clock values may move backward.
-    fn dedup_may_expire(&mut self, _now_ms: u64) -> bool {
-        true
+    /// `Skip` guarantees no occupied payload is due. Backends that retain a
+    /// conservative bound request `Refresh` once that bound is reached; they
+    /// must lower it on every successful payload write. Clocks may move backward.
+    /// Fixed/custom storage defaults to the original untracked scan.
+    fn dedup_expiry_check(&self, _now_ms: u64) -> DedupExpiry {
+        DedupExpiry::Scan
     }
+
+    /// Finish a `Refresh` walk with a conservative nonzero-deadline minimum.
+    ///
+    /// The caller must inspect every configured slot and include deadlines
+    /// observed before removing rows, including expired rows. Key-based removal
+    /// may select an earlier duplicate, so excluding expired observations could
+    /// hide a row that remains. `0` means no nonzero deadline was observed.
+    /// Stale early bounds are safe and may cause another scan.
+    fn finish_dedup_expiry(&mut self, _lower_bound_ms: u64) {}
 
     /// Insert `entry`, or return the existing slot if the key is present.
     ///
