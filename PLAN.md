@@ -8,11 +8,20 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+Return to performance and memory optimization after the adapter integration batch.
+First target the remaining dispatch/async-frame temporaries and packet staging:
+identify which owners remain live together, reuse storage where borrowing permits,
+and compare the integrated sync/async App with unchanged capacities. Keep ESP task
+stack reservations separate from measured use; do not reduce reservations merely
+from selected frame sizes. Board/HAL runtime migration is deferred and does not
+block this work. Preserve the accepted reply-retention/expiry and ESP construction
+improvements while measuring new changes.
+
 The [runtime and comparison direction](architecture/ASYNC-RUNTIMES.md) is adopted.
 The reusable [Tokio adapter](tools/coaptic-tokio/README.md) now supplies caller-owned
 UDP and timers, with Windows loopback and full-App blockwise tests. The
 [Embassy adapter](tools/coaptic-embassy/README.md) now provides the `no_std`
-transport/time seam; next connect and verify a physical target application.
+transport/time seam. Physical target application integration remains deferred.
 Keep the working async-io host option and
 existing ESP-IDF driver while that integration is evaluated. Establish
 equivalent-capability libcoap cells alongside minimal-workload cells before new

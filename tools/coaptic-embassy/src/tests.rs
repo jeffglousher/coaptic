@@ -144,3 +144,164 @@ fn endpoints_and_deadlines_do_not_lose_identity_or_round_early() {
         assert!(u128::from(ticks) * 1000 >= u128::from(ms) * u128::from(embassy_time::TICK_HZ));
     }
 }
+
+#[test]
+fn full_app_blockwise_exchange_and_fresh_recovery() {
+    use coaptic::{App, Request, Response, get, resources::SmallDevice};
+    use core::future::pending;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct WakeCount(AtomicUsize);
+    impl std::task::Wake for WakeCount {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    const BODY: [u8; 2000] = {
+        let mut bytes = [0; 2000];
+        let mut i = 0;
+        while i < bytes.len() {
+            bytes[i] = (i % 251) as u8;
+            i += 1;
+        }
+        bytes
+    };
+    fn content(_: Request<'_>) -> Response<'static> {
+        Response::content(&BODY).etag(b"stable")
+    }
+    let to_server = Rc::new(RefCell::new(VecDeque::new()));
+    let to_client = Rc::new(RefCell::new(VecDeque::new()));
+    let mut server_resources = embassy_net::StackResources::<1>::new();
+    let mut client_resources = embassy_net::StackResources::<1>::new();
+    let config = |last| {
+        embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+            address: embassy_net::Ipv4Cidr::new([10, 0, 0, last].into(), 24),
+            gateway: None,
+            dns_servers: Default::default(),
+        })
+    };
+    let (server_stack, mut server_runner) = embassy_net::new(
+        TestDriver(to_server.clone(), to_client.clone()),
+        config(1),
+        &mut server_resources,
+        17,
+    );
+    let (client_stack, mut client_runner) = embassy_net::new(
+        TestDriver(to_client.clone(), to_server.clone()),
+        config(2),
+        &mut client_resources,
+        19,
+    );
+    let mut srm = [embassy_net::udp::PacketMetadata::EMPTY; 2];
+    let mut stm = [embassy_net::udp::PacketMetadata::EMPTY; 2];
+    let mut crm = [embassy_net::udp::PacketMetadata::EMPTY; 2];
+    let mut ctm = [embassy_net::udp::PacketMetadata::EMPTY; 2];
+    let mut srb = [0; 2304];
+    let mut stb = [0; 2304];
+    let mut crb = [0; 2304];
+    let mut ctb = [0; 2304];
+    let mut ss = UdpSocket::new(server_stack, &mut srm, &mut srb, &mut stm, &mut stb);
+    let mut cs = UdpSocket::new(client_stack, &mut crm, &mut crb, &mut ctm, &mut ctb);
+    ss.bind(5683).unwrap();
+    cs.bind(5684).unwrap();
+    let mut server = App::with_resources(SmallDevice::new().block_wise::<true>())
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .route("body", get(content))
+        .bind(Udp::new(ss))
+        .unwrap();
+    let mut client = App::with_resources(SmallDevice::new().block_wise::<true>())
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .bind(Udp::new(cs))
+        .unwrap();
+    let clock = Clock;
+    let mut server_timer = clock;
+    let mut client_timer = clock;
+    let completed = RefCell::new(0);
+    {
+        let serve = async {
+            loop {
+                server
+                    .wait_async(clock.now_ms().unwrap(), &mut server_timer, pending())
+                    .await
+                    .unwrap();
+                let now = clock.now_ms().unwrap();
+                server
+                    .progress_async(now, &mut || clock.now_ms(), &mut server_timer, now + 1000)
+                    .await
+                    .unwrap();
+            }
+        };
+        let request = async {
+            for _ in 0..2 {
+                let call = client
+                    .get("body")
+                    .to(Endpoint::v4([10, 0, 0, 1], 5683))
+                    .send_async(
+                        clock.now_ms().unwrap(),
+                        || clock.now_ms(),
+                        &mut client_timer,
+                    )
+                    .await
+                    .unwrap();
+                loop {
+                    client
+                        .wait_async(clock.now_ms().unwrap(), &mut client_timer, pending())
+                        .await
+                        .unwrap();
+                    let now = clock.now_ms().unwrap();
+                    client
+                        .progress_async(now, &mut || clock.now_ms(), &mut client_timer, now + 1000)
+                        .await
+                        .unwrap();
+                    if let Some(response) = client.take_response(call) {
+                        let response = response.unwrap();
+                        assert_eq!(response.body().unwrap_or(response.payload()), BODY);
+                        *completed.borrow_mut() += 1;
+                        break;
+                    }
+                }
+            }
+        };
+        let wake = Arc::new(WakeCount(AtomicUsize::new(0)));
+        let waker = Waker::from(wake.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut serve = pin!(serve);
+        let mut request = pin!(request);
+        let mut sr = pin!(server_runner.run());
+        let mut cr = pin!(client_runner.run());
+        let started = std::time::Instant::now();
+        let mut done = false;
+        // Finite manual test scheduler. This deliberately polls both links; it
+        // verifies real stack wake registration, not a production executor.
+        for _ in 0..256 {
+            assert!(started.elapsed() < std::time::Duration::from_secs(5));
+            assert!(sr.as_mut().poll(&mut cx).is_pending());
+            assert!(cr.as_mut().poll(&mut cx).is_pending());
+            assert!(serve.as_mut().poll(&mut cx).is_pending());
+            if request.as_mut().poll(&mut cx).is_ready() {
+                done = true;
+                break;
+            }
+            assert!(to_server.borrow().len() <= 2);
+            assert!(to_client.borrow().len() <= 2);
+        }
+        assert!(done, "bounded exchange did not finish");
+        assert!(wake.0.load(Ordering::Relaxed) > 0);
+        // Dropping the suspended server and runners cancels their waits before
+        // App/socket owners are inspected or destroyed.
+    }
+    assert_eq!(*completed.borrow(), 2);
+    assert!(to_server.borrow().is_empty());
+    assert!(to_client.borrow().is_empty());
+    assert_eq!(server.metrics().rx_accepted, 4);
+    assert_eq!(client.metrics().rx_accepted, 4);
+    assert_eq!(server.transport().socket().endpoint().port, 5683);
+    assert_eq!(client.transport().socket().endpoint().port, 5684);
+}

@@ -35,12 +35,17 @@ qualification**. A board still supplies HAL, network device, runner, clock drive
 executor/task storage and deployment security configuration.
 
 Validated on Windows x86-64 with Rust 1.99.1, embassy-net 0.9.1 and embassy-time
-0.5.1: two tests exercise real smoltcp IP/UDP ingestion, truncation/recovery,
+0.5.1: three tests exercise real smoltcp IP/UDP ingestion, truncation/recovery,
 pending receive cancellation, bounded send queue cancellation/recovery, exact
 emitted payloads, endpoint conversion and deadline rounding. The test link is
 an in-memory IP driver with synthetic packets, not Wi-Fi or OS sockets. Host
 Clippy is warning-clean. The library and example compile for Cortex-M4
-`thumbv7em-none-eabi`; no full-App exchange or performance measurement is claimed.
+`thumbv7em-none-eabi`. The full-App test runs two consecutive unprotected
+2,000-byte blockwise exchanges between fixed SmallDevice Apps and separate
+Embassy stacks. It verifies exact nonuniform bodies, four accepted packets per
+App, empty link queues and socket ownership after cancelling suspended work.
+A finite manual scheduler polls both links and observes stack wakeups; this is
+not an Embassy executor, physical radio or performance measurement.
 
 ```text
 cargo test --locked --manifest-path tools/coaptic-embassy/Cargo.toml
