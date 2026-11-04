@@ -1070,7 +1070,7 @@ fn prepare_deferred_observe<
                 mid,
                 row.meta.token,
                 response,
-                ResponsePayload::Bytes(response.payload()),
+                response.payload(),
                 preference.map(|value| BlockOpt {
                     value,
                     q_block: false,
@@ -3556,8 +3556,9 @@ where
     // Match the Outer routing identity before OSCORE consumes a binding or
     // advances recipient replay/notification state. Inner authentication cannot
     // replace the Call's endpoint and piggybacked-ACK matching rules.
+    let has_oscore = parsed.oscore().is_some();
     if oscore::is_active(oscore)
-        && parsed.oscore().is_some()
+        && has_oscore
         && !parsed.code().is_request()
         && !client::has_response_target(engine, &parsed, peer)
     {
@@ -3575,7 +3576,7 @@ where
 
     // RFC 9177 §4.1: Block and Q-Block on the Outer side are 4.02 before
     // the ciphertext is treated as a body. Inner options are still sealed.
-    if parsed.oscore().is_some() && mixes_block_and_qblock(&parsed) {
+    if has_oscore && mixes_block_and_qblock(&parsed) {
         // Plaintext 4.02: the ciphertext is not a request this response can
         // protect, and the outer options are already not one body.
         let outcome = send_empty(
@@ -3592,7 +3593,7 @@ where
     // The retained RX packet supplies ciphertext while dispatch scratch is
     // reused for plaintext. No second profile-sized buffer spans a send.
     #[cfg(feature = "oscore")]
-    let (parsed, oscore_req, response_state) = if parsed.oscore().is_some() {
+    let (parsed, oscore_req, response_state) = if has_oscore {
         let layout = parsed.layout(n);
         let before = oscore
             .context(peer.association())
@@ -5652,7 +5653,7 @@ where
         mid,
         meta.token,
         response,
-        ResponsePayload::Bytes(response.payload()),
+        response.payload(),
         None,
         meta.block1,
         oscore_ctx,
@@ -5801,7 +5802,7 @@ where
         meta.mid,
         meta.token,
         response,
-        ResponsePayload::Bytes(response.payload()),
+        response.payload(),
         None,
         meta.block1,
         oscore_ctx,
@@ -6407,7 +6408,7 @@ where
         meta.mid,
         meta.token,
         &selected,
-        ResponsePayload::Bytes(payload),
+        payload,
         block,
         meta.block1,
         oscore_ctx,
@@ -6659,7 +6660,7 @@ where
                 mid,
                 meta.token,
                 &error,
-                ResponsePayload::Bytes(error.payload()),
+                error.payload(),
                 None,
                 meta.block1,
                 oscore_ctx,
@@ -6905,6 +6906,12 @@ where
             break;
         }
         let end = (offset + size).min(length);
+        let mut scratch = [0u8; 1024];
+        scratch[..end - offset].copy_from_slice(
+            &engine
+                .tx_body_payload(body)
+                .ok_or(Error::Block(BlockTransferError::NoTransfer))?[offset..end],
+        );
         let value = crate::message::BlockValue::new(num, end < length, q.szx())
             .map_err(|e| Error::Block(e.into()))?;
         let mid = if step == 0 {
@@ -6921,10 +6928,7 @@ where
             mid,
             meta.token,
             response,
-            ResponsePayload::Body {
-                id: body,
-                range: offset..end,
-            },
+            &scratch[..end - offset],
             Some(BlockOpt {
                 value,
                 q_block: true,
@@ -7152,17 +7156,8 @@ where
     S: Storage + DatagramSlots + BodySlots + DedupSlots,
     T: crate::storage::DatagramTransport,
 {
-    let end = issued
-        .offset()
-        .checked_add(issued.len())
-        .ok_or(Error::Block(BlockTransferError::Overflow))?;
-    let body_len = engine
-        .tx_body_payload(issued.id())
-        .ok_or(Error::Block(BlockTransferError::NoTransfer))?
-        .len();
-    if end > body_len || issued.len() > 1024 {
-        return Err(Error::Block(BlockTransferError::Overflow));
-    }
+    let mut chunk = [0u8; 1024];
+    let n = copy_issued(engine, issued, &mut chunk).map_err(Error::Block)?;
     let size2 = if q_block {
         engine.tx_body_transfer(issued.id()).map(|t| t.filled())
     } else {
@@ -7184,10 +7179,7 @@ where
         mid,
         meta.token,
         response,
-        ResponsePayload::Body {
-            id: issued.id(),
-            range: issued.offset()..end,
-        },
+        &chunk[..n],
         block,
         meta.block1,
         oscore_ctx,
@@ -7199,16 +7191,32 @@ where
     Ok(tx)
 }
 
-enum ResponsePayload<'a> {
-    Bytes(&'a [u8]),
-    Body {
-        id: SlotId,
-        range: core::ops::Range<usize>,
-    },
+fn copy_issued<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    issued: OutgoingBlock,
+    dest: &mut [u8],
+) -> Result<usize, BlockTransferError> {
+    let payload = engine
+        .tx_body_payload(issued.id())
+        .ok_or(BlockTransferError::NoTransfer)?;
+    let end = issued
+        .offset()
+        .checked_add(issued.len())
+        .ok_or(BlockTransferError::Overflow)?;
+    if end > payload.len() || issued.len() > dest.len() {
+        return Err(BlockTransferError::Overflow);
+    }
+    dest[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(
+        &mut engine.work_metrics_mut().block_tx_staged_bytes,
+        issued.len(),
+    );
+    Ok(issued.len())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_response<S: Storage + DatagramSlots + BodySlots, E, const REQUESTS: usize>(
+fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     peer: Endpoint,
     tx: SlotId,
@@ -7216,7 +7224,65 @@ fn encode_response<S: Storage + DatagramSlots + BodySlots, E, const REQUESTS: us
     mid: MessageId,
     token: S::Token,
     response: &Response<'_, S::Token>,
-    payload: ResponsePayload<'_>,
+    payload: &[u8],
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    // Without Location options at most eight entries are reachable: ETag,
+    // Observe, Content-Format, Max-Age, Block2/Q-Block2, Size2, Block1 and Echo.
+    // The full path preserves both eight-entry Location lists and all metadata.
+    if response.location_paths().is_empty() && response.location_queries().is_empty() {
+        encode_response_options::<S, E, REQUESTS, 8>(
+            engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
+            oscore_req,
+        )
+    } else {
+        encode_response_locations(
+            engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
+            oscore_req,
+        )
+    }
+}
+
+#[cold]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn encode_response_locations<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    encode_response_options::<S, E, REQUESTS, { 8 + 2 * LOCATION_MAX }>(
+        engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx, oscore_req,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_response_options<
+    S: Storage + DatagramSlots,
+    E,
+    const REQUESTS: usize,
+    const OPTIONS: usize,
+>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
     block: Option<BlockOpt>,
     block1: Option<BlockOpt>,
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
@@ -7234,7 +7300,7 @@ fn encode_response<S: Storage + DatagramSlots + BodySlots, E, const REQUESTS: us
         .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
     let block1_enc = block1.map(|b| b.value.encode());
     let echo = response.echo_option();
-    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
+    let mut opts = OptionsBuilder::<OPTIONS>::new();
     let filled = (|| -> Result<(), EncodeError> {
         if let Some(etag) = response.etag_bytes() {
             push_opt(&mut opts, Opt::etag(etag))?;
@@ -7283,22 +7349,15 @@ fn encode_response<S: Storage + DatagramSlots + BodySlots, E, const REQUESTS: us
         Ok(()) => {
             let msg = Message::new(ty, response.code(), mid)
                 .with_token(token)
-                .with_options(opts.as_slice());
-            let fresh_piv = response.fresh_piv()
+                .with_options(opts.as_slice())
+                .with_payload(payload);
+            if response.fresh_piv()
                 || block.is_some_and(|b| b.q_block)
-                || (response.observe_seq().is_some() && ty != Type::Acknowledgement);
-            match payload {
-                ResponsePayload::Bytes(payload) => {
-                    let msg = msg.with_payload(payload);
-                    if fresh_piv {
-                        oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-                    } else {
-                        oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-                    }
-                }
-                ResponsePayload::Body { id, range } => oscore::encode_body_response(
-                    oscore_ctx, peer, oscore_req, engine, tx, msg, id, range, fresh_piv,
-                ),
+                || (response.observe_seq().is_some() && ty != Type::Acknowledgement)
+            {
+                oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
+            } else {
+                oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
             }
         }
         Err(EncodeError::OptionsFull) => {

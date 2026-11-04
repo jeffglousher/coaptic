@@ -439,18 +439,6 @@ pub trait BodySlots: Storage {
     /// Filled outgoing body, if `id` is occupied.
     fn tx_body_payload(&self, id: SlotId) -> Option<&[u8]>;
 
-    /// Borrow a filled outgoing body and an occupied TX datagram's full buffer.
-    ///
-    /// The areas are disjoint. This does not copy bytes, change lengths or
-    /// sidecars, or pin either slot. The mutable storage borrow excludes other
-    /// access until both references expire. Return an error without mutation
-    /// if either slot is unavailable; callers retain ownership of both slots.
-    fn tx_body_and_tx_mut(
-        &mut self,
-        body: SlotId,
-        tx: SlotId,
-    ) -> Result<(&[u8], &mut [u8]), SlotError>;
-
     /// Incoming Block1 / Block2 sidecar, if `id` holds a transfer.
     fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<Self::Token>>;
 

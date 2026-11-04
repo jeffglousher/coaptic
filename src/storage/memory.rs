@@ -699,14 +699,6 @@ where
 }
 
 impl<P: MemoryProfile> BodySlots for Memory<P> {
-    fn tx_body_and_tx_mut(
-        &mut self,
-        _body: SlotId,
-        _tx: SlotId,
-    ) -> Result<(&[u8], &mut [u8]), SlotError> {
-        Err(SlotError::InvalidSlot)
-    }
-
     fn rx_body_payload(&self, _id: SlotId) -> Option<&[u8]> {
         None
     }
@@ -956,18 +948,7 @@ impl<P: MemoryProfile> BodySlots for Memory<P, WithBodies<P>>
 where
     P::RxBody: BodyOps<P::Token>,
     P::TxBody: BodyOps<P::Token>,
-    P::TxDatagram: DatagramBytes,
 {
-    fn tx_body_and_tx_mut(
-        &mut self,
-        body: SlotId,
-        tx: SlotId,
-    ) -> Result<(&[u8], &mut [u8]), SlotError> {
-        let body = self.bodies.tx.payload(body).ok_or(SlotError::NotOccupied)?;
-        let tx = self.tx.payload_mut(tx).ok_or(SlotError::NotOccupied)?;
-        Ok((body, tx))
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn replace_observe_body(
         &mut self,
