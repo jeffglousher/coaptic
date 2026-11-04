@@ -1,7 +1,8 @@
 # Allocated reply retention and expiry batch
 
-PR #733 implements one combined allocated-storage change. It is a draft, not
-delivered on main: the development screens retain failed fixed-storage guards.
+PR #733 implements combined fixed/allocated reply retention and allocated expiry.
+The final source-specific CPU-cycle comparison passes all14 guards. Earlier
+allocated-only sources and their failed fixed-storage guards remain below.
 
 App previously repeated key searches while replacing a reply or inserting into
 a full table. AllocMemory now selects the existing row or first oldest eligible
@@ -12,7 +13,52 @@ Expiry also releases due rows and refreshes the live deadline in one pass.
 Generic fixed/custom storage retains its original operations through default
 non-mutating hooks. No persistent fields, buffers or capacities are added.
 
-## Observed allocated CPU-work improvement
+## Final fixed and allocated integration
+
+Runtime `a312f3b6b4150895c84279859cd1cf8665a62490` extends bounded one-pass
+fresh-key selection to fixed tables. Existing-key replacement retains ordinary
+insertion after removal, preserving later duplicate rows. Eviction still removes
+by the selected victim key, including the earlier-duplicate case. No retained
+storage is added. The allocated implementation is retained.
+
+All14 unchanged CPU-cycle guards pass. All12 Service workloads individually have
+upper95 ratios below1; SmallDevice's two preservation guards pass. The declared
+six-cell allocated integration ratio is0.9483623491, upper0.9624349962:
+5.16% fewer measured thread cycles. This is not converted to elapsed time.
+
+- service-allocated, unprotected, idle: ratio0.9071985205, upper0.9768237256.
+- service-allocated, oscore, idle: ratio0.9699605612, upper0.9896422177.
+- service-allocated, unprotected, steady: ratio0.9101995474, upper0.9271755321.
+- service-allocated, oscore, steady: ratio0.9489035342, upper0.9560671994.
+- service-allocated, unprotected, burst: ratio0.9756246727, upper0.9807934232.
+- service-allocated, oscore, burst: ratio0.9811783551, upper0.9892417945.
+- service-fixed, unprotected, idle: ratio0.9529025737, upper0.9693919763.
+- service-fixed, oscore, idle: ratio0.9817509756, upper0.9898560001.
+- service-fixed, unprotected, steady: ratio0.9242610973, upper0.9359808346.
+- service-fixed, oscore, steady: ratio0.9657415199, upper0.9720561329.
+- service-fixed, unprotected, burst: ratio0.9789568470, upper0.9920987349.
+- service-fixed, oscore, burst: ratio0.9876299110, upper0.9947204735.
+- small-device, unprotected, steady: ratio0.9932301010, upper1.0013526433.
+- small-device, oscore, steady: ratio0.9887660846, upper1.0041129050.
+
+The existing eight-pair/14-cell method,24576 polls/process, counters, capacities
+and all individual1.02 guards are unchanged. All28 qualifiers and224 timing
+processes complete. Independent raw-value recalculation matches every statistic;
+all14 paired memory ledgers match. Local1212 all-feature/714 minimal library
+checks,8 dedup-capacity/13 footprint tests and strict Clippy pass. New differential
+coverage includes duplicate victim keys, exact replay/pin/cursor state, and
+capacities0/1/4/8/64. Inline source review found no supported new defect; no
+independent reviewer was used. Evidence is retained once under
+`D:/CoapticCurrent/dedup-fixed-integration-20261104` (below96MiB).
+
+This resolves the fixed-storage guards for the new implementation, not the old
+failed sources. It supports local Windows instrumented complete-App CPU-cycle
+improvements and SmallDevice preservation. Wall latency, other hosts/devices and
+peak stack remain unproved. Earlier wall/counter failures remain unchanged.
+
+## Earlier allocated-only implementation (unmerged source)
+
+## Earlier observed allocated CPU-work improvement
 
 Baseline: delivered #732, `cf25b30fca5f8f06392aaa51a70c2498fe974a35`.
 Candidate: `a5bc973e1dd65b4b97c37028086307a08f8f7d8a`.
