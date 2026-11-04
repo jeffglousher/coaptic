@@ -16147,11 +16147,8 @@ fn allocated_expiry_refresh_tracks_the_existing_walk_and_pin_release() {
     super::expire_request_dedup(&mut engine, &mut closed, 10);
     assert!(engine.lookup_dedup(old.key()).is_none());
     assert_eq!(engine.tx_occupied(), 0);
-    // Pre-removal deadlines deliberately remain a conservative lower bound.
-    assert_eq!(
-        engine.storage().dedup_expiry_check(11),
-        DedupExpiry::Refresh
-    );
+    // The private unique-key backend can retain the exact live-row minimum.
+    assert_eq!(engine.storage().dedup_expiry_check(11), DedupExpiry::Skip);
     let reused = engine.acquire_tx().unwrap();
     engine.write_tx(reused, b"new owner", peer).unwrap();
     super::expire_request_dedup(&mut engine, &mut closed, 11);

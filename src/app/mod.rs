@@ -7624,6 +7624,9 @@ fn store_request_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>, entry: D
     if !entry.has_usable_replay() {
         return false;
     }
+    if let Some(stored) = engine.storage_mut().try_store_app_dedup(entry) {
+        return stored;
+    }
     release_existing_dedup(engine, entry.key());
     if engine.insert_dedup(entry).is_some() {
         return true;
@@ -7664,7 +7667,7 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     {
         *dedup_closed = None;
     }
-    if engine.storage_mut().dedup().is_empty() {
+    if engine.storage_mut().dedup().is_empty() || engine.storage_mut().try_expire_dedup(now_ms) {
         return;
     }
     let refresh = match engine.storage().dedup_expiry_check(now_ms) {

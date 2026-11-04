@@ -593,6 +593,13 @@ impl<P: MemoryProfile, B> DedupSlots for Memory<P, B>
 where
     P::Dedup: DedupStore,
 {
+    fn try_store_app_dedup(&mut self, entry: DedupEntry) -> Option<bool> {
+        let tx = &mut self.tx;
+        self.dedup.try_store_app(entry, |pin| {
+            let _ = tx.release(pin);
+        })
+    }
+
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
     }

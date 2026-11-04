@@ -5984,6 +5984,14 @@ fn custom_dedup_expiry_defaults_to_inspection() {
         }
     }
     for now in [0, 1, u64::MAX] {
+        assert!(!super::DedupSlots::try_expire_dedup(&mut Custom, now));
+        assert_eq!(
+            super::DedupSlots::try_store_app_dedup(
+                &mut Custom,
+                DedupEntry::new(MessageId::new(1), Endpoint::v4([192, 0, 2, 1], 5683))
+            ),
+            None
+        );
         assert_eq!(
             super::DedupSlots::dedup_expiry_check(&Custom, now),
             super::DedupExpiry::Scan

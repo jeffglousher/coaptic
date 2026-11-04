@@ -272,6 +272,29 @@ pub enum DedupExpiry {
 /// [`DedupEntry::tx_pin`] so a duplicate CON request can be answered
 /// without a second handler call.
 pub trait DedupSlots {
+    /// Optionally retain an App reply using this backend's owned pools.
+    ///
+    /// `Some` completes App's replacement/insertion/oldest-row eviction sequence.
+    /// Preserve replay bytes, acquisition cursor and earliest-slot deadline ties;
+    /// release an old TX pin before its row and ignore release errors as App does.
+    /// Rows with zero deadlines are ineligible for eviction. `None` must leave
+    /// rows and pins unchanged so App can execute its generic sequence.
+    /// App calls this only for an entry with usable replay.
+    fn try_store_app_dedup(&mut self, _entry: DedupEntry) -> Option<bool> {
+        None
+    }
+
+    /// Optionally expire due rows using this backend's owned pools.
+    ///
+    /// `true` means all occupied rows with a nonzero deadline at or before
+    /// `now_ms` were processed in ascending slot order. Release each TX pin
+    /// before its row, preserving the same failure handling as App. Unexpired
+    /// and zero-deadline rows remain unchanged. `false` must not mutate rows or
+    /// pins; App then uses its existing generic expiry walk.
+    fn try_expire_dedup(&mut self, _now_ms: u64) -> bool {
+        false
+    }
+
     /// Decide whether App must walk the table for expiry.
     ///
     /// `Skip` guarantees no occupied payload is due. Backends that retain a
