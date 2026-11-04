@@ -171,6 +171,13 @@ impl From<DedupKey> for DedupEntry {
 /// Each operation scans the configured entry count (O(n) in capacity). Capacity
 /// is fixed at construction.
 pub(crate) trait DedupStore {
+    fn try_store_app(
+        &mut self,
+        _entry: DedupEntry,
+        _release_tx: impl FnMut(SlotId),
+    ) -> Option<bool> {
+        None
+    }
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId>;
     fn lookup(&self, key: DedupKey) -> Option<SlotId>;
     fn remove(&mut self, key: DedupKey) -> bool;
@@ -1020,6 +1027,62 @@ impl<const ENTRIES: usize> Default for DedupTable<ENTRIES> {
 }
 
 impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
+    fn try_store_app(
+        &mut self,
+        entry: DedupEntry,
+        mut release_tx: impl FnMut(SlotId),
+    ) -> Option<bool> {
+        let mut existing = None;
+        let mut oldest = None;
+        for i in 0..ENTRIES {
+            let id = SlotId::from_index(i);
+            let Some(row) = self.entry_ref(id) else {
+                continue;
+            };
+            if row.key() == entry.key() {
+                existing = Some(id);
+                break;
+            }
+            if row.due_ms() != 0 && oldest.is_none_or(|(_, due)| row.due_ms() < due) {
+                oldest = Some((id, row.due_ms()));
+            }
+        }
+        if let Some(id) = existing {
+            let old = self.entry_ref(id).copied().expect("selected occupied row");
+            if let Some(pin) = old.tx_pin() {
+                release_tx(pin);
+            }
+            let _ = self.remove(old.key());
+            // set_entry permits duplicate keys. Preserve the second matching
+            // row and the original insertion cursor rather than overwriting.
+            return Some(self.insert(entry).is_some());
+        }
+        let id = match self.occ.acquire() {
+            Some(id) => id,
+            None => {
+                let Some((victim, _)) = oldest else {
+                    return Some(false);
+                };
+                let old = self
+                    .entry_ref(victim)
+                    .copied()
+                    .expect("selected occupied row");
+                if let Some(pin) = old.tx_pin() {
+                    release_tx(pin);
+                }
+                // Removal by key can select an earlier duplicate of the
+                // victim. Keep that ordering, including its pin semantics.
+                let _ = self.remove(old.key());
+                let Some(id) = self.occ.acquire() else {
+                    return Some(false);
+                };
+                id
+            }
+        };
+        self.entries[id.index()] = Some(entry);
+        Some(true)
+    }
+
     fn insert(&mut self, entry: DedupEntry) -> Option<SlotId> {
         DedupTable::insert(self, entry)
     }
@@ -1368,5 +1431,90 @@ mod format_tests {
         assert!(row.content_format_matches(Code::VALID, None));
         assert!(row.content_format_matches(Code::CONTENT, None));
         assert!(!row.content_format_matches(Code::CONTENT, Some(ContentFormat::TEXT_PLAIN)));
+    }
+}
+
+#[cfg(test)]
+mod app_store_tests {
+    use super::*;
+
+    fn reference<const N: usize>(
+        table: &mut DedupTable<N>,
+        entry: DedupEntry,
+        pin: &mut Option<SlotId>,
+    ) -> bool {
+        if let Some(id) = table.lookup(entry.key()) {
+            let old = table.entry(id).unwrap();
+            *pin = old.tx_pin();
+            let _ = table.remove(old.key());
+        }
+        if table.insert(entry).is_some() {
+            return true;
+        }
+        let mut oldest: Option<DedupEntry> = None;
+        for i in 0..N {
+            let Some(row) = table.entry(SlotId::from_index(i)) else {
+                continue;
+            };
+            if row.due_ms() != 0 && oldest.is_none_or(|old| row.due_ms() < old.due_ms()) {
+                oldest = Some(row);
+            }
+        }
+        let Some(old) = oldest else { return false };
+        *pin = old.tx_pin();
+        let _ = table.remove(old.key());
+        table.insert(entry).is_some()
+    }
+
+    fn compare<const N: usize>() {
+        let mut actual = DedupTable::<N>::new();
+        let mut original = DedupTable::<N>::new();
+        let peer = Endpoint::v4([192, 0, 2, 71], 5683);
+        for step in 0..900usize {
+            let row = DedupEntry::new(MessageId::new((step % 5) as u16), peer)
+                .with_due_ms([0, 1, 10, u64::MAX][(step / 5) % 4])
+                .with_replay(&[step as u8; 32])
+                .with_tx_pin(SlotId::from_index(step % 4));
+            match step % 5 {
+                0 => {
+                    assert_eq!(actual.acquire(), original.acquire());
+                }
+                1 if N > 0 => {
+                    let id = SlotId::from_index((step / 5) % N);
+                    assert_eq!(actual.set_entry(id, row), original.set_entry(id, row));
+                }
+                2 => {
+                    assert_eq!(actual.remove(row.key()), original.remove(row.key()));
+                }
+                _ => {
+                    let mut released = None;
+                    let mut expected = None;
+                    assert_eq!(
+                        actual.try_store_app(row, |pin| {
+                            assert!(released.is_none());
+                            released = Some(pin);
+                        }),
+                        Some(reference(&mut original, row, &mut expected))
+                    );
+                    assert_eq!(released, expected);
+                }
+            }
+            assert_eq!(actual.cursor(), original.cursor());
+            assert_eq!(actual.occupied_count(), original.occupied_count());
+            for i in 0..N {
+                let id = SlotId::from_index(i);
+                assert_eq!(actual.is_occupied(id), original.is_occupied(id));
+                assert_eq!(actual.entry(id), original.entry(id));
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_app_store_preserves_duplicate_victims_replay_pins_and_cursor() {
+        compare::<0>();
+        compare::<1>();
+        compare::<4>();
+        compare::<8>();
+        compare::<64>();
     }
 }
