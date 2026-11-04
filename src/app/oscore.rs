@@ -487,7 +487,10 @@ pub(crate) fn encode_body_response<
     if engine.storage_mut().tx_datagram().is_pinned(tx) {
         return Err(crate::storage::SlotError::Pinned.into());
     }
+    #[cfg(feature = "oscore")]
     let protected = ctx.is_some();
+    #[cfg(not(feature = "oscore"))]
+    let protected = false;
     let payload_len = range
         .end
         .checked_sub(range.start)
