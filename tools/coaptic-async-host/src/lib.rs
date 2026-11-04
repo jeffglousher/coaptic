@@ -1,7 +1,7 @@
 //! Host UDP and monotonic timer adapters for Coaptic's native async App APIs.
 //!
 //! The OS readiness reactor uses host allocation. Packet storage stays bounded:
-//! the Engine owns its pools and the caller supplies receive scratch. This does
+//! the Engine owns its pools and the caller supplies receive scratch.
 //! The same transport works with Engine I/O and App request/progress/wait APIs.
 
 use async_io::Async;
@@ -48,7 +48,13 @@ pub struct Udp<S> {
 }
 
 impl<S: AsMut<[u8]>> Udp<S> {
-    /// Register a socket with the host reactor; sets nonblocking mode.
+    /// Take ownership of an existing socket and register it with the host reactor.
+    ///
+    /// This sets nonblocking mode but never rebinds the socket; its local address
+    /// and other socket options are retained. Empty scratch is refused. On error
+    /// both arguments are dropped, including the socket. A clone of the socket
+    /// shares its OS state: do not change it back to blocking mode or receive
+    /// through that clone while this adapter is active.
     pub fn new(socket: UdpSocket, mut scratch: S) -> io::Result<Self> {
         if scratch.as_mut().is_empty() {
             return Err(io::ErrorKind::InvalidInput.into());
@@ -62,6 +68,24 @@ impl<S: AsMut<[u8]>> Udp<S> {
     /// Bound local endpoint, including a port selected by the OS.
     pub fn local_endpoint(&self) -> io::Result<Endpoint> {
         self.socket.get_ref().local_addr().map(Endpoint::from)
+    }
+
+    /// Inspect or configure the adopted socket without transferring ownership.
+    ///
+    /// Keep it nonblocking and leave receives to this adapter. A blocking receive
+    /// would stall the executor; receiving here could consume an App's datagram.
+    #[must_use]
+    pub fn socket(&self) -> &UdpSocket {
+        self.socket.get_ref()
+    }
+
+    /// Deregister from the reactor and recover the socket and caller scratch.
+    ///
+    /// The socket remains nonblocking. To use blocking I/O afterwards, explicitly
+    /// call `set_nonblocking(false)` on the returned socket. If deregistration
+    /// fails, both the socket and scratch are dropped and the error is returned.
+    pub fn into_parts(self) -> io::Result<(UdpSocket, S)> {
+        Ok((self.socket.into_inner()?, self.scratch))
     }
 }
 
@@ -121,6 +145,45 @@ mod tests {
 
     fn socket() -> Udp<[u8; RX_BYTES + 1]> {
         Udp::new(UdpSocket::bind("127.0.0.1:0").unwrap(), [0; RX_BYTES + 1]).unwrap()
+    }
+
+    #[test]
+    fn adopted_socket_keeps_address_options_and_queued_packet_then_returns_ownership() {
+        async_io::block_on(deadline(async {
+            let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+            socket.set_ttl(37).unwrap();
+            let address = socket.local_addr().unwrap();
+            let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+            sender.send_to(b"before adoption", address).unwrap();
+            let mut scratch = [0; 65];
+            let scratch_pointer = scratch.as_ptr();
+            let mut receiver = Udp::new(socket, &mut scratch[..]).unwrap();
+            assert_eq!(receiver.local_endpoint().unwrap(), Endpoint::from(address));
+            assert_eq!(receiver.socket().ttl().unwrap(), 37);
+            let mut output = [0; 64];
+            let (length, source) = receiver.recv(&mut output).await.unwrap();
+            assert_eq!(&output[..length], b"before adoption");
+            assert_eq!(source, Endpoint::from(sender.local_addr().unwrap()));
+
+            let (socket, scratch) = receiver.into_parts().unwrap();
+            assert_eq!(socket.local_addr().unwrap(), address);
+            assert_eq!(socket.ttl().unwrap(), 37);
+            assert_eq!(scratch.as_ptr(), scratch_pointer);
+            assert_eq!(scratch.len(), 65);
+            assert_eq!(
+                socket.recv_from(&mut output).unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            socket
+                .send_to(b"returned", sender.local_addr().unwrap())
+                .unwrap();
+            sender
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let (length, source) = sender.recv_from(&mut output).unwrap();
+            assert_eq!(&output[..length], b"returned");
+            assert_eq!(source, address);
+        }));
     }
 
     async fn deadline<T>(operation: impl Future<Output = T>) -> T {

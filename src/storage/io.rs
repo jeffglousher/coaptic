@@ -251,6 +251,10 @@ impl DatagramIo for std::net::UdpSocket {
 /// `AsMut` implementations and the OS network stack control their own memory.
 /// Accepted packets are still copied into the destination; this is not zero-copy.
 /// Socket blocking, timeout and nonblocking settings are retained.
+/// Configure and bind the socket before passing it in; this adapter never binds
+/// another socket or changes its address. For [`crate::App::poll`], set
+/// nonblocking mode so an idle receive cannot prevent timers or other App work
+/// from progressing. The caller chooses how to wait between polls.
 ///
 /// ```no_run
 /// use coaptic::storage::UdpSocketIo;
@@ -269,7 +273,14 @@ pub struct UdpSocketIo<S> {
 
 #[cfg(feature = "std")]
 impl<S: AsMut<[u8]>> UdpSocketIo<S> {
-    /// Own the socket and scratch. Empty scratch is refused.
+    /// Take ownership of an existing socket and scratch without rebinding.
+    ///
+    /// Empty scratch is refused. On error both arguments are dropped, including
+    /// the socket. Socket options are preserved; in particular this constructor
+    /// does not enable nonblocking mode. Use [`Self::socket`] for inspection and
+    /// [`Self::into_parts`] to recover ownership after the adapter is no longer
+    /// needed. Do not concurrently receive through a cloned socket handle: that
+    /// would consume datagrams intended for this App.
     pub fn new(socket: std::net::UdpSocket, mut scratch: S) -> std::io::Result<Self> {
         if scratch.as_mut().is_empty() {
             return Err(std::io::ErrorKind::InvalidInput.into());

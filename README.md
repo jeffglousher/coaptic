@@ -76,6 +76,51 @@ The companion repository supplies an
 [ESP32-S3 integration](https://github.com/jeffglousher/coaptic-validation#custom-esphome-qualification)
 and a [Linux container example](https://github.com/jeffglousher/coaptic-validation#protected-linux-container).
 
+## Supply a socket and choose how to wait
+
+An App accepts a transport you supply. Its builder's `.bind(transport)` attaches
+that transport; it does not bind an OS port or select a runtime. On a host, bind
+and configure a standard UDP socket once, then move it into the adapter:
+
+```rust
+use coaptic::storage::{MemoryProfile, UdpSocketIo, profiles::Constrained};
+use std::net::UdpSocket;
+
+let socket = UdpSocket::bind("127.0.0.1:5683")?;
+socket.set_nonblocking(true)?;
+let io = UdpSocketIo::new(socket, [0; Constrained::RX_DATAGRAM_BYTES + 1])?;
+// Pass io to App::with_resources(SmallDevice::new()).bind_with_entropy(...).
+```
+
+This keeps the same socket, local port and configured options on Windows, Linux
+and macOS. Size scratch for the selected App's RX datagram capacity plus one byte
+to detect truncation. `UdpSocketIo::new` retains the socket's blocking policy;
+nonblocking mode lets `App::poll` return when there is no packet. Avoid concurrent
+receives through cloned handles: they compete with the App for its packets.
+
+Synchronous and asynchronous Apps use the same protocol engine. The difference
+is how the application waits for work:
+
+- **Synchronous polling:** call `App::poll(now_ms)` with one monotonic clock.
+  A tight loop is busy polling. A readiness loop such as Mio can sleep until
+  socket activity or `App::next_timeout()`; it must also wake for application
+  work, notification signals and checkpoint retries. A fixed sleep between polls
+  is simple but adds latency; it is not equivalent to an OS readiness loop.
+- **Native async:** pass the same kind of preconfigured socket to
+  `coaptic_async_host::Udp::new(socket, scratch)`. It enables nonblocking mode and
+  registers host readiness without rebinding. Drive `wait_async` and
+  `progress_async` with the adapter's `Clock`, as in the runnable example. This
+  adapter uses `async-io`; the core itself requires no executor or runtime.
+- **Embedded or an existing event loop:** implement `DatagramIo` or
+  `AsyncDatagramIo` for the platform's socket/driver and pass it to the same App
+  builder. Readiness, task creation and timer waiting remain platform choices.
+
+Inspect an attached transport with `app.transport()` or `app.transport_mut()`.
+Both host adapters expose `socket()`; keep an async socket nonblocking. Standalone
+adapters can return their socket and scratch with `into_parts()`; the async form
+is fallible because it deregisters OS readiness. Dropping the owning App closes
+its transport. Socket ownership does not imply a task or a new thread per App.
+
 ## Pair a device
 
 The Rust commissioning tool guides you through inspection, identity setup,

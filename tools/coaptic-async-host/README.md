@@ -15,6 +15,42 @@ On Windows, the unoptimized example exceeds the default main-thread stack; use
 the optimized command above. The tests pass on the test runner's larger stack.
 No stack-size override or boxed future is used by the example.
 
+## Bring an existing socket
+
+Create and configure a `std::net::UdpSocket` using the host APIs you already use,
+then move it into `Udp::new(socket, scratch)`. No raw descriptor conversion or
+second bind is needed. The adapter preserves the port and socket options while
+enabling nonblocking mode and registering the socket with `async-io`:
+
+```rust
+use coaptic_async_host::Udp;
+use std::net::UdpSocket;
+
+let socket = UdpSocket::bind("127.0.0.1:0")?;
+socket.set_ttl(32)?;
+let transport = Udp::new(socket, [0; 1153])?;
+let endpoint = transport.local_endpoint()?;
+assert_eq!(transport.socket().ttl()?, 32);
+// Move transport into the usual SmallDevice App builder's .bind(transport).
+```
+
+The 1153-byte scratch here matches SmallDevice's 1152-byte RX datagrams; choose
+the matching capacity for another profile. The constructor consumes the socket
+even on error. Do not receive through a cloned handle or change its blocking
+mode while this adapter is active. `socket()` permits option inspection and
+configuration without rebinding. A standalone adapter's `into_parts()`
+deregisters readiness and returns its socket and scratch; the socket remains
+nonblocking. A deregistration failure returns an error and drops both owners.
+
+This host adapter works on Windows, Linux and macOS. `async_io::block_on` in the
+example is the executor, and `async-io` supplies OS readiness and timers. It does
+not start a Tokio runtime or require one thread per App. Other executors and
+embedded drivers can implement the core async transport/timer contracts without
+changing application handlers. The ESP integration is a separate platform driver;
+this host reactor is not part of its firmware.
+
+## Drive App progress
+
 `Udp` implements native `AsyncDatagramIo`; no synchronous socket adapter or
 queued-success bridge is involved. Bind it through the normal App builder. Use
 `Outgoing::send_async` to install a Call after transport acceptance, then alternate
