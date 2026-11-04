@@ -58,6 +58,56 @@ fn without_allocating<R>(work: impl FnOnce() -> R) -> R {
 }
 
 #[test]
+fn adopted_socket_preserves_configuration_queued_input_and_ownership() {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.set_nonblocking(true).unwrap();
+    socket.set_ttl(37).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let address = socket.local_addr().unwrap();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sender.send_to(b"before adoption", address).unwrap();
+    let mut scratch = [0; 65];
+    let scratch_pointer = scratch.as_ptr();
+    let mut receiver = without_allocating(|| UdpSocketIo::new(socket, &mut scratch[..]).unwrap());
+    assert_eq!(receiver.socket().local_addr().unwrap(), address);
+    assert_eq!(receiver.socket().ttl().unwrap(), 37);
+    assert_eq!(
+        receiver.socket().read_timeout().unwrap(),
+        Some(Duration::from_secs(2))
+    );
+    let mut output = [0; 64];
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let (length, source) = loop {
+        if let Some(packet) = without_allocating(|| receiver.recv(&mut output)).unwrap() {
+            break packet;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "loopback receive deadline"
+        );
+        std::thread::yield_now();
+    };
+    assert_eq!(&output[..length], b"before adoption");
+    assert_eq!(source, sender.local_addr().unwrap().into());
+    assert_eq!(receiver.recv(&mut output).unwrap(), None);
+    let (socket, scratch) = receiver.into_parts();
+    assert_eq!(socket.local_addr().unwrap(), address);
+    assert_eq!(scratch.as_ptr(), scratch_pointer);
+    assert_eq!(scratch.len(), 65);
+    socket
+        .send_to(b"returned", sender.local_addr().unwrap())
+        .unwrap();
+    sender
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let (length, source) = sender.recv_from(&mut output).unwrap();
+    assert_eq!(&output[..length], b"returned");
+    assert_eq!(source, address);
+}
+
+#[test]
 fn raw_socket_refusal_preserves_datagram_for_reusable_scratch() {
     for address in ["127.0.0.1:0", "[::1]:0"] {
         let sender = UdpSocket::bind(address).unwrap();
