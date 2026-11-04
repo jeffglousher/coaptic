@@ -809,6 +809,20 @@ impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
 }
 
 impl<T: OwnedToken> BodySlots for AllocMemory<T> {
+    fn tx_body_and_tx_mut(
+        &mut self,
+        body: SlotId,
+        tx: SlotId,
+    ) -> Result<(&[u8], &mut [u8]), SlotError> {
+        let body = self
+            .tx_body
+            .as_ref()
+            .and_then(|pool| pool.payload(body))
+            .ok_or(SlotError::NotOccupied)?;
+        let tx = self.tx.payload_mut(tx).ok_or(SlotError::NotOccupied)?;
+        Ok((body, tx))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn replace_observe_body(
         &mut self,

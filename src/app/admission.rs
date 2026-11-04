@@ -84,7 +84,7 @@ pub(super) fn send_control_response<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + DedupSlots + BodySlots,
     T: DatagramIo,
 {
     let ty = match meta.ty {
@@ -106,7 +106,7 @@ where
         mid,
         meta.token,
         response,
-        response.payload(),
+        ResponsePayload::Bytes(response.payload()),
         None,
         meta.block1,
         oscore,
@@ -153,7 +153,7 @@ pub(super) fn send_refusal<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + DedupSlots + BodySlots,
     T: DatagramIo,
 {
     if meta.no_response.suppresses(Code::SERVICE_UNAVAILABLE) {
