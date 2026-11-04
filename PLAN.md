@@ -9,11 +9,12 @@ it is not silently treated as finished software work.
 ## Current work
 
 The [runtime and comparison direction](architecture/ASYNC-RUNTIMES.md) is adopted.
-Next integration work: promote the working Tokio benchmark transport/timer into a
-reusable caller-runtime adapter, then implement an Embassy target example and
-adapter. Keep the working async-io host option and existing ESP-IDF driver while
-those integrations are evaluated. Establish equivalent-capability libcoap cells
-alongside minimal-workload cells before new cross-library claims. These are pending
+The reusable [Tokio adapter](tools/coaptic-tokio/README.md) now supplies caller-owned
+UDP and timers, with Windows loopback and full-App blockwise tests. Next implement
+an Embassy target example and adapter. Keep the working async-io host option and
+existing ESP-IDF driver while that integration is evaluated. Establish
+equivalent-capability libcoap cells alongside minimal-workload cells before new
+cross-library claims. These are pending
 implementation tasks, not completed migrations; keep per-request performance work
 moving independently and preserve the delivered memory improvements.
 

@@ -111,20 +111,25 @@ is how the application waits for work:
   registers host readiness without rebinding. Drive `wait_async` and
   `progress_async` with the adapter's `Clock`, as in the runnable example. This
   adapter uses `async-io`; the core itself requires no executor or runtime.
+- **An existing Tokio application:** pass an already registered socket to
+  `coaptic_tokio::Udp::new(socket, scratch)`, or register a standard socket with
+  `Udp::from_std` inside the caller's I/O-enabled runtime. Use its `Clock` for App
+  timestamps and timers. See the [Tokio adapter](tools/coaptic-tokio/README.md).
 - **Embedded or an existing event loop:** implement `DatagramIo` or
   `AsyncDatagramIo` for the platform's socket/driver and pass it to the same App
   builder. Readiness, task creation and timer waiting remain platform choices.
 
 Inspect an attached transport with `app.transport()` or `app.transport_mut()`.
-Both host adapters expose `socket()`; keep an async socket nonblocking. Standalone
-adapters can return their socket and scratch with `into_parts()`; the async form
-is fallible because it deregisters OS readiness. Dropping the owning App closes
+Host adapters expose `socket()`; keep an async socket nonblocking. Standalone
+adapters can return their socket and scratch with `into_parts()`; the async-io form
+is fallible because it deregisters OS readiness. The Tokio form returns the
+registered Tokio socket unchanged. Dropping the owning App closes
 its transport. Socket ownership does not imply a task or a new thread per App.
 
 See [runtime choices and integration status](architecture/ASYNC-RUNTIMES.md).
-Tokio is the preferred host integration direction; its current implementation is
-in the companion benchmark. The standalone async-io adapter above is available
-today. Embassy is a planned embedded integration, not yet a tested adapter.
+Tokio is the preferred adapter for applications already using that runtime;
+the standalone async-io adapter remains an alternative. Embassy is a planned
+embedded integration, not yet a tested adapter.
 Existing ESPHome firmware uses a separate ESP-IDF/FreeRTOS driver.
 
 ## Pair a device

@@ -1,0 +1,14 @@
+[package]
+name = "coaptic-tokio"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Caller-runtime Tokio UDP and timer adapters for Coaptic"
+
+[workspace]
+
+[dependencies]
+coaptic = { path = "../..", default-features = false, features = ["std", "oscore"] }
+tokio = { version = "=1.53.3", features = ["net", "time", "rt"] }
