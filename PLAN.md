@@ -8,6 +8,15 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The [runtime and comparison direction](architecture/ASYNC-RUNTIMES.md) is adopted.
+Next integration work: promote the working Tokio benchmark transport/timer into a
+reusable caller-runtime adapter, then implement an Embassy target example and
+adapter. Keep the working async-io host option and existing ESP-IDF driver while
+those integrations are evaluated. Establish equivalent-capability libcoap cells
+alongside minimal-workload cells before new cross-library claims. These are pending
+implementation tasks, not completed migrations; keep per-request performance work
+moving independently and preserve the delivered memory improvements.
+
 The combined reply-retention/expiry change
 [#733](https://github.com/jeffglousher/coaptic/pull/733) now optimizes fixed and
 allocated tables while preserving duplicate-key and TX-pin behavior. The final

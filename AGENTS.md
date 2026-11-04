@@ -19,6 +19,10 @@ for checks. Humans and agents may author and review.
 
 ## Preserve the design
 
+- Follow [runtime and comparison policy](architecture/ASYNC-RUNTIMES.md): keep the
+  core executor-neutral, use explicit platform adapters, and distinguish working
+  integrations from planned ones. Match service capabilities in peer comparisons;
+  do not equate allocation strategies or silently change capacities to claim a win.
 - Pre-release APIs and formats may change directly. Update callers together;
   no compatibility shims, deprecation periods or version bumps unless requested.
 - Constrained means predictable memory and work, with complete supported features,

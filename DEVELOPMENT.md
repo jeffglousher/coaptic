@@ -41,6 +41,10 @@ checks are manual. GitHub's default CodeQL setup runs separately.
 
 ## Record useful evidence
 
+Apply [runtime and comparison policy](architecture/ASYNC-RUNTIMES.md) when changing
+adapters or designing peer comparisons. Equivalent-capability and minimal-workload
+comparisons answer different questions; retain them as separate result groups.
+
 Name the workload, security mode, storage and capacities. Preserve raw failures
 and unsupported cases. Identify the source that actually ran; a newer CI pin
 does not update an old measurement.

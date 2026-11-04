@@ -121,6 +121,12 @@ adapters can return their socket and scratch with `into_parts()`; the async form
 is fallible because it deregisters OS readiness. Dropping the owning App closes
 its transport. Socket ownership does not imply a task or a new thread per App.
 
+See [runtime choices and integration status](architecture/ASYNC-RUNTIMES.md).
+Tokio is the preferred host integration direction; its current implementation is
+in the companion benchmark. The standalone async-io adapter above is available
+today. Embassy is a planned embedded integration, not yet a tested adapter.
+Existing ESPHome firmware uses a separate ESP-IDF/FreeRTOS driver.
+
 ## Pair a device
 
 The Rust commissioning tool guides you through inspection, identity setup,
