@@ -55,6 +55,12 @@ baseline/candidate check of the integrated App. Reuse unchanged passing checks;
 repeat or broaden only to answer a specific unresolved question. Preserve failed
 comparisons, but keep development checks separate from release qualification.
 
+Performance comparisons must include actual synchronous and asynchronous App
+execution with matched capacities and security settings. Label runtime policy
+and unsupported combinations explicitly; a sync measurement is not async
+evidence. Apply the same mode coverage to device-to-host comparisons. Keep
+steady-state results primary, with memory and lifecycle costs separately named.
+
 ## Prepare an authorized release
 
 Publication is separate work under
