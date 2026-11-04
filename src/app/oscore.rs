@@ -8,7 +8,9 @@
 #[cfg(feature = "oscore")]
 use crate::error::EncodeError;
 use crate::error::SlotMessageError;
-use crate::message::{Message, OwnedToken, ParsedMessage, Token};
+#[cfg(any(feature = "oscore", test))]
+use crate::message::ParsedMessage;
+use crate::message::{Message, OwnedToken, Token};
 use crate::storage::{DatagramSlots, Endpoint, Engine, SlotId, Storage};
 
 #[cfg(feature = "oscore")]
@@ -223,12 +225,12 @@ pub(crate) fn commit_response<E, const REQUESTS: usize, K: OwnedToken>(
 #[cfg(feature = "oscore")]
 pub(crate) type Opened<'a, K = Token> =
     (ParsedMessage<'a, K>, &'a [u8], RequestRef, ResponseState<K>);
-#[cfg(not(feature = "oscore"))]
+#[cfg(all(not(feature = "oscore"), test))]
 pub(crate) type Opened<'a, K = Token> = (ParsedMessage<'a, K>, &'a [u8], Request, ResponseState<K>);
 
 #[cfg(feature = "oscore")]
 pub(crate) type InboundError = OscoreError;
-#[cfg(not(feature = "oscore"))]
+#[cfg(all(not(feature = "oscore"), test))]
 pub(crate) type InboundError = core::convert::Infallible;
 
 #[cfg(feature = "oscore")]
@@ -360,7 +362,7 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
     Err(OscoreError::Unprotected)
 }
 
-#[cfg(not(feature = "oscore"))]
+#[cfg(all(not(feature = "oscore"), test))]
 pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default + AsMut<[u8]>>(
     _ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
