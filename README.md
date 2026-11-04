@@ -128,8 +128,9 @@ its transport. Socket ownership does not imply a task or a new thread per App.
 
 See [runtime choices and integration status](architecture/ASYNC-RUNTIMES.md).
 Tokio is the preferred adapter for applications already using that runtime;
-the standalone async-io adapter remains an alternative. Embassy is a planned
-embedded integration, not yet a tested adapter.
+the standalone async-io adapter remains an alternative. The
+[Embassy adapter](tools/coaptic-embassy/README.md) connects caller-owned network
+pools and timers; physical board integration remains separate.
 Existing ESPHome firmware uses a separate ESP-IDF/FreeRTOS driver.
 
 ## Pair a device

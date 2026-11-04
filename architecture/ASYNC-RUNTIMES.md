@@ -30,8 +30,11 @@ another, distinct crate providing host readiness and timers; it is not our code.
   Account for its reactor thread/registrations, even if `block_on` also drives
   readiness. Do not wrap it in Tokio by default and silently run two reactors.
 - **Native embedded Rust applications:** Embassy is the preferred integration
-  target. Add transport and timer adapters plus a working target example before
-  labeling it supported. No Embassy integration is currently delivered here.
+  target. The [Embassy adapter](../tools/coaptic-embassy/README.md) supplies
+  `no_std` UDP and timers over caller-owned network pools, with no extra packet
+  scratch or executor. Its generic App entry example is a compile-time integration
+  seam, not a flashed board application. Board/HAL, radio and target time-driver
+  integration still require a working target example before device support is claimed.
   Executor, timer driver and network/HAL selection are separate decisions; using
   an Embassy executor does not itself provide an ESP Wi-Fi/socket integration.
 - **Existing ESPHome/ESP-IDF applications:** retain the current small FreeRTOS
@@ -104,6 +107,7 @@ temporary frames are an optimization target, not a CoAP compliance requirement.
 - [async-io](https://docs.rs/async-io/latest/async_io/)
 - [async-std maintenance status](https://docs.rs/async-std/latest/async_std/)
 - [Tokio adapter](../tools/coaptic-tokio/README.md)
+- [Embassy adapter](../tools/coaptic-embassy/README.md)
 - [async-io host adapter](../tools/coaptic-async-host/README.md)
 - [Block-Wise RFC](../knowledge/rfcs/rfc7959.txt)
 

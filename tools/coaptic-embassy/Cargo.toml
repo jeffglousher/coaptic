@@ -1,0 +1,22 @@
+[package]
+name = "coaptic-embassy"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[dependencies]
+coaptic = { path = "../..", default-features = false }
+embassy-net = { version = "=0.9.1", default-features = false, features = ["udp", "proto-ipv4", "proto-ipv6", "medium-ip"] }
+embassy-time = "=0.5.1"
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+embassy-time = { version = "=0.5.1", features = ["std", "generic-queue-8"] }
+embassy-net-driver = "=0.2.0"
+critical-section = { version = "1.2", features = ["std"] }
+
+[[example]]
+name = "target"
+crate-type = ["rlib"]
