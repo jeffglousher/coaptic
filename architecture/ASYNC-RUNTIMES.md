@@ -23,7 +23,8 @@ another, distinct crate providing host readiness and timers; it is not our code.
   accepts caller-owned sockets and uses the caller's runtime, with no nested
   `block_on` or hidden runtime. Its Windows loopback tests cover current-thread
   execution, socket ownership, cancellation, oversize recovery, timers and a
-  complete unprotected blockwise App exchange. Other hosts remain untested here.
+  complete unprotected blockwise App exchange. The adapter tests and strict Clippy
+  also pass on Linux in the PR #738 CI matrix; macOS remains untested here.
   Do not infer multithreaded `Send`/`Sync` support from current-thread success.
 - **Small standalone host tools:** retain the existing `coaptic-async-host`
   async-io adapter as an explicit alternative. It is implemented and tested.
@@ -32,7 +33,10 @@ another, distinct crate providing host readiness and timers; it is not our code.
 - **Native embedded Rust applications:** Embassy is the preferred integration
   target. The [Embassy adapter](../tools/coaptic-embassy/README.md) supplies
   `no_std` UDP and timers over caller-owned network pools, with no extra packet
-  scratch or executor. Its generic App entry example is a compile-time integration
+  scratch or executor. A host test completes two consecutive 2,000-byte blockwise
+  App exchanges through the actual Embassy/smoltcp stack and an in-memory IP link.
+  Its finite manual scheduler is not a physical network or executor measurement.
+  The generic App entry example is a compile-time integration
   seam, not a flashed board application. Board/HAL, radio and target time-driver
   integration still require a working target example before device support is claimed.
   Executor, timer driver and network/HAL selection are separate decisions; using
