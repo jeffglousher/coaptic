@@ -11,6 +11,62 @@ library, examples and core tests.
 
 ## Check a change
 
+### Rust design guidance
+
+Use [Google's Rust Style Guide](https://google.github.io/styleguide/rustguide.html)
+as supplementary review guidance, checked 2026-11-04. Our API contracts, bounded
+memory requirements, runtime policy and MSRV take precedence.
+
+Prefer clear ownership and borrowing; justify deep copies and shared ownership
+where they simplify a real requirement. Accept borrowed data without unnecessarily
+requiring a particular container. Use meaningful types, standard traits and
+straightforward functions before introducing abstraction or code generation.
+Document public behavior, failures, panic conditions and unsafe invariants.
+Keep unsafe operations narrowly encapsulated with a safety argument and a reason
+safe code is insufficient; performance justifications need measurements.
+
+Apply this during changed-code review, not through repository-wide style churn.
+Keep rustfmt/Clippy as our mechanical checks. Chromium/Fuchsia-specific rules,
+including Chromium's async prohibition and source-layout conventions, do not
+apply here. Do not introduce allocation to satisfy a host-oriented example,
+blindly mark protocol enums non-exhaustive, or remove existing generation without
+considering its role in keeping sync/async semantics aligned. Choose generics
+versus dynamic dispatch with code size and measured work in mind.
+
+### Power of Ten applied to Rust
+
+Use Holzmann's NASA/JPL [Power of Ten](https://spinroot.com/gerard/pdf/Power_of_Ten.pdf)
+as a reliability baseline. The original targets C; the following is our Rust
+adaptation, not a NASA certification or a claim of literal compliance:
+
+1. Keep protocol control flow explicit; avoid direct or indirect recursion on
+   packet-processing and bounded-storage paths.
+2. Bound each processing pass by capacities, input length or an explicit work
+   budget. Long-lived service loops must yield/wait and support termination;
+   retry limits and deadlines must be explicit.
+3. Allocate constrained pools at startup and reuse them. Account separately for
+   host/runtime allocations; do not imply the entire system is allocation-free.
+4. Keep functions focused. Treat roughly 60 lines as a review prompt, not a reason
+   to obscure an invariant through arbitrary splitting.
+5. Check meaningful invariants at boundaries. Use compile-time checks where
+   possible; reject bad packets with errors, not panics. Do not pad assertion
+   counts or rely on debug-only checks for required validation.
+6. Minimize state scope, lifetime and mutable access.
+7. Validate inputs and handle failure results. Explain intentional error disposal,
+   especially during cleanup; never convert uncertain effects into success.
+8. Keep macros and generated code narrow, inspectable and tested.
+9. Prefer safe references and ownership. Isolate raw-pointer/FFI operations;
+   prove lifetime, aliasing and cancellation requirements.
+10. Keep compiler/Clippy warnings clean in the selected feature configurations;
+    use targeted tests, fuzzing and analysis for changed risk boundaries.
+
+These rules constrain implementation choices; speed claims still require matched
+measurements. Preserve failure recovery and security even when an alternative is
+faster. Document a scoped exception and its reasoning rather than silently
+weakening a bound or importing a C restriction that has no Rust equivalent.
+
+### Verification commands
+
 Choose checks for the code you changed. Run them after a coherent batch:
 
 ```sh

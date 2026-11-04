@@ -41,6 +41,10 @@ for checks. Humans and agents may author and review.
 
 ## Keep it clear
 
+Apply the scoped [Rust design guidance](DEVELOPMENT.md#rust-design-guidance)
+and [Power of Ten adaptation](DEVELOPMENT.md#power-of-ten-applied-to-rust)
+when editing Rust; external style guides do not override project contracts.
+
 Put API contracts in rustdoc, priorities in PLAN.md and actionable work in issues.
 Write the README for users. Comments explain decisions and invariants.
 Call security-disabled operation **unprotected**; retain standard protocol terms.

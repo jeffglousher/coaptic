@@ -19,10 +19,11 @@ another, distinct crate providing host readiness and timers; it is not our code.
 ## Platform choices and actual status
 
 - **Windows/Linux/macOS applications:** prefer a Tokio adapter when the caller
-  uses Tokio. The companion native benchmark already executes Coaptic with a
-  current-thread Tokio runtime, UDP and timer adapters. Promoting that integration
-  to a documented reusable adapter is pending. The adapter must accept caller-owned
-  sockets and use the caller's runtime; no nested `block_on` or hidden runtime.
+  uses Tokio. The reusable [coaptic-tokio adapter](../tools/coaptic-tokio/README.md)
+  accepts caller-owned sockets and uses the caller's runtime, with no nested
+  `block_on` or hidden runtime. Its Windows loopback tests cover current-thread
+  execution, socket ownership, cancellation, oversize recovery, timers and a
+  complete unprotected blockwise App exchange. Other hosts remain untested here.
   Do not infer multithreaded `Send`/`Sync` support from current-thread success.
 - **Small standalone host tools:** retain the existing `coaptic-async-host`
   async-io adapter as an explicit alternative. It is implemented and tested.
@@ -102,7 +103,8 @@ temporary frames are an optimization target, not a CoAP compliance requirement.
 - [Embassy book](https://embassy.dev/book/)
 - [async-io](https://docs.rs/async-io/latest/async_io/)
 - [async-std maintenance status](https://docs.rs/async-std/latest/async_std/)
-- [Current host adapter](../tools/coaptic-async-host/README.md)
+- [Tokio adapter](../tools/coaptic-tokio/README.md)
+- [async-io host adapter](../tools/coaptic-async-host/README.md)
 - [Block-Wise RFC](../knowledge/rfcs/rfc7959.txt)
 
 Runtime maintenance status was checked on the decision date. Verify current
