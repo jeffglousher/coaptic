@@ -3365,12 +3365,8 @@ where
         return Ok(());
     };
 
-    let mut scratch = Some(Mem::RxScratch::default());
-    let n = match copy_rx(
-        engine,
-        rx,
-        scratch.as_mut().expect("dispatch scratch").as_mut(),
-    ) {
+    let mut scratch = Mem::RxScratch::default();
+    let n = match copy_rx(engine, rx, scratch.as_mut()) {
         Ok(n) => n,
         Err(e) => {
             let _ = engine.release_rx(rx);
@@ -3378,18 +3374,14 @@ where
         }
     };
 
-    let parsed = match crate::message::decode_with_token::<Mem::Token>(
-        &scratch.as_ref().expect("dispatch scratch").as_ref()[..n],
-    ) {
+    let parsed = match crate::message::decode_with_token::<Mem::Token>(&scratch.as_ref()[..n]) {
         Ok(parsed) => parsed,
         Err(crate::message::TokenDecodeError::Capacity(_)) => {
             // The shared decoder validated the complete wire syntax before the
             // owned token copy failed. Refuse while its original bytes remain
             // borrowed from this RX scratch; never truncate the identity.
-            let request = crate::message::extended::decode(
-                &scratch.as_ref().expect("dispatch scratch").as_ref()[..n],
-            )
-            .expect("validated extended token datagram");
+            let request = crate::message::extended::decode(&scratch.as_ref()[..n])
+                .expect("validated extended token datagram");
             let protected = request
                 .options()
                 .any(|option| option.number() == crate::message::OptionNumber::OSCORE);
@@ -3402,7 +3394,7 @@ where
                         ids,
                         now_ms,
                         peer,
-                        &scratch.as_ref().expect("dispatch scratch").as_ref()[..n],
+                        &scratch.as_ref()[..n],
                         oscore,
                         oscore_checkpoint,
                         checkpoint_commit,
@@ -3601,14 +3593,15 @@ where
     // reused for plaintext. No second profile-sized buffer spans a send.
     #[cfg(feature = "oscore")]
     let (parsed, oscore_req, response_state) = if parsed.oscore().is_some() {
+        let layout = parsed.layout(n);
         let before = oscore
             .context(peer.association())
             .map(|ctx| ctx.replay_checkpoint());
         let opened = {
             let access = engine.access_rx(rx)?;
-            let outer = crate::message::decode_with_token::<Mem::Token>(access.as_bytes())
-                .expect("retained validated RX packet");
-            oscore::inbound(oscore, peer, &outer, &mut scratch)
+            // RX bytes have not changed since copy_rx and full validation.
+            let outer = layout.bind(access.as_bytes()).expect("retained RX length");
+            oscore::inbound(oscore, peer, &outer, || scratch.as_mut())
         };
         if before
             != oscore
@@ -3627,10 +3620,9 @@ where
                 (inner, Some(request), state)
             }
             Ok(None) => (
-                crate::message::decode_with_token::<Mem::Token>(
-                    &scratch.as_ref().expect("dispatch scratch").as_ref()[..n],
-                )
-                .expect("unchanged validated RX packet"),
+                layout
+                    .bind(&scratch.as_ref()[..n])
+                    .expect("unchanged RX length"),
                 oscore::no_request(),
                 oscore::ResponseState::None,
             ),
@@ -3644,8 +3636,7 @@ where
     } else {
         // Without an OSCORE option inbound only checks the security policy;
         // its lazy output owner is never initialized.
-        let mut unused = None::<[u8; 0]>;
-        let opened = oscore::inbound(oscore, peer, &parsed, &mut unused);
+        let opened = oscore::inbound(oscore, peer, &parsed, || &mut []);
         if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
             let _ = engine.release_rx(rx);
             return Err(error);

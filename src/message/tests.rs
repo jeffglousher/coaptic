@@ -18,6 +18,45 @@ fn encode_to<'a>(msg: &Message<'_>, buf: &'a mut [u8]) -> &'a [u8] {
     &buf[..n]
 }
 
+#[cfg(feature = "oscore")]
+#[test]
+fn validated_layout_reborrows_classic_and_extended_wire_boundaries() {
+    type Extended = super::extended::Token<300>;
+    for token_len in [0, 8, 13, 269] {
+        for option_len in [0, 13, 269] {
+            for payload in [&[][..], &b"payload"[..]] {
+                let token = Extended::new(&[7; 300][..token_len]).unwrap();
+                let value = [9; 269];
+                let options = [Opt::new(OptionNumber::new(300), &value[..option_len])];
+                let message = Message::new(Type::Confirmable, Code::POST, MessageId::new(31))
+                    .with_token(token)
+                    .with_options(&options)
+                    .with_payload(payload);
+                let mut original = [0; 1024];
+                let n = message.encode(&mut original).unwrap();
+                let parsed = super::decode_with_token::<Extended>(&original[..n]).unwrap();
+                let layout = parsed.layout(n);
+                let mut retained = [0; 1024];
+                retained[..n].copy_from_slice(&original[..n]);
+                assert_eq!(layout.bind(&retained[..n]), Some(parsed));
+                assert!(layout.bind(&retained[..n - 1]).is_none());
+                assert!(layout.bind(&retained[..n + 1]).is_none());
+                // The detached metadata retains no borrow of the old backing.
+                original.fill(0);
+                let rebound = layout.bind(&retained[..n]).unwrap();
+                assert_eq!(rebound.token(), token);
+                assert_eq!(rebound.payload(), payload);
+                assert_eq!(rebound.options().next(), Some(options[0]));
+            }
+        }
+    }
+    let empty = Message::empty_ack(MessageId::new(1));
+    let mut wire = [0; 4];
+    empty.encode(&mut wire).unwrap();
+    let parsed = decode(&wire).unwrap();
+    assert_eq!(parsed.layout(wire.len()).bind(&wire), Some(parsed));
+}
+
 fn assert_roundtrip(msg: &Message<'_>) {
     let mut buf = [0u8; 1024];
     let n = encode(msg, &mut buf).expect("encode");

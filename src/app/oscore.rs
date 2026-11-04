@@ -281,11 +281,11 @@ pub(crate) fn is_active<const REQUESTS: usize, K: OwnedToken>(_ctx: &Field<REQUE
 /// application body. A token-matching unprotected 2.xx/4.xx/5.xx must
 /// not complete a [`Call`](super::Call).
 #[cfg(feature = "oscore")]
-pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default + AsMut<[u8]>>(
+pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
     ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
     parsed: &ParsedMessage<'_, K>,
-    scratch: &'a mut Option<Scratch>,
+    scratch: impl FnOnce() -> &'a mut [u8],
 ) -> Result<Option<Opened<'a, K>>, InboundError> {
     let Some(ctx) = selected_mut(ctx, peer.association())? else {
         return Ok(None);
@@ -293,7 +293,7 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
     if parsed.oscore().is_some() {
         // Keep the opened wire in the caller's local owner, but initialize it
         // only after context selection and the OSCORE-option check.
-        let scratch = scratch.get_or_insert_with(Scratch::default).as_mut();
+        let scratch = scratch();
         let mut response_state = ResponseState::None;
         let (wire, request) = if parsed.code().is_request() {
             ctx.unprotect_request_wire(parsed, scratch)?
@@ -363,11 +363,11 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default
 }
 
 #[cfg(all(not(feature = "oscore"), test))]
-pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken, Scratch: Default + AsMut<[u8]>>(
+pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
     _ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
     _parsed: &ParsedMessage<'_, K>,
-    _scratch: &'a mut Option<Scratch>,
+    _scratch: impl FnOnce() -> &'a mut [u8],
 ) -> Result<Option<Opened<'a, K>>, InboundError> {
     let _ = peer;
     Ok(None)
@@ -754,6 +754,18 @@ mod inbound_scratch_tests {
     use super::*;
     use crate::message::{Code, MessageId, Token, Type, decode};
     use core::sync::atomic::{AtomicUsize, Ordering};
+
+    // Exercise lazy initialization independently of the App's reused buffer.
+    fn inbound<'a, const R: usize, K: OwnedToken, S: Default + AsMut<[u8]>>(
+        ctx: &mut Field<R, K>,
+        peer: Endpoint,
+        parsed: &ParsedMessage<'_, K>,
+        scratch: &'a mut Option<S>,
+    ) -> Result<Option<Opened<'a, K>>, InboundError> {
+        super::inbound(ctx, peer, parsed, || {
+            scratch.get_or_insert_with(S::default).as_mut()
+        })
+    }
 
     static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 

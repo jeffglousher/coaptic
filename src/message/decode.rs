@@ -16,7 +16,52 @@ pub struct ParsedMessage<'a, T: OwnedToken = Token> {
     payload: &'a [u8],
 }
 
+/// Offsets and owned metadata from a fully validated datagram. App may use this
+/// to borrow the identical retained RX bytes after releasing its scratch borrow.
+/// This is not a validator for another packet, even one of the same length.
+#[cfg(feature = "oscore")]
+#[derive(Clone, Copy)]
+pub(crate) struct MessageLayout<T: OwnedToken> {
+    header: Header,
+    token: T,
+    wire_len: usize,
+    options_len: usize,
+    payload_len: usize,
+}
+
+#[cfg(feature = "oscore")]
+impl<T: OwnedToken> MessageLayout<T> {
+    /// Reborrow the exact bytes validated when this layout was obtained.
+    /// The caller must preserve their contents; length checks only bound ranges.
+    pub(crate) fn bind(self, wire: &[u8]) -> Option<ParsedMessage<'_, T>> {
+        if wire.len() != self.wire_len {
+            return None;
+        }
+        let payload_start = wire.len().checked_sub(self.payload_len)?;
+        let options_end = payload_start.checked_sub(usize::from(self.payload_len != 0))?;
+        let options_start = options_end.checked_sub(self.options_len)?;
+        Some(ParsedMessage {
+            header: self.header,
+            token: self.token,
+            options: &wire[options_start..options_end],
+            payload: &wire[payload_start..],
+        })
+    }
+}
+
 impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
+    /// Detach ranges from the original, fully validated wire of `wire_len` bytes.
+    #[cfg(feature = "oscore")]
+    pub(crate) fn layout(self, wire_len: usize) -> MessageLayout<T> {
+        MessageLayout {
+            header: self.header,
+            token: self.token,
+            wire_len,
+            options_len: self.options.len(),
+            payload_len: self.payload.len(),
+        }
+    }
+
     /// Parsed header.
     #[must_use]
     pub const fn header(self) -> Header {
