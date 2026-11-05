@@ -70,15 +70,25 @@ enum DedupReplay {
 impl DedupEntry {
     /// Write only the active replay owner; a TX pin has no inline bytes to copy.
     pub(super) fn write_into(self, slot: &mut Option<Self>) {
-        if matches!(self.replay, DedupReplay::Inline { .. }) {
-            *slot = Some(self);
-        } else {
-            let entry = slot.insert(Self::new(self.key.message_id(), self.key.endpoint()));
-            entry.due_ms = self.due_ms;
-            if let DedupReplay::Tx(id) = self.replay {
-                entry.replay = DedupReplay::Tx(id);
+        match self.replay {
+            DedupReplay::Inline { .. } => *slot = Some(self),
+            DedupReplay::None => {
+                let entry = slot.insert(Self::new(self.key.message_id(), self.key.endpoint()));
+                entry.due_ms = self.due_ms;
             }
+            DedupReplay::Tx(id) => Self::write_tx(slot, self.key, self.due_ms, id),
         }
+    }
+
+    // Keep this scalar boundary: inlining the variant assignment can recover a
+    // whole-enum memcpy, including its inactive 256-byte replay payload.
+    #[inline(never)]
+    fn write_tx(slot: &mut Option<Self>, key: DedupKey, due_ms: u64, id: SlotId) {
+        *slot = Some(Self {
+            key,
+            due_ms,
+            replay: DedupReplay::Tx(id),
+        });
     }
 
     /// Bytes of encoded ACK cached inline on this row.
