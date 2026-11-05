@@ -46,6 +46,9 @@ impl DedupKey {
 /// CON retransmit can be answered without a second handler call: compact
 /// [`Self::replay`] when the datagram fits, otherwise a TX pin for
 /// `EXCHANGE_LIFETIME`. See `knowledge/rfcs/rfc7252.txt` §4.5.
+///
+/// Equality and hashing describe the key, deadline and current replay owner.
+/// Replacing or clearing replay discards the previous bytes from that identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DedupEntry {
     key: DedupKey,
@@ -1009,9 +1012,8 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
     /// Borrow an occupied payload without copying its replay buffer.
     #[must_use]
     pub fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
-        if !self.occ.is_occupied(id) {
-            return None;
-        }
+        // Payload writes require an occupied slot; release clears the payload.
+        // Acquired empty slots are None too, so a second occupancy read is redundant.
         self.entries.get(id.index()).and_then(Option::as_ref)
     }
 

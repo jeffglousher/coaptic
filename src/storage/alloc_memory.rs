@@ -1802,9 +1802,8 @@ impl DedupStore for AllocDedupTable {
     }
 
     fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
-        if !self.occ.is_occupied(id) {
-            return None;
-        }
+        // Every release clears the payload and every write follows acquisition.
+        // None also represents an acquired slot that has no payload yet.
         self.entries.get(id.index()).and_then(Option::as_ref)
     }
 }
