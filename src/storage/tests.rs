@@ -1392,6 +1392,34 @@ fn dedup_entry_replay_fits_or_stays_empty() {
 }
 
 #[test]
+fn dedup_replay_owner_transitions_preserve_identity_deadline_and_refusal() {
+    let endpoint = Endpoint::v4([198, 51, 100, 7], 5683);
+    let initial = DedupEntry::new(MessageId::new(7), endpoint).with_due_ms(900);
+    let bytes = [0x5a; DedupEntry::REPLAY_MAX];
+    let oversized = [0xa5; DedupEntry::REPLAY_MAX + 1];
+    let tx = SlotId::from_index(2);
+    let inline = initial.with_replay(&bytes);
+    assert_eq!(inline.replay(), Some(bytes.as_slice()));
+    assert_eq!(inline.with_replay(&oversized), inline);
+    let pinned = inline.with_tx_pin(tx);
+    assert_eq!(pinned.tx_pin(), Some(tx));
+    assert!(pinned.replay().is_none());
+    assert_eq!(pinned.with_replay(&oversized), pinned);
+    let replaced = pinned.with_replay(&[1, 2, 3]);
+    assert_eq!(replaced.replay(), Some(&[1, 2, 3][..]));
+    assert!(replaced.tx_pin().is_none());
+    for entry in [inline, pinned, replaced] {
+        assert_eq!(entry.key(), initial.key());
+        assert_eq!(entry.due_ms(), initial.due_ms());
+        let empty = entry.with_replay(&[]);
+        assert_eq!(empty.key(), initial.key());
+        assert_eq!(empty.due_ms(), initial.due_ms());
+        assert!(!empty.has_usable_replay());
+        assert_eq!(empty.with_tx_pin(tx).tx_pin(), Some(tx));
+    }
+}
+
+#[test]
 fn engine_dedup_fills_to_capacity() {
     let mut engine = build_default();
     let n = profiles::Default::DEDUP_ENTRIES;
