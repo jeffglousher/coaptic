@@ -3556,8 +3556,9 @@ where
     // Match the Outer routing identity before OSCORE consumes a binding or
     // advances recipient replay/notification state. Inner authentication cannot
     // replace the Call's endpoint and piggybacked-ACK matching rules.
+    let has_oscore = parsed.oscore().is_some();
     if oscore::is_active(oscore)
-        && parsed.oscore().is_some()
+        && has_oscore
         && !parsed.code().is_request()
         && !client::has_response_target(engine, &parsed, peer)
     {
@@ -3575,7 +3576,7 @@ where
 
     // RFC 9177 §4.1: Block and Q-Block on the Outer side are 4.02 before
     // the ciphertext is treated as a body. Inner options are still sealed.
-    if parsed.oscore().is_some() && mixes_block_and_qblock(&parsed) {
+    if has_oscore && mixes_block_and_qblock(&parsed) {
         // Plaintext 4.02: the ciphertext is not a request this response can
         // protect, and the outer options are already not one body.
         let outcome = send_empty(
@@ -3589,49 +3590,73 @@ where
         return outcome;
     }
 
-    let mut inner_scratch = None::<Mem::RxScratch>;
+    // The retained RX packet supplies ciphertext while dispatch scratch is
+    // reused for plaintext. No second profile-sized buffer spans a send.
     #[cfg(feature = "oscore")]
-    let before = oscore
-        .context(peer.association())
-        .map(|ctx| ctx.replay_checkpoint());
-    let opened = oscore::inbound(oscore, peer, &parsed, &mut inner_scratch);
-    #[cfg(feature = "oscore")]
-    if before
-        != oscore
+    let (parsed, oscore_req, response_state) = if has_oscore {
+        let layout = parsed.layout(n);
+        let before = oscore
             .context(peer.association())
-            .map(|ctx| ctx.replay_checkpoint())
-    {
-        oscore_checkpoint.invalidate();
-    }
-    if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
-        let _ = engine.release_rx(rx);
-        return Err(error);
-    }
-    let opened = match opened {
-        Ok(opened) => opened,
-        Err(e) => {
+            .map(|ctx| ctx.replay_checkpoint());
+        let opened = {
+            let access = engine.access_rx(rx)?;
+            // RX bytes have not changed since copy_rx and full validation.
+            let outer = layout.bind(access.as_bytes()).expect("retained RX length");
+            oscore::inbound(oscore, peer, &outer, || scratch.as_mut())
+        };
+        if before
+            != oscore
+                .context(peer.association())
+                .map(|ctx| ctx.replay_checkpoint())
+        {
+            oscore_checkpoint.invalidate();
+        }
+        if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
+            let _ = engine.release_rx(rx);
+            return Err(error);
+        }
+        match opened {
+            Ok(Some((inner, wire, request, state))) => {
+                write_unprotected_rx(engine, rx, wire, peer)?;
+                (inner, Some(request), state)
+            }
+            Ok(None) => (
+                layout
+                    .bind(&scratch.as_ref()[..n])
+                    .expect("unchanged RX length"),
+                oscore::no_request(),
+                oscore::ResponseState::None,
+            ),
+            Err(_) => {
+                // Protected processing failures are silent, including response
+                // authentication and replay failures; never answer ciphertext.
+                let _ = engine.release_rx(rx);
+                return Ok(());
+            }
+        }
+    } else {
+        // Without an OSCORE option inbound only checks the security policy;
+        // its lazy output owner is never initialized.
+        let opened = oscore::inbound(oscore, peer, &parsed, || &mut []);
+        if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
+            let _ = engine.release_rx(rx);
+            return Err(error);
+        }
+        if let Err(error) = opened {
             let outcome =
-                oscore_inbound_error(engine, io, ids, &parsed, peer, now_ms, e, dedup_closed);
+                oscore_inbound_error(engine, io, ids, &parsed, peer, now_ms, error, dedup_closed);
             let _ = engine.release_rx(rx);
             return outcome;
         }
+        (parsed, oscore::no_request(), oscore::ResponseState::None)
     };
-    let (parsed, oscore_req, response_state) = match opened {
-        Some((inner, _wire, req, response_state)) => {
-            #[cfg(feature = "oscore")]
-            {
-                // Inner Block-wise (RFC 8613 §4.1.3.4.1): assembly reads
-                // the RX slot. Replace the outer OSCORE datagram with the
-                // opened Inner so Block1/Block2 see Class E options.
-                write_unprotected_rx(engine, rx, _wire, peer)?;
-                (inner, Some(req), response_state)
-            }
-            #[cfg(not(feature = "oscore"))]
-            {
-                (inner, req, response_state)
-            }
+    #[cfg(not(feature = "oscore"))]
+    let (parsed, oscore_req, response_state) = {
+        if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
+            let _ = engine.release_rx(rx);
+            return Err(error);
         }
-        None => (parsed, oscore::no_request(), oscore::ResponseState::None),
+        (parsed, oscore::no_request(), oscore::ResponseState::None)
     };
 
     if !parsed.code().is_request() {
@@ -7205,6 +7230,64 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
+    // Without Location options at most eight entries are reachable: ETag,
+    // Observe, Content-Format, Max-Age, Block2/Q-Block2, Size2, Block1 and Echo.
+    // The full path preserves both eight-entry Location lists and all metadata.
+    if response.location_paths().is_empty() && response.location_queries().is_empty() {
+        encode_response_options::<S, E, REQUESTS, 8>(
+            engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
+            oscore_req,
+        )
+    } else {
+        encode_response_locations(
+            engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
+            oscore_req,
+        )
+    }
+}
+
+#[cold]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn encode_response_locations<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    encode_response_options::<S, E, REQUESTS, { 8 + 2 * LOCATION_MAX }>(
+        engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx, oscore_req,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_response_options<
+    S: Storage + DatagramSlots,
+    E,
+    const REQUESTS: usize,
+    const OPTIONS: usize,
+>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
     response.validate().map_err(Error::Response)?;
     let cf = response.format().map(crate::ContentFormat::encode);
     let max_age = response.max_age_secs().map(EncodedUint::new);
@@ -7217,7 +7300,7 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
         .map(|n| encode_uint(u32::try_from(n).unwrap_or(u32::MAX)));
     let block1_enc = block1.map(|b| b.value.encode());
     let echo = response.echo_option();
-    let mut opts = OptionsBuilder::<{ 8 + 2 * LOCATION_MAX }>::new();
+    let mut opts = OptionsBuilder::<OPTIONS>::new();
     let filled = (|| -> Result<(), EncodeError> {
         if let Some(etag) = response.etag_bytes() {
             push_opt(&mut opts, Opt::etag(etag))?;
@@ -7785,6 +7868,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "oscore")]
 #[coaptic_io::dual_io(oscore_inbound_error_async, bound(crate::app::async_server::ProtocolIo), calls(send_response => send_response_async))]
 fn oscore_inbound_error<S, T>(
     engine: &mut Engine<S>,

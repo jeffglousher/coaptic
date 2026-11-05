@@ -8,14 +8,19 @@ it is not silently treated as finished software work.
 
 ## Current work
 
-Return to performance and memory optimization after the adapter integration batch.
-First target the remaining dispatch/async-frame temporaries and packet staging:
-identify which owners remain live together, reuse storage where borrowing permits,
-and compare the integrated sync/async App with unchanged capacities. Keep ESP task
-stack reservations separate from measured use; do not reduce reservations merely
-from selected frame sizes. Board/HAL runtime migration is deferred and does not
-block this work. Preserve the accepted reply-retention/expiry and ESP construction
-improvements while measuring new changes.
+The integrated dispatch/response scratch batch demonstrates lower complete-App
+CPU-cycle cost in both modes: 0.85% sync and 1.36% async across the declared
+28-cell mix, with unchanged capacities. The selected complete Constrained
+progress future is 1,176 bytes smaller (6.87%); App/pool storage stays unchanged.
+Keep the [measurements, reproduction inputs and rejected experiments](architecture/requirements/DISPATCH-SCRATCH-20261104.md).
+The ordinary response specialization adds executable size; Location-response
+runtime and whole-system peak memory remain unmeasured. Retained-body copy removal
+failed to establish a runtime benefit and was removed, despite eliminating copies.
+
+Continue performance/memory work from measured live owners and complete sync/async
+App comparisons. Preserve reply-retention/expiry and ESP construction improvements.
+Keep ESP task stack reservations separate from measured use; selected frame sizes
+do not justify reducing reservations. Board/HAL migration remains deferred.
 
 The [runtime and comparison direction](architecture/ASYNC-RUNTIMES.md) is adopted.
 The reusable [Tokio adapter](tools/coaptic-tokio/README.md) now supplies caller-owned
