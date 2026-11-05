@@ -730,7 +730,7 @@ impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
             }
         };
         self.dedup.expiry.note(&entry);
-        self.dedup.entries[id.index()] = Some(entry);
+        entry.write_into(&mut self.dedup.entries[id.index()]);
         Some(true)
     }
 
@@ -1780,7 +1780,7 @@ impl DedupStore for AllocDedupTable {
         }
         let id = self.occ.acquire()?;
         self.expiry.note(&entry);
-        self.entries[id.index()] = Some(entry);
+        entry.write_into(&mut self.entries[id.index()]);
         Some(id)
     }
 
@@ -1802,9 +1802,8 @@ impl DedupStore for AllocDedupTable {
     }
 
     fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
-        if !self.occ.is_occupied(id) {
-            return None;
-        }
+        // Every release clears the payload and every write follows acquisition.
+        // None also represents an acquired slot that has no payload yet.
         self.entries.get(id.index()).and_then(Option::as_ref)
     }
 }

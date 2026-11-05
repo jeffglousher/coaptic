@@ -46,16 +46,41 @@ impl DedupKey {
 /// CON retransmit can be answered without a second handler call: compact
 /// [`Self::replay`] when the datagram fits, otherwise a TX pin for
 /// `EXCHANGE_LIFETIME`. See `knowledge/rfcs/rfc7252.txt` §4.5.
+///
+/// Equality and hashing describe the key, deadline and current replay owner.
+/// Replacing or clearing replay discards the previous bytes from that identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DedupEntry {
     key: DedupKey,
     due_ms: u64,
-    replay_len: u16,
-    replay: [u8; Self::REPLAY_MAX],
-    tx_pin: Option<SlotId>,
+    replay: DedupReplay,
+}
+
+// Inline replay and a retained TX packet are mutually exclusive owners.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum DedupReplay {
+    None,
+    Inline {
+        bytes: [u8; DedupEntry::REPLAY_MAX],
+        len: u16,
+    },
+    Tx(SlotId),
 }
 
 impl DedupEntry {
+    /// Write only the active replay owner; a TX pin has no inline bytes to copy.
+    pub(super) fn write_into(self, slot: &mut Option<Self>) {
+        if matches!(self.replay, DedupReplay::Inline { .. }) {
+            *slot = Some(self);
+        } else {
+            let entry = slot.insert(Self::new(self.key.message_id(), self.key.endpoint()));
+            entry.due_ms = self.due_ms;
+            if let DedupReplay::Tx(id) = self.replay {
+                entry.replay = DedupReplay::Tx(id);
+            }
+        }
+    }
+
     /// Bytes of encoded ACK cached inline on this row.
     ///
     /// Larger piggybacked ACKs use [`Self::tx_pin`] (Default TX slot) so
@@ -70,9 +95,7 @@ impl DedupEntry {
         Self {
             key: DedupKey::new(message_id, endpoint),
             due_ms: 0,
-            replay_len: 0,
-            replay: [0; Self::REPLAY_MAX],
-            tx_pin: None,
+            replay: DedupReplay::None,
         }
     }
 
@@ -85,17 +108,24 @@ impl DedupEntry {
 
     /// Cache encoded reply bytes when they fit [`Self::REPLAY_MAX`].
     ///
-    /// Larger datagrams are not truncated: replay stays empty so a later
-    /// duplicate cannot send a lie. The caller may [`Self::with_tx_pin`]
-    /// instead.
+    /// Larger datagrams leave this entry unchanged; they are never truncated.
+    /// The caller may use [`Self::with_tx_pin`] instead. An empty slice clears
+    /// either replay owner.
     #[must_use]
     pub fn with_replay(mut self, bytes: &[u8]) -> Self {
         if bytes.len() > Self::REPLAY_MAX {
             return self;
         }
-        self.replay[..bytes.len()].copy_from_slice(bytes);
-        self.replay_len = bytes.len() as u16;
-        self.tx_pin = None;
+        self.replay = if bytes.is_empty() {
+            DedupReplay::None
+        } else {
+            let mut replay = [0; Self::REPLAY_MAX];
+            replay[..bytes.len()].copy_from_slice(bytes);
+            DedupReplay::Inline {
+                bytes: replay,
+                len: bytes.len() as u16,
+            }
+        };
         self
     }
 
@@ -105,8 +135,7 @@ impl DedupEntry {
     /// until this row expires or is replaced.
     #[must_use]
     pub const fn with_tx_pin(mut self, id: SlotId) -> Self {
-        self.tx_pin = Some(id);
-        self.replay_len = 0;
+        self.replay = DedupReplay::Tx(id);
         self
     }
 
@@ -137,17 +166,19 @@ impl DedupEntry {
     /// Cached piggybacked / empty-ACK bytes, if stored inline.
     #[must_use]
     pub fn replay(&self) -> Option<&[u8]> {
-        if self.replay_len == 0 {
-            None
-        } else {
-            Some(&self.replay[..usize::from(self.replay_len)])
+        match &self.replay {
+            DedupReplay::Inline { bytes, len } => Some(&bytes[..usize::from(*len)]),
+            DedupReplay::None | DedupReplay::Tx(_) => None,
         }
     }
 
     /// Occupied TX slot holding the encoded ACK, if pinned.
     #[must_use]
-    pub const fn tx_pin(self) -> Option<SlotId> {
-        self.tx_pin
+    pub const fn tx_pin(&self) -> Option<SlotId> {
+        match self.replay {
+            DedupReplay::Tx(id) => Some(id),
+            DedupReplay::None | DedupReplay::Inline { .. } => None,
+        }
     }
 
     /// Whether this row can answer a CON retransmit (`replay` or `tx_pin`).
@@ -957,7 +988,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
             return Some(id);
         }
         let id = self.occ.acquire()?;
-        self.entries[id.index()] = Some(entry);
+        entry.write_into(&mut self.entries[id.index()]);
         Some(id)
     }
 
@@ -994,9 +1025,8 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
     /// Borrow an occupied payload without copying its replay buffer.
     #[must_use]
     pub fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
-        if !self.occ.is_occupied(id) {
-            return None;
-        }
+        // Payload writes require an occupied slot; release clears the payload.
+        // Acquired empty slots are None too, so a second occupancy read is redundant.
         self.entries.get(id.index()).and_then(Option::as_ref)
     }
 
@@ -1009,7 +1039,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
                 SlotError::InvalidSlot
             });
         }
-        self.entries[id.index()] = Some(entry);
+        entry.write_into(&mut self.entries[id.index()]);
         Ok(())
     }
 
@@ -1079,7 +1109,7 @@ impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
                 id
             }
         };
-        self.entries[id.index()] = Some(entry);
+        entry.write_into(&mut self.entries[id.index()]);
         Some(true)
     }
 

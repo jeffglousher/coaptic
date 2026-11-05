@@ -1392,6 +1392,87 @@ fn dedup_entry_replay_fits_or_stays_empty() {
 }
 
 #[test]
+fn dedup_payload_presence_tracks_slot_lifecycle() {
+    let mut table = DedupTable::<2>::new();
+    let entry = DedupEntry::new(MessageId::new(7), Endpoint::v4([198, 51, 100, 7], 5683))
+        .with_replay(&[1, 2, 3]);
+    let invalid = SlotId::from_index(2);
+    assert!(table.entry_ref(invalid).is_none());
+    assert_eq!(table.set_entry(invalid, entry), Err(SlotError::InvalidSlot));
+    for _ in 0..8 {
+        let id = table.acquire().unwrap();
+        assert!(table.entry_ref(id).is_none());
+        table.set_entry(id, entry).unwrap();
+        table.advance(1);
+        assert_eq!(table.entry_ref(id), Some(&entry));
+        table.release(id).unwrap();
+        assert!(table.entry_ref(id).is_none());
+        assert_eq!(table.set_entry(id, entry), Err(SlotError::NotOccupied));
+        assert_eq!(table.release(id), Err(SlotError::NotOccupied));
+        assert!(table.entry_ref(id).is_none());
+    }
+}
+
+#[test]
+fn dedup_replay_owner_transitions_preserve_identity_deadline_and_refusal() {
+    extern crate std;
+
+    use core::hash::{Hash, Hasher};
+
+    fn hash(entry: DedupEntry) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        entry.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    let endpoint = Endpoint::v4([198, 51, 100, 7], 5683);
+    let initial = DedupEntry::new(MessageId::new(7), endpoint).with_due_ms(900);
+    let bytes = [0x5a; DedupEntry::REPLAY_MAX];
+    let oversized = [0xa5; DedupEntry::REPLAY_MAX + 1];
+    let tx = SlotId::from_index(2);
+    let inline = initial.with_replay(&bytes);
+    assert_eq!(inline.replay(), Some(bytes.as_slice()));
+    assert_eq!(inline.with_replay(&oversized), inline);
+    let pinned = inline.with_tx_pin(tx);
+    assert_eq!(pinned, initial.with_tx_pin(tx));
+    assert_eq!(hash(pinned), hash(initial.with_tx_pin(tx)));
+    assert_eq!(pinned.tx_pin(), Some(tx));
+    assert!(pinned.replay().is_none());
+    assert_eq!(pinned.with_replay(&oversized), pinned);
+    let replaced = pinned.with_replay(&[1, 2, 3]);
+    assert_eq!(replaced, inline.with_replay(&[1, 2, 3]));
+    assert_eq!(replaced, initial.with_replay(&[1, 2, 3]));
+    assert_eq!(hash(replaced), hash(initial.with_replay(&[1, 2, 3])));
+    assert_eq!(replaced.replay(), Some(&[1, 2, 3][..]));
+    assert!(replaced.tx_pin().is_none());
+    for entry in [initial, inline, pinned, replaced] {
+        for old in [
+            None,
+            Some(initial),
+            Some(inline),
+            Some(pinned),
+            Some(replaced),
+        ] {
+            let mut slot = old;
+            entry.write_into(&mut slot);
+            assert_eq!(slot, Some(entry));
+            assert_eq!(hash(slot.unwrap()), hash(entry));
+        }
+    }
+    for entry in [inline, pinned, replaced] {
+        assert_eq!(entry.key(), initial.key());
+        assert_eq!(entry.due_ms(), initial.due_ms());
+        let empty = entry.with_replay(&[]);
+        assert_eq!(empty, initial);
+        assert_eq!(hash(empty), hash(initial));
+        assert_eq!(empty.key(), initial.key());
+        assert_eq!(empty.due_ms(), initial.due_ms());
+        assert!(!empty.has_usable_replay());
+        assert_eq!(empty.with_tx_pin(tx).tx_pin(), Some(tx));
+    }
+}
+
+#[test]
 fn engine_dedup_fills_to_capacity() {
     let mut engine = build_default();
     let n = profiles::Default::DEDUP_ENTRIES;
