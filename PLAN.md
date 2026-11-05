@@ -8,6 +8,18 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The replay-owner follow-up is also rejected. Safe shared inline/TX replay storage
+shrinks SmallDevice App by64 bytes and Service fixed App/allocated pool heap by1024
+bytes, without reducing capacities. Its standalone runtime cohort fails. Adding
+owned-table lookup simplification establishes aggregate async gains but still
+fails sync acceptance and the SmallDevice unprotected sync guard. Neither change
+is accepted; both are retired. Preserve the
+[sources, diagnostics, raw failures and reproduction checks](https://github.com/jeffglousher/coaptic-validation/tree/4e4af08203ba2da09038197f23ab3f26fccd6add/tools/benchmark/evidence/replay-storage-20261105).
+The combined source passed924 alloc+oscore library tests and independent static
+review, which do not override its runtime failure. Next inspect emitted
+reply-retention copies and their enclosing sync cost before another integration;
+do not repeat either unchanged candidate or relax the runtime gates.
+
 The receive-scratch follow-up is rejected: direct request opening and three
 request-lifetime integrations fail the frozen complete-App runtime checks.
 The selected future shrinks 1,952 bytes, but async runtime acceptance is not
