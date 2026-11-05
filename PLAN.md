@@ -13,7 +13,7 @@ array, and scalar TX writes remove the emitted full replay-row copy; the complet
 App cohort still fails sync acceptance. Adding fixed-table expiry bounds reduces
 retained memory but fails the frozen runtime bounds and five cell guards,
 including SmallDevice unprotected sync/async. All production changes are retired.
-Keep the [exact sources, assembly, diagnostic and both failed cohorts](https://github.com/jeffglousher/coaptic-validation/tree/6eb42e4f3b05aa6d033877e1031a058f71783b0d/tools/benchmark/evidence/replay-active-copy-20261105).
+Keep the [exact sources, assembly, diagnostic and both failed cohorts](https://github.com/jeffglousher/coaptic-validation/tree/b96fe89347cd9c4b023e1634580ea5397eb940f0/tools/benchmark/evidence/replay-active-copy-20261105).
 The final source passed926 alloc+oscore library tests plus a new duplicate-key App
 regression and general static review. These checks do not override runtime failure.
 The fixed bound adds eight bytes per table, including empty tables; account for
@@ -27,7 +27,7 @@ bytes, without reducing capacities. Its standalone runtime cohort fails. Adding
 owned-table lookup simplification establishes aggregate async gains but still
 fails sync acceptance and the SmallDevice unprotected sync guard. Neither change
 is accepted; both are retired. Preserve the
-[sources, diagnostics, raw failures and reproduction checks](https://github.com/jeffglousher/coaptic-validation/tree/4e4af08203ba2da09038197f23ab3f26fccd6add/tools/benchmark/evidence/replay-storage-20261105).
+[sources, diagnostics, raw failures and reproduction checks](https://github.com/jeffglousher/coaptic-validation/tree/b96fe89347cd9c4b023e1634580ea5397eb940f0/tools/benchmark/evidence/replay-storage-20261105).
 The combined source passed924 alloc+oscore library tests and independent static
 review, which do not override its runtime failure. The emitted-copy investigation
 above follows from this failure; do not repeat either unchanged candidate or
