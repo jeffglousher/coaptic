@@ -8,6 +8,31 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+Emitted-copy follow-ups are rejected too. Direct inline fill removes a staging
+array, and scalar TX writes remove the emitted full replay-row copy; the complete
+App cohort still fails sync acceptance. Adding fixed-table expiry bounds reduces
+retained memory but fails the frozen runtime bounds and five cell guards,
+including SmallDevice unprotected sync/async. All production changes are retired.
+Keep the [exact sources, assembly, diagnostic and both failed cohorts](https://github.com/jeffglousher/coaptic-validation/tree/b96fe89347cd9c4b023e1634580ea5397eb940f0/tools/benchmark/evidence/replay-active-copy-20261105).
+The final source passed926 alloc+oscore library tests plus a new duplicate-key App
+regression and general static review. These checks do not override runtime failure.
+The fixed bound adds eight bytes per table, including empty tables; account for
+that even where replay-owner savings are larger. Next inspect reply-table
+key/deadline traversal and hot metadata placement before selecting another
+coherent integration. Do not repeat these candidates or move the baseline/gates.
+
+The replay-owner follow-up is also rejected. Safe shared inline/TX replay storage
+shrinks SmallDevice App by64 bytes and Service fixed App/allocated pool heap by1024
+bytes, without reducing capacities. Its standalone runtime cohort fails. Adding
+owned-table lookup simplification establishes aggregate async gains but still
+fails sync acceptance and the SmallDevice unprotected sync guard. Neither change
+is accepted; both are retired. Preserve the
+[sources, diagnostics, raw failures and reproduction checks](https://github.com/jeffglousher/coaptic-validation/tree/b96fe89347cd9c4b023e1634580ea5397eb940f0/tools/benchmark/evidence/replay-storage-20261105).
+The combined source passed924 alloc+oscore library tests and independent static
+review, which do not override its runtime failure. The emitted-copy investigation
+above follows from this failure; do not repeat either unchanged candidate or
+relax the runtime gates.
+
 The receive-scratch follow-up is rejected: direct request opening and three
 request-lifetime integrations fail the frozen complete-App runtime checks.
 The selected future shrinks 1,952 bytes, but async runtime acceptance is not
