@@ -8,6 +8,14 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The receive-scratch follow-up is rejected: direct request opening and three
+request-lifetime integrations fail the frozen complete-App runtime checks.
+The selected future shrinks 1,952 bytes, but async runtime acceptance is not
+established. All candidate production code is retired. Preserve the
+[failures, source comparison and reproduction evidence](architecture/requirements/RECEIVE-SCRATCH-20261105.md).
+Next isolate material async runtime costs before another implementation; do not
+repeat these unchanged variants or relax their gates.
+
 The packet-staging/request-metadata batch lowers complete-App thread cycles by
 5.06% sync and 4.40% async against #740 with unchanged capacities. Successful
 OSCORE sealing removes its 1,280-byte staging buffer; the selected emitted frame
