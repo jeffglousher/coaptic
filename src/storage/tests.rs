@@ -1415,6 +1415,8 @@ fn dedup_payload_presence_tracks_slot_lifecycle() {
 
 #[test]
 fn dedup_replay_owner_transitions_preserve_identity_deadline_and_refusal() {
+    extern crate std;
+
     use core::hash::{Hash, Hasher};
 
     fn hash(entry: DedupEntry) -> u64 {
