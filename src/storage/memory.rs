@@ -593,14 +593,6 @@ impl<P: MemoryProfile, B> DedupSlots for Memory<P, B>
 where
     P::Dedup: DedupStore,
 {
-    fn dedup_expiry_check(&self, now_ms: u64) -> super::DedupExpiry {
-        self.dedup.expiry_check(now_ms)
-    }
-
-    fn finish_dedup_expiry(&mut self, lower_bound_ms: u64) {
-        self.dedup.finish_expiry(lower_bound_ms);
-    }
-
     fn try_store_app_dedup(&mut self, entry: DedupEntry) -> Option<bool> {
         let tx = &mut self.tx;
         self.dedup.try_store_app(entry, |pin| {
@@ -1287,50 +1279,5 @@ impl<P: MemoryProfile> core::fmt::Debug for Memory<P, WithBodies<P>> {
         f.debug_struct("Memory")
             .field("capacities", &self.capacities())
             .finish_non_exhaustive()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::storage::{DatagramIo, DatagramTransport, DedupExpiry, profiles};
-
-    #[test]
-    fn app_expiry_refresh_keeps_a_due_duplicate_visible() {
-        struct IdleIo;
-        impl DatagramTransport for IdleIo {
-            type Error = core::convert::Infallible;
-        }
-        impl DatagramIo for IdleIo {
-            fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, Self::Error> {
-                Ok(None)
-            }
-            fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
-                Ok(bytes.len())
-            }
-        }
-        let mut app = crate::App::profile::<profiles::Default>()
-            .deterministic_for_tests()
-            .block_wise::<false>()
-            .allow_unprotected()
-            .bind(IdleIo)
-            .unwrap();
-        let row = DedupEntry::new(MessageId::new(4), Endpoint::v4([192, 0, 2, 4], 5683));
-        let table = &mut app.engine_mut().storage_mut().dedup;
-        let earlier = table.insert(row.with_due_ms(100)).unwrap();
-        let later = table.acquire().unwrap();
-        assert!(earlier.index() < later.index());
-        table.set_entry(later, row.with_due_ms(10)).unwrap();
-        // Inspecting the due later row removes the earlier matching key. The
-        // surviving due row must remain in the refresh bound for the next poll.
-        app.poll(10).unwrap();
-        assert!(app.engine().dedup_entry_ref(earlier).is_none());
-        assert_eq!(app.engine().dedup_entry_ref(later).unwrap().due_ms(), 10);
-        assert_eq!(
-            app.engine().storage().dedup_expiry_check(10),
-            DedupExpiry::Refresh
-        );
-        app.poll(10).unwrap();
-        assert!(app.engine().lookup_dedup(row.key()).is_none());
     }
 }

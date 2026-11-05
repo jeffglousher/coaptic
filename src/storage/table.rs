@@ -46,51 +46,16 @@ impl DedupKey {
 /// CON retransmit can be answered without a second handler call: compact
 /// [`Self::replay`] when the datagram fits, otherwise a TX pin for
 /// `EXCHANGE_LIFETIME`. See `knowledge/rfcs/rfc7252.txt` §4.5.
-///
-/// Equality and hashing describe the key, deadline and current replay owner.
-/// Replacing or clearing replay discards the previous bytes from that identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DedupEntry {
     key: DedupKey,
     due_ms: u64,
-    replay: DedupReplay,
-}
-
-// Inline replay and a retained TX packet are mutually exclusive owners.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum DedupReplay {
-    None,
-    Inline {
-        bytes: [u8; DedupEntry::REPLAY_MAX],
-        len: u16,
-    },
-    Tx(SlotId),
+    replay_len: u16,
+    replay: [u8; Self::REPLAY_MAX],
+    tx_pin: Option<SlotId>,
 }
 
 impl DedupEntry {
-    /// Write only the active replay owner; a TX pin has no inline bytes to copy.
-    pub(super) fn write_into(self, slot: &mut Option<Self>) {
-        match self.replay {
-            DedupReplay::Inline { .. } => *slot = Some(self),
-            DedupReplay::None => {
-                let entry = slot.insert(Self::new(self.key.message_id(), self.key.endpoint()));
-                entry.due_ms = self.due_ms;
-            }
-            DedupReplay::Tx(id) => Self::write_tx(slot, self.key, self.due_ms, id),
-        }
-    }
-
-    // Keep this scalar boundary: inlining the variant assignment can recover a
-    // whole-enum memcpy, including its inactive 256-byte replay payload.
-    #[inline(never)]
-    fn write_tx(slot: &mut Option<Self>, key: DedupKey, due_ms: u64, id: SlotId) {
-        *slot = Some(Self {
-            key,
-            due_ms,
-            replay: DedupReplay::Tx(id),
-        });
-    }
-
     /// Bytes of encoded ACK cached inline on this row.
     ///
     /// Larger piggybacked ACKs use [`Self::tx_pin`] (Default TX slot) so
@@ -105,7 +70,9 @@ impl DedupEntry {
         Self {
             key: DedupKey::new(message_id, endpoint),
             due_ms: 0,
-            replay: DedupReplay::None,
+            replay_len: 0,
+            replay: [0; Self::REPLAY_MAX],
+            tx_pin: None,
         }
     }
 
@@ -118,25 +85,17 @@ impl DedupEntry {
 
     /// Cache encoded reply bytes when they fit [`Self::REPLAY_MAX`].
     ///
-    /// Larger datagrams leave this entry unchanged; they are never truncated.
-    /// The caller may use [`Self::with_tx_pin`] instead. An empty slice clears
-    /// either replay owner.
+    /// Larger datagrams are not truncated: replay stays empty so a later
+    /// duplicate cannot send a lie. The caller may [`Self::with_tx_pin`]
+    /// instead.
     #[must_use]
     pub fn with_replay(mut self, bytes: &[u8]) -> Self {
         if bytes.len() > Self::REPLAY_MAX {
             return self;
         }
-        self.replay = if bytes.is_empty() {
-            DedupReplay::None
-        } else {
-            DedupReplay::Inline {
-                bytes: [0; Self::REPLAY_MAX],
-                len: bytes.len() as u16,
-            }
-        };
-        if let DedupReplay::Inline { bytes: replay, .. } = &mut self.replay {
-            replay[..bytes.len()].copy_from_slice(bytes);
-        }
+        self.replay[..bytes.len()].copy_from_slice(bytes);
+        self.replay_len = bytes.len() as u16;
+        self.tx_pin = None;
         self
     }
 
@@ -146,7 +105,8 @@ impl DedupEntry {
     /// until this row expires or is replaced.
     #[must_use]
     pub const fn with_tx_pin(mut self, id: SlotId) -> Self {
-        self.replay = DedupReplay::Tx(id);
+        self.tx_pin = Some(id);
+        self.replay_len = 0;
         self
     }
 
@@ -177,19 +137,17 @@ impl DedupEntry {
     /// Cached piggybacked / empty-ACK bytes, if stored inline.
     #[must_use]
     pub fn replay(&self) -> Option<&[u8]> {
-        match &self.replay {
-            DedupReplay::Inline { bytes, len } => Some(&bytes[..usize::from(*len)]),
-            DedupReplay::None | DedupReplay::Tx(_) => None,
+        if self.replay_len == 0 {
+            None
+        } else {
+            Some(&self.replay[..usize::from(self.replay_len)])
         }
     }
 
     /// Occupied TX slot holding the encoded ACK, if pinned.
     #[must_use]
-    pub const fn tx_pin(&self) -> Option<SlotId> {
-        match self.replay {
-            DedupReplay::Tx(id) => Some(id),
-            DedupReplay::None | DedupReplay::Inline { .. } => None,
-        }
+    pub const fn tx_pin(self) -> Option<SlotId> {
+        self.tx_pin
     }
 
     /// Whether this row can answer a CON retransmit (`replay` or `tx_pin`).
@@ -213,11 +171,6 @@ impl From<DedupKey> for DedupEntry {
 /// Each operation scans the configured entry count (O(n) in capacity). Capacity
 /// is fixed at construction.
 pub(crate) trait DedupStore {
-    fn expiry_check(&self, _now_ms: u64) -> super::DedupExpiry {
-        super::DedupExpiry::Scan
-    }
-    fn finish_expiry(&mut self, _lower_bound_ms: u64) {}
-
     fn try_store_app(
         &mut self,
         _entry: DedupEntry,
@@ -980,14 +933,9 @@ pub(crate) trait ObserveStore<T: OwnedToken = Token> {
 /// Insert, lookup, and remove scan every configured entry (O(n) in capacity).
 /// Saturation returns `None` from insert; this type does not evict. [`Self::rotate`]
 /// still advances the occupancy cursor used by acquire.
-/// One `u64` retains a conservative expiry bound so App can skip walks before
-/// any reply is due. Payload writes lower it; removals may leave an early bound.
 pub struct DedupTable<const ENTRIES: usize> {
     entries: [Option<DedupEntry>; ENTRIES],
     occ: Occupancy<ENTRIES, 0>,
-    // Conservative minimum of nonzero deadlines. Removal may leave it early;
-    // every payload write lowers it, and App refreshes it during its expiry walk.
-    next_due_ms: u64,
 }
 
 impl<const ENTRIES: usize> DedupTable<ENTRIES> {
@@ -997,7 +945,6 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
         Self {
             entries: [None; ENTRIES],
             occ: Occupancy::new(),
-            next_due_ms: 0,
         }
     }
 
@@ -1010,8 +957,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
             return Some(id);
         }
         let id = self.occ.acquire()?;
-        self.note_due(&entry);
-        entry.write_into(&mut self.entries[id.index()]);
+        self.entries[id.index()] = Some(entry);
         Some(id)
     }
 
@@ -1048,8 +994,9 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
     /// Borrow an occupied payload without copying its replay buffer.
     #[must_use]
     pub fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
-        // Payload writes require an occupied slot; release clears the payload.
-        // Acquired empty slots are None too, so a second occupancy read is redundant.
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
         self.entries.get(id.index()).and_then(Option::as_ref)
     }
 
@@ -1062,21 +1009,13 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
                 SlotError::InvalidSlot
             });
         }
-        self.note_due(&entry);
-        entry.write_into(&mut self.entries[id.index()]);
+        self.entries[id.index()] = Some(entry);
         Ok(())
     }
 
     fn reset(&mut self, id: SlotId) {
         if let Some(slot) = self.entries.get_mut(id.index()) {
             *slot = None;
-        }
-    }
-
-    fn note_due(&mut self, entry: &DedupEntry) {
-        let due = entry.due_ms();
-        if due != 0 && (self.next_due_ms == 0 || due < self.next_due_ms) {
-            self.next_due_ms = due;
         }
     }
 }
@@ -1088,18 +1027,6 @@ impl<const ENTRIES: usize> Default for DedupTable<ENTRIES> {
 }
 
 impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
-    fn expiry_check(&self, now_ms: u64) -> super::DedupExpiry {
-        if self.next_due_ms == 0 || now_ms < self.next_due_ms {
-            super::DedupExpiry::Skip
-        } else {
-            super::DedupExpiry::Refresh
-        }
-    }
-
-    fn finish_expiry(&mut self, lower_bound_ms: u64) {
-        self.next_due_ms = lower_bound_ms;
-    }
-
     fn try_store_app(
         &mut self,
         entry: DedupEntry,
@@ -1152,8 +1079,7 @@ impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
                 id
             }
         };
-        self.note_due(&entry);
-        entry.write_into(&mut self.entries[id.index()]);
+        self.entries[id.index()] = Some(entry);
         Some(true)
     }
 
