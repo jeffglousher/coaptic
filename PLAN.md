@@ -8,6 +8,14 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The packet-staging/request-metadata batch lowers complete-App thread cycles by
+5.06% sync and 4.40% async against #740 with unchanged capacities. Successful
+OSCORE sealing removes its 1,280-byte staging buffer; the selected emitted frame
+chain shrinks 1,072 bytes. The measured complete progress future grows 32 bytes
+and the refusal-frame chain grows 176 bytes, so this is a scoped scratch win,
+not whole-memory acceptance. Keep the [integrated result, failed precursor and
+reproduction evidence](architecture/requirements/PACKET-DISPATCH-20261104.md).
+
 The integrated dispatch/response scratch batch demonstrates lower complete-App
 CPU-cycle cost in both modes: 0.85% sync and 1.36% async across the declared
 28-cell mix, with unchanged capacities. The selected complete Constrained

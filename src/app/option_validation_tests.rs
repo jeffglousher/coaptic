@@ -42,7 +42,7 @@ fn legacy_bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field<
 }
 
 fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
-    let mut options = OptionsBuilder::<4>::new();
+    let mut options = OptionsBuilder::<5>::new();
     options.push(Opt::uri_path("bench")).unwrap();
     for option in extra {
         options.push(*option).unwrap();
@@ -59,9 +59,49 @@ fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
         "{code:?}, {extra:?}, security active={}",
         oscore::is_active(oscore)
     );
+    if let Some(cached) = super::request_options(&parsed, oscore) {
+        assert_eq!(cached.block1, parsed.block1().and_then(Result::ok));
+        assert_eq!(cached.block2, parsed.block2().and_then(Result::ok));
+        assert_eq!(
+            cached.q_block2,
+            parsed.q_block2().next().and_then(Result::ok)
+        );
+        assert_eq!(cached.q_block1, parsed.q_block1().is_some());
+        assert_eq!(cached.observe, parsed.observe().is_some());
+        assert_eq!(
+            cached.valid_q_selections,
+            super::valid_q_selections(&parsed)
+        );
+        assert_eq!(
+            cached.missing_q1_metadata,
+            parsed.q_block1().is_some()
+                && (parsed.request_tag().next().is_none()
+                    || !matches!(parsed.size1(), Some(Ok(_))))
+        );
+        assert_eq!(
+            cached.missing_fetch_format,
+            parsed.code() == Code::FETCH && parsed.content_format().is_none()
+        );
+    }
 }
 
 fn compare_cases(oscore: &oscore::Field<4>) {
+    // Exercise the complete Q-Block1 metadata combination, including the first
+    // Size1 value controlling validity when a second occurrence disagrees.
+    for first in [&[][..], &[1; 5][..]] {
+        for second in [&[][..], &[1; 5][..]] {
+            compare_case(
+                Code::GET,
+                &[
+                    Opt::new(OptionNumber::Q_BLOCK1, &[]),
+                    Opt::new(OptionNumber::REQUEST_TAG, b"tag"),
+                    Opt::new(OptionNumber::SIZE1, first),
+                    Opt::new(OptionNumber::SIZE1, second),
+                ],
+                oscore,
+            );
+        }
+    }
     // Each value is syntactically decodable wire data. Include formats that
     // this predicate intentionally ignores, as well as values it must reject.
     let options = [
@@ -92,6 +132,8 @@ fn compare_cases(oscore: &oscore::Field<4>) {
         Opt::new(OptionNumber::REQUEST_TAG, &[]),
         Opt::new(OptionNumber::REQUEST_TAG, b"12345678"),
         Opt::new(OptionNumber::REQUEST_TAG, b"123456789"),
+        Opt::new(OptionNumber::SIZE1, &[]),
+        Opt::new(OptionNumber::SIZE1, &[1; 5]),
         Opt::uri_query("a=1"),
     ];
     for code in [Code::GET, Code::FETCH] {

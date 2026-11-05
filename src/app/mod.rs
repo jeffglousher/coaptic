@@ -3002,6 +3002,8 @@ fn assemble_inbound_body<Mem>(
     now_ms: u64,
     parsed: &ParsedMessage<'_, Mem::Token>,
     oscore_request: oscore::Request,
+    has_block1: bool,
+    has_q_block1: bool,
 ) -> InboundBody
 where
     Mem: Storage + DatagramSlots + BodySlots,
@@ -3010,7 +3012,7 @@ where
     let _ = oscore_request;
     // Classify from the first decode. Plain GET must not enter apply_*
     // (each stacks profile-sized Block IO scratch, then MissingBlock).
-    if parsed.block1().is_some() {
+    if has_block1 {
         return match engine.apply_block1_rx(rx) {
             Ok(progress) if progress.complete() => InboundBody::Complete(progress.id()),
             Ok(_) => InboundBody::Continue,
@@ -3026,7 +3028,7 @@ where
             Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
         };
     }
-    if parsed.q_block1().is_some() {
+    if has_q_block1 {
         return match engine.apply_q_block1_rx(rx) {
             Ok(progress) if progress.complete() => {
                 let _ = engine.note_q_receive(progress.id(), now_ms);
@@ -3233,78 +3235,101 @@ where
     }
 }
 
-/// 4.02 before [`Site::dispatch`]: unknown critical, OSCORE with no
-/// attached context, or a malformed Block / Q-Block2 value.
-fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
+/// Results already decoded during critical-option validation. Keep the first
+/// singleton value and the original later 4.00 decisions distinct from 4.02.
+#[derive(Default)]
+struct RequestOptions {
+    block1: Option<BlockValue>,
+    block2: Option<BlockValue>,
+    q_block2: Option<BlockValue>,
+    q_block1: bool,
+    observe: bool,
+    missing_q1_metadata: bool,
+    missing_fetch_format: bool,
+    valid_q_selections: bool,
+}
+
+/// None means 4.02 before dispatch: unknown critical, OSCORE without a context,
+/// malformed Block/Q-Block2, or an unsupported option combination.
+fn request_options<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
-) -> bool {
+) -> Option<RequestOptions> {
     use crate::message::OptionNumber;
-
     let fetch = parsed.code() == Code::FETCH;
+    let mut result = RequestOptions {
+        valid_q_selections: true,
+        ..RequestOptions::default()
+    };
     let mut tag = false;
     let mut format = false;
-    let mut observe = false;
-    let mut block1 = false;
-    let mut block2 = false;
-    let mut q_block1 = false;
-    let mut q_block2 = false;
-    let mut repeated_q_block2 = false;
-    let mut q_block2_start = false;
-    // Decode validated wire options once; values continue to borrow the packet.
+    let mut size1 = None;
+    let mut previous_q: Option<BlockValue> = None;
+    let mut repeated_q = false;
+    let mut q_start = false;
     for option in parsed.options() {
         match option.number() {
             OptionNumber::REQUEST_TAG => {
                 if tag || option.value().len() > 8 {
-                    return true;
+                    return None;
                 }
                 tag = true;
             }
-            OptionNumber::CONTENT_FORMAT if fetch => {
-                if format || option.as_uint16().is_err() {
-                    return true;
+            OptionNumber::CONTENT_FORMAT => {
+                if fetch && (format || option.as_uint16().is_err()) {
+                    return None;
                 }
                 format = true;
             }
-            OptionNumber::OBSERVE => observe = true,
-            OptionNumber::OSCORE if !oscore::is_active(oscore) => return true,
-            OptionNumber::BLOCK1 => {
-                // Existing singleton accessors validate only the first value.
-                if !block1 && option.as_block().is_err() {
-                    return true;
-                }
-                block1 = true;
+            OptionNumber::SIZE1 if size1.is_none() => size1 = Some(option.as_uint().is_ok()),
+            OptionNumber::OBSERVE => result.observe = true,
+            OptionNumber::OSCORE if !oscore::is_active(oscore) => return None,
+            OptionNumber::BLOCK1 if result.block1.is_none() => {
+                result.block1 = Some(option.as_block().ok()?)
             }
-            OptionNumber::BLOCK2 => {
-                if !block2 && option.as_block().is_err() {
-                    return true;
-                }
-                block2 = true;
+            OptionNumber::BLOCK2 if result.block2.is_none() => {
+                result.block2 = Some(option.as_block().ok()?)
             }
             OptionNumber::Q_BLOCK1 => {
-                if q_block1 {
-                    return true;
+                if result.q_block1 {
+                    return None;
                 }
-                q_block1 = true;
+                result.q_block1 = true;
             }
             OptionNumber::Q_BLOCK2 => {
-                let Ok(value) = option.as_block() else {
-                    return true;
-                };
+                let value = option.as_block().ok()?;
                 if value.is_bert() {
-                    return true;
+                    return None;
                 }
-                repeated_q_block2 |= q_block2;
-                q_block2 = true;
-                q_block2_start |= value.more()
+                result.valid_q_selections &= previous_q
+                    .is_none_or(|last| value.num() > last.num() && value.szx() == last.szx());
+                previous_q = Some(value);
+                repeated_q |= result.q_block2.is_some();
+                result.q_block2.get_or_insert(value);
+                q_start |= value.more()
                     && value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0;
             }
-            number if number.is_critical() && !number.is_known() => return true,
+            number if number.is_critical() && !number.is_known() => return None,
             _ => {}
         }
     }
-    ((block1 || block2) && (q_block1 || q_block2))
-        || (repeated_q_block2 && (observe || q_block2_start))
+    if ((result.block1.is_some() || result.block2.is_some())
+        && (result.q_block1 || result.q_block2.is_some()))
+        || (repeated_q && (result.observe || q_start))
+    {
+        return None;
+    }
+    result.missing_q1_metadata = result.q_block1 && (!tag || size1 != Some(true));
+    result.missing_fetch_format = fetch && !format;
+    Some(result)
+}
+
+#[cfg(test)]
+fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
+    parsed: &ParsedMessage<'_, K>,
+    oscore: &oscore::Field<REQUESTS, K>,
+) -> bool {
+    request_options(parsed, oscore).is_none()
 }
 
 fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
@@ -3314,6 +3339,7 @@ fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
         && (parsed.q_block1().is_some() || parsed.q_block2().next().is_some())
 }
 
+#[cfg(test)]
 fn valid_q_selections(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
     let mut previous: Option<BlockValue> = None;
     for value in parsed.q_block2() {
@@ -3743,7 +3769,7 @@ where
     // Known-stack critical check and OSCORE-without-context run here,
     // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
     // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
-    if bad_option_request(&parsed, oscore) {
+    let Some(options) = request_options(&parsed, oscore) else {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
@@ -3777,10 +3803,10 @@ where
         );
         let _ = engine.release_rx(rx);
         return outcome;
-    }
-    let block2 = parsed.block2().and_then(Result::ok);
-    let q_block2 = parsed.q_block2().next().and_then(Result::ok);
-    let block1 = parsed.block1().and_then(Result::ok).map(|value| BlockOpt {
+    };
+    let block2 = options.block2;
+    let q_block2 = options.q_block2;
+    let block1 = options.block1.map(|value| BlockOpt {
         value,
         q_block: false,
         size2: None,
@@ -3801,12 +3827,9 @@ where
 
     // RFC 9177 section 4.3 requires 4.00 for missing Request-Tag or Size1.
     // Reject before admission/dispatch, preserving any existing partial body.
-    let missing_q1_metadata = parsed.q_block1().is_some()
-        && (parsed.request_tag().next().is_none() || !matches!(parsed.size1(), Some(Ok(_))));
-    // RFC 8132 section 2.3.1 requires FETCH Content-Format, even for an
-    // empty selection. Do not allocate partial bodies or call a handler.
-    let missing_fetch_format = parsed.code() == Code::FETCH && parsed.content_format().is_none();
-    if missing_q1_metadata || missing_fetch_format || !valid_q_selections(&parsed) {
+    // FETCH likewise requires Content-Format even for an empty selection
+    // (RFC 8132 section 2.3.1). These remain later 4.00 decisions, not 4.02.
+    if options.missing_q1_metadata || options.missing_fetch_format || !options.valid_q_selections {
         let outcome = send_response(
             engine,
             io,
@@ -3872,7 +3895,15 @@ where
         }
     }
 
-    let assembled = assemble_inbound_body(engine, rx, now_ms, &parsed, oscore_req);
+    let assembled = assemble_inbound_body(
+        engine,
+        rx,
+        now_ms,
+        &parsed,
+        oscore_req,
+        options.block1.is_some(),
+        options.q_block1,
+    );
     let body_owner = async_server::BodyOwner::incoming(
         engine,
         match assembled {
@@ -3968,7 +3999,7 @@ where
     }
 
     // Follow-up blocks belong to the retained selection, not merely its Token.
-    if (block2.is_some() || q_block2.is_some()) && parsed.observe().is_none() {
+    if (block2.is_some() || q_block2.is_some()) && !options.observe {
         let selection = engine
             .lookup_observe(ObserveKey::new(parsed.token(), peer))
             .and_then(|id| engine.observe_interest(id))
@@ -4013,7 +4044,7 @@ where
     // A terminal notification has no observer row, but its body still owns the
     // exact selection and response metadata until the last requested block.
     if (meta.block2.is_some() || meta.q_block2.is_some())
-        && parsed.observe().is_none()
+        && !options.observe
         && let Some(body) = response_body_for(engine, BlockKey::new(meta.token, peer))
     {
         let transfer = engine.tx_body_transfer(body).expect("located body");
@@ -4118,7 +4149,7 @@ where
                 row.completed
                     && row.meta.token == meta.token
                     && row.meta.dest == peer
-                    && (row.observe.is_none() || parsed.observe().is_none())
+                    && (row.observe.is_none() || !options.observe)
             })
         })
     {
@@ -4340,7 +4371,7 @@ where
     let can_defer = DEFERRED != 0
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
-        && (parsed.observe().is_none() || deferred_observe.is_some());
+        && (!options.observe || deferred_observe.is_some());
     let selection_supported = can_defer
         && selection
             .get_or_encode(engine, &parsed, assembled)
@@ -4351,7 +4382,7 @@ where
     let deferred_handle = if selection_supported
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
-        && (parsed.observe().is_none() || deferred_observe.is_some())
+        && (!options.observe || deferred_observe.is_some())
         && q_selectors.is_some()
     {
         match deferred.candidate(ids, io) {
