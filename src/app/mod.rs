@@ -3249,14 +3249,49 @@ struct RequestOptions {
     valid_q_selections: bool,
 }
 
-/// None means 4.02 before dispatch: unknown critical, OSCORE without a context,
-/// malformed Block/Q-Block2, or an unsupported option combination.
-fn request_options<K: OwnedToken, const REQUESTS: usize>(
+struct RequestMetadata {
+    no_response: NoResponse,
+    proxy: bool,
+    options: Option<RequestOptions>,
+}
+
+fn request_metadata<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
+) -> RequestMetadata {
+    use crate::message::OptionNumber;
+    let mut no_response = None;
+    let mut proxy = false;
+    let mut options = parsed.options().inspect(|option| match option.number() {
+        OptionNumber::NO_RESPONSE if no_response.is_none() => {
+            no_response = Some(NoResponse::decode(option.value()).unwrap_or(NoResponse::DEFAULT));
+        }
+        OptionNumber::PROXY_URI | OptionNumber::PROXY_SCHEME => proxy = true,
+        _ => {}
+    });
+    let validated = validate_request_options(
+        &mut options,
+        parsed.code() == Code::FETCH,
+        oscore::is_active(oscore),
+    );
+    // Validation may stop early. Later proxy options still take precedence over
+    // 4.02, and the first No-Response still controls the eventual error response.
+    for _ in options {}
+    RequestMetadata {
+        no_response: no_response.unwrap_or(NoResponse::DEFAULT),
+        proxy,
+        options: validated,
+    }
+}
+
+/// None means 4.02 before dispatch: unknown critical, OSCORE without a context,
+/// malformed Block/Q-Block2, or an unsupported option combination.
+fn validate_request_options<'a>(
+    options: impl Iterator<Item = crate::message::Opt<'a>>,
+    fetch: bool,
+    oscore_active: bool,
 ) -> Option<RequestOptions> {
     use crate::message::OptionNumber;
-    let fetch = parsed.code() == Code::FETCH;
     let mut result = RequestOptions {
         valid_q_selections: true,
         ..RequestOptions::default()
@@ -3267,7 +3302,7 @@ fn request_options<K: OwnedToken, const REQUESTS: usize>(
     let mut previous_q: Option<BlockValue> = None;
     let mut repeated_q = false;
     let mut q_start = false;
-    for option in parsed.options() {
+    for option in options {
         match option.number() {
             OptionNumber::REQUEST_TAG => {
                 if tag || option.value().len() > 8 {
@@ -3283,7 +3318,7 @@ fn request_options<K: OwnedToken, const REQUESTS: usize>(
             }
             OptionNumber::SIZE1 if size1.is_none() => size1 = Some(option.as_uint().is_ok()),
             OptionNumber::OBSERVE => result.observe = true,
-            OptionNumber::OSCORE if !oscore::is_active(oscore) => return None,
+            OptionNumber::OSCORE if !oscore_active => return None,
             OptionNumber::BLOCK1 if result.block1.is_none() => {
                 result.block1 = Some(option.as_block().ok()?)
             }
@@ -3329,7 +3364,7 @@ fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
 ) -> bool {
-    request_options(parsed, oscore).is_none()
+    request_metadata(parsed, oscore).options.is_none()
 }
 
 fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
@@ -3780,10 +3815,11 @@ where
     Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     T: DatagramIo,
 {
-    let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
+    let metadata = request_metadata(&parsed, oscore);
+    let no_response = metadata.no_response;
     // Origin: Proxy-Uri / Proxy-Scheme MUST 5.05 (RFC 7252 §5.10.2).
     // Before the site so a missing Uri-Path is not 4.04.
-    if parsed.proxy_uri().is_some() || parsed.proxy_scheme().is_some() {
+    if metadata.proxy {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
@@ -3813,7 +3849,7 @@ where
     // Known-stack critical check and OSCORE-without-context run here,
     // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
     // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
-    let Some(options) = request_options(&parsed, oscore) else {
+    let Some(options) = metadata.options else {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
