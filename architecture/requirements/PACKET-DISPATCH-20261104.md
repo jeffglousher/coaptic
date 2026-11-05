@@ -13,8 +13,8 @@ Baseline is `36f9c55635b6a53a7db4c95b9d99624095895124`; measured candidate is
 `f84f3c199763910e246d8599aca0e29077a73ad1`. The later test-only `d828163` adds
 repeated-Size1 oracle combinations; measured production code is unchanged.
 [Companion #251](https://github.com/jeffglousher/coaptic-validation/pull/251)
-retains the exact raw cohorts, methods, patches, fixture references, verifier and
-owner ledger under `tools/benchmark/evidence/packet-dispatch-20261104`.
+retains the [exact raw cohorts, methods, patches, fixture references, verifier and
+owner ledger](https://github.com/jeffglousher/coaptic-validation/tree/c433358d254e5203c4a0625b96c842ce0a7db46a/tools/benchmark/evidence/packet-dispatch-20261104).
 
 ## Why these changes
 
