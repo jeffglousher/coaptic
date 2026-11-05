@@ -3249,49 +3249,14 @@ struct RequestOptions {
     valid_q_selections: bool,
 }
 
-struct RequestMetadata {
-    no_response: NoResponse,
-    proxy: bool,
-    options: Option<RequestOptions>,
-}
-
-fn request_metadata<K: OwnedToken, const REQUESTS: usize>(
-    parsed: &ParsedMessage<'_, K>,
-    oscore: &oscore::Field<REQUESTS, K>,
-) -> RequestMetadata {
-    use crate::message::OptionNumber;
-    let mut no_response = None;
-    let mut proxy = false;
-    let mut options = parsed.options().inspect(|option| match option.number() {
-        OptionNumber::NO_RESPONSE if no_response.is_none() => {
-            no_response = Some(NoResponse::decode(option.value()).unwrap_or(NoResponse::DEFAULT));
-        }
-        OptionNumber::PROXY_URI | OptionNumber::PROXY_SCHEME => proxy = true,
-        _ => {}
-    });
-    let validated = validate_request_options(
-        &mut options,
-        parsed.code() == Code::FETCH,
-        oscore::is_active(oscore),
-    );
-    // Validation may stop early. Later proxy options still take precedence over
-    // 4.02, and the first No-Response still controls the eventual error response.
-    for _ in options {}
-    RequestMetadata {
-        no_response: no_response.unwrap_or(NoResponse::DEFAULT),
-        proxy,
-        options: validated,
-    }
-}
-
 /// None means 4.02 before dispatch: unknown critical, OSCORE without a context,
 /// malformed Block/Q-Block2, or an unsupported option combination.
-fn validate_request_options<'a>(
-    options: impl Iterator<Item = crate::message::Opt<'a>>,
-    fetch: bool,
-    oscore_active: bool,
+fn request_options<K: OwnedToken, const REQUESTS: usize>(
+    parsed: &ParsedMessage<'_, K>,
+    oscore: &oscore::Field<REQUESTS, K>,
 ) -> Option<RequestOptions> {
     use crate::message::OptionNumber;
+    let fetch = parsed.code() == Code::FETCH;
     let mut result = RequestOptions {
         valid_q_selections: true,
         ..RequestOptions::default()
@@ -3302,7 +3267,7 @@ fn validate_request_options<'a>(
     let mut previous_q: Option<BlockValue> = None;
     let mut repeated_q = false;
     let mut q_start = false;
-    for option in options {
+    for option in parsed.options() {
         match option.number() {
             OptionNumber::REQUEST_TAG => {
                 if tag || option.value().len() > 8 {
@@ -3318,7 +3283,7 @@ fn validate_request_options<'a>(
             }
             OptionNumber::SIZE1 if size1.is_none() => size1 = Some(option.as_uint().is_ok()),
             OptionNumber::OBSERVE => result.observe = true,
-            OptionNumber::OSCORE if !oscore_active => return None,
+            OptionNumber::OSCORE if !oscore::is_active(oscore) => return None,
             OptionNumber::BLOCK1 if result.block1.is_none() => {
                 result.block1 = Some(option.as_block().ok()?)
             }
@@ -3364,7 +3329,7 @@ fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
 ) -> bool {
-    request_metadata(parsed, oscore).options.is_none()
+    request_options(parsed, oscore).is_none()
 }
 
 fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
@@ -3390,7 +3355,7 @@ fn valid_q_selections(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(dispatch_request => dispatch_request_io_async, send_token_capacity_refusal => send_token_capacity_refusal_async, oscore::send_token_capacity_refusal => oscore::send_token_capacity_refusal_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
+#[coaptic_io::dual_io(dispatch_rx_io_async, bound(crate::app::async_server::ProtocolIo), calls(send_token_capacity_refusal => send_token_capacity_refusal_async, oscore::send_token_capacity_refusal => oscore::send_token_capacity_refusal_async, admission::send_refusal => admission::send_refusal_async, issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, replay_con_request => replay_con_request_async, oscore_inbound_error => oscore_inbound_error_async, send_empty_ack => send_empty_ack_async, send_empty_rst => send_empty_rst_async, send_empty => send_empty_async, client::complete_client => client::complete_client_async, client::continue_qblock1_ack => client::continue_qblock1_ack_async))]
 fn dispatch_rx<
     Mem,
     T,
@@ -3771,86 +3736,10 @@ where
         return outcome;
     }
 
-    dispatch_request(RequestDispatch {
-        engine,
-        io,
-        site,
-        ids,
-        oscore,
-        echo_policy,
-        dedup_closed,
-        deferred,
-        deferred_lifetime_ms,
-        dispatch,
-        now_ms,
-        rx,
-        peer,
-        parsed,
-        oscore_req,
-    })
-}
-
-// Keep the initial coroutine input together: independently captured arguments
-// otherwise occupy widely separated suspension slots before the first poll.
-struct RequestDispatch<
-    'a,
-    'd,
-    'p,
-    Mem: Storage,
-    T,
-    const N: usize,
-    const DEFERRED: usize,
-    const REQUESTS: usize,
-> {
-    engine: &'a mut Engine<Mem>,
-    io: &'a mut T,
-    site: &'a Site<N, Mem::Token>,
-    ids: &'a mut AppIds,
-    oscore: &'a mut oscore::Field<REQUESTS, Mem::Token>,
-    echo_policy: Option<EchoPolicy>,
-    dedup_closed: &'a mut Option<DedupClosed>,
-    deferred: &'a mut DeferredTable<DEFERRED, Mem::Token>,
-    deferred_lifetime_ms: u64,
-    dispatch: Option<&'a mut AppDispatch<'d, Mem::Token>>,
-    now_ms: u64,
-    rx: SlotId,
-    peer: Endpoint,
-    parsed: ParsedMessage<'p, Mem::Token>,
-    oscore_req: oscore::Request,
-}
-
-// Keep authenticated request handling separate from ingress and client-response
-// completion so their suspension states do not extend each other's local storage.
-#[coaptic_io::dual_io(dispatch_request_io_async, bound(crate::app::async_server::ProtocolIo), calls(admission::send_refusal => admission::send_refusal_async, issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, send_empty_ack => send_empty_ack_async))]
-fn dispatch_request<Mem, T, const N: usize, const DEFERRED: usize, const REQUESTS: usize>(
-    request: RequestDispatch<'_, '_, '_, Mem, T, N, DEFERRED, REQUESTS>,
-) -> Result<(), Error<T::Error>>
-where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
-    T: DatagramIo,
-{
-    let RequestDispatch {
-        engine,
-        io,
-        site,
-        ids,
-        oscore,
-        echo_policy,
-        dedup_closed,
-        deferred,
-        deferred_lifetime_ms,
-        dispatch,
-        now_ms,
-        rx,
-        peer,
-        parsed,
-        oscore_req,
-    } = request;
-    let metadata = request_metadata(&parsed, oscore);
-    let no_response = metadata.no_response;
+    let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
     // Origin: Proxy-Uri / Proxy-Scheme MUST 5.05 (RFC 7252 §5.10.2).
     // Before the site so a missing Uri-Path is not 4.04.
-    if metadata.proxy {
+    if parsed.proxy_uri().is_some() || parsed.proxy_scheme().is_some() {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
@@ -3880,7 +3769,7 @@ where
     // Known-stack critical check and OSCORE-without-context run here,
     // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
     // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
-    let Some(options) = metadata.options else {
+    let Some(options) = request_options(&parsed, oscore) else {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),

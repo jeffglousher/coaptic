@@ -59,17 +59,7 @@ fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
         "{code:?}, {extra:?}, security active={}",
         oscore::is_active(oscore)
     );
-    let metadata = super::request_metadata(&parsed, oscore);
-    assert_eq!(
-        metadata.no_response,
-        crate::message::NoResponse::from_message(&parsed)
-            .unwrap_or(crate::message::NoResponse::DEFAULT)
-    );
-    assert_eq!(
-        metadata.proxy,
-        parsed.proxy_uri().is_some() || parsed.proxy_scheme().is_some()
-    );
-    if let Some(cached) = metadata.options {
+    if let Some(cached) = super::request_options(&parsed, oscore) {
         assert_eq!(cached.block1, parsed.block1().and_then(Result::ok));
         assert_eq!(cached.block2, parsed.block2().and_then(Result::ok));
         assert_eq!(
@@ -145,11 +135,6 @@ fn compare_cases(oscore: &oscore::Field<4>) {
         Opt::new(OptionNumber::SIZE1, &[]),
         Opt::new(OptionNumber::SIZE1, &[1; 5]),
         Opt::uri_query("a=1"),
-        Opt::new(OptionNumber::PROXY_URI, &[0xff]),
-        Opt::new(OptionNumber::PROXY_SCHEME, &[]),
-        Opt::new(OptionNumber::NO_RESPONSE, &[]),
-        Opt::new(OptionNumber::NO_RESPONSE, &[26]),
-        Opt::new(OptionNumber::NO_RESPONSE, &[0, 26]),
     ];
     for code in [Code::GET, Code::FETCH] {
         // Includes the exact fixture's sole Uri-Path and the missing FETCH
