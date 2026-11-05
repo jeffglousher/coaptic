@@ -5,7 +5,7 @@ the frozen complete-App runtime checks. All production changes were retired;
 the baseline behavior and previously delivered improvements remain intact.
 Do not repeat these unchanged hypotheses or change their acceptance criteria.
 
-The [portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/receive-scratch-20261105)
+The [portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/92781669cf4bdc5ba422088cc0868092878e3035/tools/benchmark/evidence/receive-scratch-20261105)
 retains exact patches, raw outputs, failures, compiler layouts, fixture hashes,
 source reconstruction and independent verifiers. No candidate is accepted because
 it compiles, passes regression tests or improves one execution mode.
