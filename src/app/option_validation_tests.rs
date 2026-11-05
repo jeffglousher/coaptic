@@ -42,7 +42,7 @@ fn legacy_bad_option_request(parsed: &ParsedMessage<'_>, oscore: &oscore::Field<
 }
 
 fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
-    let mut options = OptionsBuilder::<4>::new();
+    let mut options = OptionsBuilder::<5>::new();
     options.push(Opt::uri_path("bench")).unwrap();
     for option in extra {
         options.push(*option).unwrap();
@@ -86,6 +86,22 @@ fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
 }
 
 fn compare_cases(oscore: &oscore::Field<4>) {
+    // Exercise the complete Q-Block1 metadata combination, including the first
+    // Size1 value controlling validity when a second occurrence disagrees.
+    for first in [&[][..], &[1; 5][..]] {
+        for second in [&[][..], &[1; 5][..]] {
+            compare_case(
+                Code::GET,
+                &[
+                    Opt::new(OptionNumber::Q_BLOCK1, &[]),
+                    Opt::new(OptionNumber::REQUEST_TAG, b"tag"),
+                    Opt::new(OptionNumber::SIZE1, first),
+                    Opt::new(OptionNumber::SIZE1, second),
+                ],
+                oscore,
+            );
+        }
+    }
     // Each value is syntactically decodable wire data. Include formats that
     // this predicate intentionally ignores, as well as values it must reject.
     let options = [
