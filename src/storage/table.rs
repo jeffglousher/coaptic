@@ -119,13 +119,14 @@ impl DedupEntry {
         self.replay = if bytes.is_empty() {
             DedupReplay::None
         } else {
-            let mut replay = [0; Self::REPLAY_MAX];
-            replay[..bytes.len()].copy_from_slice(bytes);
             DedupReplay::Inline {
-                bytes: replay,
+                bytes: [0; Self::REPLAY_MAX],
                 len: bytes.len() as u16,
             }
         };
+        if let DedupReplay::Inline { bytes: replay, .. } = &mut self.replay {
+            replay[..bytes.len()].copy_from_slice(bytes);
+        }
         self
     }
 
