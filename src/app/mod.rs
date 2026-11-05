@@ -3771,7 +3771,7 @@ where
         return outcome;
     }
 
-    dispatch_request(
+    dispatch_request(RequestDispatch {
         engine,
         io,
         site,
@@ -3787,34 +3787,65 @@ where
         peer,
         parsed,
         oscore_req,
-    )
+    })
+}
+
+// Keep the initial coroutine input together: independently captured arguments
+// otherwise occupy widely separated suspension slots before the first poll.
+struct RequestDispatch<
+    'a,
+    'd,
+    'p,
+    Mem: Storage,
+    T,
+    const N: usize,
+    const DEFERRED: usize,
+    const REQUESTS: usize,
+> {
+    engine: &'a mut Engine<Mem>,
+    io: &'a mut T,
+    site: &'a Site<N, Mem::Token>,
+    ids: &'a mut AppIds,
+    oscore: &'a mut oscore::Field<REQUESTS, Mem::Token>,
+    echo_policy: Option<EchoPolicy>,
+    dedup_closed: &'a mut Option<DedupClosed>,
+    deferred: &'a mut DeferredTable<DEFERRED, Mem::Token>,
+    deferred_lifetime_ms: u64,
+    dispatch: Option<&'a mut AppDispatch<'d, Mem::Token>>,
+    now_ms: u64,
+    rx: SlotId,
+    peer: Endpoint,
+    parsed: ParsedMessage<'p, Mem::Token>,
+    oscore_req: oscore::Request,
 }
 
 // Keep authenticated request handling separate from ingress and client-response
 // completion so their suspension states do not extend each other's local storage.
-#[allow(clippy::too_many_arguments)]
 #[coaptic_io::dual_io(dispatch_request_io_async, bound(crate::app::async_server::ProtocolIo), calls(admission::send_refusal => admission::send_refusal_async, issue_q_observe_followup => issue_q_observe_followup_async, send_separate => send_separate_async, send_response => send_response_async, issue_classic => issue_classic_async, issue_deferred_q => issue_deferred_q_async, send_empty_ack => send_empty_ack_async))]
 fn dispatch_request<Mem, T, const N: usize, const DEFERRED: usize, const REQUESTS: usize>(
-    engine: &mut Engine<Mem>,
-    io: &mut T,
-    site: &Site<N, Mem::Token>,
-    ids: &mut AppIds,
-    oscore: &mut oscore::Field<REQUESTS, Mem::Token>,
-    echo_policy: Option<EchoPolicy>,
-    dedup_closed: &mut Option<DedupClosed>,
-    deferred: &mut DeferredTable<DEFERRED, Mem::Token>,
-    deferred_lifetime_ms: u64,
-    dispatch: Option<&mut AppDispatch<'_, Mem::Token>>,
-    now_ms: u64,
-    rx: SlotId,
-    peer: Endpoint,
-    parsed: ParsedMessage<'_, Mem::Token>,
-    oscore_req: oscore::Request,
+    request: RequestDispatch<'_, '_, '_, Mem, T, N, DEFERRED, REQUESTS>,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
     T: DatagramIo,
 {
+    let RequestDispatch {
+        engine,
+        io,
+        site,
+        ids,
+        oscore,
+        echo_policy,
+        dedup_closed,
+        deferred,
+        deferred_lifetime_ms,
+        dispatch,
+        now_ms,
+        rx,
+        peer,
+        parsed,
+        oscore_req,
+    } = request;
     let metadata = request_metadata(&parsed, oscore);
     let no_response = metadata.no_response;
     // Origin: Proxy-Uri / Proxy-Scheme MUST 5.05 (RFC 7252 §5.10.2).
