@@ -6079,3 +6079,101 @@ fn custom_dedup_expiry_defaults_to_inspection() {
         );
     }
 }
+
+#[test]
+fn fixed_expiry_bound_never_hides_due_rows_through_mutation() {
+    use super::{DedupExpiry, table::DedupStore};
+
+    fn check<const N: usize>() {
+        let mut table = DedupTable::<N>::new();
+        let peer = Endpoint::v4([192, 0, 2, 42], 5683);
+        let deadlines = [0, 1, 17, 900, u64::MAX];
+        for step in 0..500 {
+            let row = DedupEntry::new(MessageId::new((step % 11) as u16), peer)
+                .with_due_ms(deadlines[(step / 7) % deadlines.len()]);
+            let id = SlotId::from_index(if N == 0 { 0 } else { (step / 7) % N });
+            match step % 7 {
+                0 => {
+                    let _ = table.insert(row);
+                }
+                1 => {
+                    let _ = table.remove(row.key());
+                }
+                2 => {
+                    let _ = table.acquire();
+                }
+                3 => {
+                    let _ = table.release(id);
+                }
+                4 => {
+                    let _ = table.set_entry(id, row);
+                }
+                5 => {
+                    let _ = table.try_store_app(row.with_replay(b"reply"), |_| {});
+                }
+                _ => table.rotate(),
+            }
+            let cursor = table.cursor();
+            let occupied = table.occupied_count();
+            for now in [0, 16, u64::MAX, 1, 901, 17] {
+                let minimum = (0..N)
+                    .filter_map(|i| table.entry(SlotId::from_index(i)))
+                    .map(|row| row.due_ms())
+                    .filter(|due| *due != 0)
+                    .min();
+                let due = minimum.is_some_and(|deadline| deadline <= now);
+                let decision = table.expiry_check(now);
+                assert!(
+                    !due || decision == DedupExpiry::Refresh,
+                    "step {step}, now {now}"
+                );
+                if decision == DedupExpiry::Refresh {
+                    // An inspection with no removal is also a valid refresh.
+                    table.finish_expiry(minimum.unwrap_or(0));
+                    assert_eq!(table.expiry_check(now) == DedupExpiry::Refresh, due);
+                }
+                assert_eq!(table.cursor(), cursor);
+                assert_eq!(table.occupied_count(), occupied);
+            }
+        }
+    }
+    check::<0>();
+    check::<1>();
+    check::<64>();
+}
+
+#[test]
+fn fixed_expiry_bound_tracks_raw_duplicate_and_replacement_writes() {
+    use super::{DedupExpiry, table::DedupStore};
+    let mut table = DedupTable::<3>::new();
+    let row = DedupEntry::new(MessageId::new(4), Endpoint::v4([192, 0, 2, 4], 5683));
+    let first = table.insert(row.with_due_ms(100)).unwrap();
+    assert_eq!(table.insert(row.with_due_ms(1)), Some(first));
+    assert_eq!(table.expiry_check(99), DedupExpiry::Skip);
+    assert_eq!(table.expiry_check(100), DedupExpiry::Refresh);
+    table.set_entry(first, row.with_due_ms(u64::MAX)).unwrap();
+    // Replacements may leave an earlier bound until the existing expiry walk.
+    assert_eq!(table.expiry_check(100), DedupExpiry::Refresh);
+    table.finish_expiry(u64::MAX);
+    assert_eq!(table.expiry_check(100), DedupExpiry::Skip);
+    let second = table.acquire().unwrap();
+    table.set_entry(second, row.with_due_ms(2)).unwrap();
+    assert_eq!(table.expiry_check(2), DedupExpiry::Refresh);
+    assert!(table.remove(row.key()));
+    assert_eq!(table.entry(second).unwrap().due_ms(), 2);
+    assert_eq!(table.expiry_check(2), DedupExpiry::Refresh);
+    table.release(second).unwrap();
+    table.finish_expiry(0);
+    let empty = table.acquire().unwrap();
+    assert!(
+        table
+            .set_entry(SlotId::from_index(3), row.with_due_ms(1))
+            .is_err()
+    );
+    assert_eq!(table.expiry_check(u64::MAX), DedupExpiry::Skip);
+    table.set_entry(empty, row).unwrap();
+    assert_eq!(table.expiry_check(u64::MAX), DedupExpiry::Skip);
+    table.set_entry(empty, row.with_due_ms(1)).unwrap();
+    assert_eq!(table.expiry_check(0), DedupExpiry::Skip);
+    assert_eq!(table.expiry_check(1), DedupExpiry::Refresh);
+}

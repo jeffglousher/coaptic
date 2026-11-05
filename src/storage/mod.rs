@@ -300,7 +300,7 @@ pub trait DedupSlots {
     /// `Skip` guarantees no occupied payload is due. Backends that retain a
     /// conservative bound request `Refresh` once that bound is reached; they
     /// must lower it on every successful payload write. Clocks may move backward.
-    /// Fixed/custom storage defaults to the original untracked scan.
+    /// Custom storage defaults to the original untracked scan.
     fn dedup_expiry_check(&self, _now_ms: u64) -> DedupExpiry {
         DedupExpiry::Scan
     }

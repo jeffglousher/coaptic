@@ -593,6 +593,14 @@ impl<P: MemoryProfile, B> DedupSlots for Memory<P, B>
 where
     P::Dedup: DedupStore,
 {
+    fn dedup_expiry_check(&self, now_ms: u64) -> super::DedupExpiry {
+        self.dedup.expiry_check(now_ms)
+    }
+
+    fn finish_dedup_expiry(&mut self, lower_bound_ms: u64) {
+        self.dedup.finish_expiry(lower_bound_ms);
+    }
+
     fn try_store_app_dedup(&mut self, entry: DedupEntry) -> Option<bool> {
         let tx = &mut self.tx;
         self.dedup.try_store_app(entry, |pin| {

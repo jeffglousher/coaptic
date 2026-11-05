@@ -213,6 +213,11 @@ impl From<DedupKey> for DedupEntry {
 /// Each operation scans the configured entry count (O(n) in capacity). Capacity
 /// is fixed at construction.
 pub(crate) trait DedupStore {
+    fn expiry_check(&self, _now_ms: u64) -> super::DedupExpiry {
+        super::DedupExpiry::Scan
+    }
+    fn finish_expiry(&mut self, _lower_bound_ms: u64) {}
+
     fn try_store_app(
         &mut self,
         _entry: DedupEntry,
@@ -975,9 +980,14 @@ pub(crate) trait ObserveStore<T: OwnedToken = Token> {
 /// Insert, lookup, and remove scan every configured entry (O(n) in capacity).
 /// Saturation returns `None` from insert; this type does not evict. [`Self::rotate`]
 /// still advances the occupancy cursor used by acquire.
+/// One `u64` retains a conservative expiry bound so App can skip walks before
+/// any reply is due. Payload writes lower it; removals may leave an early bound.
 pub struct DedupTable<const ENTRIES: usize> {
     entries: [Option<DedupEntry>; ENTRIES],
     occ: Occupancy<ENTRIES, 0>,
+    // Conservative minimum of nonzero deadlines. Removal may leave it early;
+    // every payload write lowers it, and App refreshes it during its expiry walk.
+    next_due_ms: u64,
 }
 
 impl<const ENTRIES: usize> DedupTable<ENTRIES> {
@@ -987,6 +997,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
         Self {
             entries: [None; ENTRIES],
             occ: Occupancy::new(),
+            next_due_ms: 0,
         }
     }
 
@@ -999,6 +1010,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
             return Some(id);
         }
         let id = self.occ.acquire()?;
+        self.note_due(&entry);
         entry.write_into(&mut self.entries[id.index()]);
         Some(id)
     }
@@ -1050,6 +1062,7 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
                 SlotError::InvalidSlot
             });
         }
+        self.note_due(&entry);
         entry.write_into(&mut self.entries[id.index()]);
         Ok(())
     }
@@ -1057,6 +1070,13 @@ impl<const ENTRIES: usize> DedupTable<ENTRIES> {
     fn reset(&mut self, id: SlotId) {
         if let Some(slot) = self.entries.get_mut(id.index()) {
             *slot = None;
+        }
+    }
+
+    fn note_due(&mut self, entry: &DedupEntry) {
+        let due = entry.due_ms();
+        if due != 0 && (self.next_due_ms == 0 || due < self.next_due_ms) {
+            self.next_due_ms = due;
         }
     }
 }
@@ -1068,6 +1088,18 @@ impl<const ENTRIES: usize> Default for DedupTable<ENTRIES> {
 }
 
 impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
+    fn expiry_check(&self, now_ms: u64) -> super::DedupExpiry {
+        if self.next_due_ms == 0 || now_ms < self.next_due_ms {
+            super::DedupExpiry::Skip
+        } else {
+            super::DedupExpiry::Refresh
+        }
+    }
+
+    fn finish_expiry(&mut self, lower_bound_ms: u64) {
+        self.next_due_ms = lower_bound_ms;
+    }
+
     fn try_store_app(
         &mut self,
         entry: DedupEntry,
@@ -1120,6 +1152,7 @@ impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
                 id
             }
         };
+        self.note_due(&entry);
         entry.write_into(&mut self.entries[id.index()]);
         Some(true)
     }
