@@ -10,7 +10,7 @@ it is not silently treated as finished software work.
 
 Optimize phase lifetimes against pinned bd63199 with original replay and client
 inbox behavior. Share blockwise dispatch bytes with the collected-body hold,
-compress its capacity to an exact small prefix or large-buffer marker, and borrow
+declare resident capacity on the byte backing type instead of storing it, and borrow
 response metadata through the five retained-send helpers. Validate custom capacity
 and construction/drop timing, whole-App ceilings, 32/64-bit layouts and both modes.
 
@@ -20,6 +20,14 @@ progress futures. App/pool shrink is not required for this lifetime-only target;
 count nested fields once. Retain the same 28 workloads, 64 paired processes,
 pinned baseline and every-cell/ordinary/all sync/async CPU upper bound of 1.02.
 No prior failure is reclassified under this prospective memory criterion.
+
+Untimed precursor73e3aaf passes981 focused tests and strict lint, but adds8 bytes
+to each selected32-bit Service App. Preserve its exact source/layout/checks;
+no runtime cohort ran. The revision removes its capacity field entirely through
+the new ResidentScratch fixed-capacity contract, checked against actual readable
+and writable slices before entropy. Temporary scratch contracts remain unchanged.
+Retain large-capacity and Default/drop tests; reject understated/overstated
+resident declarations while datagram-only Apps continue to ignore them.
 
 The replay combinations remain rejected: 4bf0738 fails four CPU bounds, ecf1747
 one, and 995ae93 two, despite aggregate CPU reductions. Verified evidence is in

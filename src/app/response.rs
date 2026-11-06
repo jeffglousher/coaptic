@@ -5,7 +5,7 @@
 use crate::message::{
     Code, ContentFormat, Echo, MessageId, MissingBlocks, OwnedToken, ProblemDetails, Token, Type,
 };
-use crate::storage::{DatagramSlots, Endpoint, MemoryProfile};
+use crate::storage::{DatagramSlots, Endpoint, MemoryProfile, ResidentScratch};
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
 ///
@@ -1138,9 +1138,6 @@ impl<R: Default + AsRef<[u8]> + AsMut<[u8]>> DispatchScratch for DatagramDispatc
 #[doc(hidden)]
 pub struct SharedScratch<R> {
     storage: ScratchStorage<R>,
-    // Body prefixes need an exact capacity only through RESPONSE_BODY. The
-    // next value marks larger packet backing, whose actual slice stays intact.
-    capacity: u16,
 }
 
 // Inline storage reserves the maximum capacity while sharing mutually exclusive
@@ -1151,34 +1148,29 @@ enum ScratchStorage<R> {
     Body(AssembledBuf),
 }
 
-impl<R: Default + AsRef<[u8]> + AsMut<[u8]>> Default for SharedScratch<R> {
+impl<R: ResidentScratch> Default for SharedScratch<R> {
     fn default() -> Self {
         let mut packet = R::default();
-        let capacity = packet.as_mut().len();
-        let storage = if capacity <= RESPONSE_BODY {
+        let _ = packet.as_mut();
+        let storage = if R::CAPACITY <= RESPONSE_BODY {
             ScratchStorage::Body(AssembledBuf::default())
         } else {
             ScratchStorage::Packet(packet)
         };
-        Self {
-            storage,
-            capacity: capacity.min(RESPONSE_BODY + 1) as u16,
-        }
+        Self { storage }
     }
 }
 
-impl<R: Default + AsRef<[u8]> + AsMut<[u8]>> SharedScratch<R> {
+impl<R: ResidentScratch> SharedScratch<R> {
     fn scratch(&mut self) -> &mut [u8] {
-        if usize::from(self.capacity) > RESPONSE_BODY
-            && matches!(self.storage, ScratchStorage::Body(_))
-        {
+        if R::CAPACITY > RESPONSE_BODY && matches!(self.storage, ScratchStorage::Body(_)) {
             self.storage = ScratchStorage::Packet(R::default());
         }
         match &mut self.storage {
             ScratchStorage::Packet(packet) => packet.as_mut(),
             ScratchStorage::Body(body) => {
                 body.len = core::num::NonZeroU16::MIN;
-                &mut body.bytes[..usize::from(self.capacity)]
+                &mut body.bytes[..R::CAPACITY]
             }
         }
     }
@@ -1200,7 +1192,7 @@ impl<R: Default + AsRef<[u8]> + AsMut<[u8]>> SharedScratch<R> {
     }
 }
 
-impl<R: Default + AsRef<[u8]> + AsMut<[u8]>> DispatchScratch for SharedScratch<R> {
+impl<R: ResidentScratch> DispatchScratch for SharedScratch<R> {
     type Packet<'a>
         = &'a mut [u8]
     where
@@ -1321,7 +1313,7 @@ mod assembled_hold_tests {
     }
 
     #[test]
-    fn shared_capacity_marker_preserves_boundary_and_large_slices() {
+    fn shared_capacity_preserves_boundary_and_large_slices() {
         fn round_trip<const N: usize>() {
             let mut shared = SharedScratch::<crate::storage::DatagramScratch<N>>::default();
             assert_eq!(shared.scratch().len(), N);
@@ -1344,7 +1336,7 @@ mod assembled_hold_tests {
     }
 
     #[test]
-    fn shared_capacity_marker_keeps_custom_construction_and_drop_timing() {
+    fn shared_capacity_keeps_custom_construction_and_drop_timing() {
         use core::sync::atomic::{AtomicUsize, Ordering};
         static CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
         static DROPS: AtomicUsize = AtomicUsize::new(0);
@@ -1364,6 +1356,9 @@ mod assembled_hold_tests {
             fn as_mut(&mut self) -> &mut [u8] {
                 self.0.as_mut()
             }
+        }
+        impl crate::storage::ResidentScratch for Counted {
+            const CAPACITY: usize = 8192;
         }
         impl Drop for Counted {
             fn drop(&mut self) {

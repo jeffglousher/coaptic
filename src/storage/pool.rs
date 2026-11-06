@@ -20,6 +20,21 @@ use crate::message::{BlockValue, Message, MessageId, OwnedToken, ParsedMessage, 
 /// generic so Constrained (1152) does not reserve Default 1472.
 pub struct DatagramScratch<const N: usize>([u8; N]);
 
+/// Initialized resident bytes with a fixed writable capacity.
+///
+/// Every value produced by `Default` must expose exactly `CAPACITY` writable
+/// bytes, and that writable length must remain stable throughout its lifetime.
+/// App admission checks the actual readable and writable slices before
+/// entropy or I/O. This contract lets App share packet and collected-body
+/// storage without retaining a second runtime capacity field.
+pub trait ResidentScratch: Default + AsRef<[u8]> + AsMut<[u8]> + Send + Sync {
+    const CAPACITY: usize;
+}
+
+impl<const N: usize> ResidentScratch for DatagramScratch<N> {
+    const CAPACITY: usize = N;
+}
+
 impl<const N: usize> DatagramScratch<N> {
     /// Zeroed scratch of `N` bytes.
     #[must_use]

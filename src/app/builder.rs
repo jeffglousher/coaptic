@@ -455,8 +455,12 @@ where
         }
         if BLOCK_WISE {
             let mut resident = S::ResidentRxScratch::default();
-            if c.rx_datagram_bytes > resident.as_ref().len()
-                || c.rx_datagram_bytes > resident.as_mut().len()
+            if c.rx_datagram_bytes > resident.as_ref().len() {
+                return Err(BuildError::SizeMismatch);
+            }
+            let writable = resident.as_mut().len();
+            if c.rx_datagram_bytes > writable
+                || writable != <S::ResidentRxScratch as crate::storage::ResidentScratch>::CAPACITY
             {
                 return Err(BuildError::SizeMismatch);
             }

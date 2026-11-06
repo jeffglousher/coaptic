@@ -2,21 +2,26 @@
 use coaptic::storage::{DatagramIo, Memory, MemoryProfile};
 use coaptic::{App, BuildError, profiles};
 use std::cell::Cell;
-struct Scratch<const READ: usize, const WRITE: usize>([u8; 1472]);
-impl<const R: usize, const W: usize> Default for Scratch<R, W> {
+struct Scratch<const READ: usize, const WRITE: usize, const CAP: usize = WRITE>([u8; 1472]);
+impl<const R: usize, const W: usize, const C: usize> Default for Scratch<R, W, C> {
     fn default() -> Self {
         Self([0; 1472])
     }
 }
-impl<const R: usize, const W: usize> AsRef<[u8]> for Scratch<R, W> {
+impl<const R: usize, const W: usize, const C: usize> AsRef<[u8]> for Scratch<R, W, C> {
     fn as_ref(&self) -> &[u8] {
         &self.0[..R]
     }
 }
-impl<const R: usize, const W: usize> AsMut<[u8]> for Scratch<R, W> {
+impl<const R: usize, const W: usize, const C: usize> AsMut<[u8]> for Scratch<R, W, C> {
     fn as_mut(&mut self) -> &mut [u8] {
         &mut self.0[..W]
     }
+}
+impl<const R: usize, const W: usize, const C: usize> coaptic::storage::ResidentScratch
+    for Scratch<R, W, C>
+{
+    const CAPACITY: usize = C;
 }
 struct Profile<
     const RR: usize,
@@ -25,6 +30,7 @@ struct Profile<
     const TW: usize,
     const RES_R: usize = 1472,
     const RES_W: usize = 1472,
+    const RES_C: usize = RES_W,
 >;
 impl<
     const RR: usize,
@@ -33,7 +39,8 @@ impl<
     const TW: usize,
     const RES_R: usize,
     const RES_W: usize,
-> MemoryProfile for Profile<RR, RW, TR, TW, RES_R, RES_W>
+    const RES_C: usize,
+> MemoryProfile for Profile<RR, RW, TR, TW, RES_R, RES_W, RES_C>
 {
     type Token = <profiles::Default as MemoryProfile>::Token;
     const RX_DATAGRAM_SLOTS: usize = <profiles::Default as MemoryProfile>::RX_DATAGRAM_SLOTS;
@@ -54,7 +61,7 @@ impl<
     type Observe = <profiles::Default as MemoryProfile>::Observe;
     type Exchange = <profiles::Default as MemoryProfile>::Exchange;
     type RxScratch = Scratch<RR, RW>;
-    type ResidentRxScratch = Scratch<RES_R, RES_W>;
+    type ResidentRxScratch = Scratch<RES_R, RES_W, RES_C>;
     type TxScratch = Scratch<TR, TW>;
 }
 struct NoIo;
@@ -238,4 +245,35 @@ fn resident_scratch_capacity_is_checked_before_entropy_only_when_used() {
     }
     check::<1471, 1472>();
     check::<1472, 1471>();
+}
+
+#[test]
+fn resident_capacity_declaration_must_match_actual_writable_slice() {
+    fn refuse<const CAP: usize>() {
+        let draws = Cell::new(0);
+        let mut random = |bytes: &mut [u8]| {
+            draws.set(draws.get() + 1);
+            bytes.fill(9);
+            true
+        };
+        assert_eq!(
+            App::profile::<Profile<1472, 1472, 1472, 1472, 1472, 1472, CAP>>()
+                .block_wise::<true>()
+                .allow_unprotected()
+                .bind_with_entropy(NoIo, &mut random)
+                .err(),
+            Some(BuildError::SizeMismatch)
+        );
+        assert_eq!(draws.get(), 0);
+        assert!(
+            App::profile::<Profile<1472, 1472, 1472, 1472, 1472, 1472, CAP>>()
+                .block_wise::<false>()
+                .allow_unprotected()
+                .bind_with_entropy(NoIo, &mut random)
+                .is_ok()
+        );
+        assert!(draws.get() > 0);
+    }
+    refuse::<1471>();
+    refuse::<1473>();
 }
