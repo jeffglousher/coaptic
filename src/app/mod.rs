@@ -940,7 +940,7 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
             io,
             ids,
             now_ms,
-            meta,
+            &meta,
             &response,
             Type::NonConfirmable,
             body,
@@ -1112,7 +1112,7 @@ fn prepare_deferred_observe<
             let block = BlockValue::new(0, false, szx).expect("bounded SZX");
             let issued = engine.requested_block2(body, block).map_err(Error::Block)?;
             match encode_issued::<S, T, REQUESTS>(
-                engine, row.meta, response, ty, mid, issued, false, oscore,
+                engine, &row.meta, response, ty, mid, issued, false, oscore,
             ) {
                 Ok(tx) => return Ok(tx),
                 Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
@@ -1179,9 +1179,8 @@ pub struct App<
     /// Caller-owned OSCORE context (`()` without the `oscore` feature).
     oscore: oscore::Store<REQUESTS, ASSOCIATIONS, S::Token>,
     oscore_checkpoint: oscore::CheckpointState,
-    /// Client Block2 / Q-Block2 snapshot for [`Self::take_response`].
-    /// Present when `BLOCK_WISE`; zero-sized otherwise.
-    assembled: AssembledField<P, BLOCK_WISE>,
+    /// Reusable dispatch scratch; shares collected-body storage when blockwise.
+    assembled: AssembledField<P, BLOCK_WISE, S>,
     deferred: DeferredTable<DEFERRED, S::Token>,
 }
 
@@ -1696,7 +1695,7 @@ impl<
         }
         // Collected replies are only borrow backing, not outstanding work.
         self.inbox = client::ClientInbox::new();
-        P::store(&mut self.assembled, &[]);
+        P::store::<S>(&mut self.assembled, &[]);
         self.lives = client::ClientLives::new();
         self.oscore
             .set_primary(candidate.take().expect("checked candidate"));
@@ -2132,6 +2131,7 @@ where
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
         poll_engine(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut self.io,
             &self.site,
             &mut self.ids,
@@ -2175,6 +2175,7 @@ where
     ) -> Result<(), Error<T::Error>> {
         poll_engine(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut self.io,
             &self.site,
             &mut self.ids,
@@ -2238,6 +2239,7 @@ where
         self.oscore_checkpoint.require();
         poll_engine(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut self.io,
             &self.site,
             &mut self.ids,
@@ -2276,6 +2278,7 @@ where
         self.oscore_checkpoint.require();
         poll_engine(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut self.io,
             &self.site,
             &mut self.ids,
@@ -2313,6 +2316,7 @@ where
         self.oscore_checkpoint.require();
         poll_engine(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut self.io,
             &self.site,
             &mut self.ids,
@@ -2350,6 +2354,7 @@ where
         self.oscore_checkpoint.require();
         poll_engine(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut self.io,
             &self.site,
             &mut self.ids,
@@ -2668,6 +2673,7 @@ fn poll_engine<
     const REQUESTS: usize,
 >(
     engine: &mut Engine<Mem>,
+    scratch: impl response::DispatchScratch,
     io: &mut T,
     site: &Site<N, Mem::Token>,
     ids: &mut AppIds,
@@ -2779,6 +2785,7 @@ where
         } else {
             dispatch_rx(
                 engine,
+                scratch,
                 io,
                 site,
                 inbox,
@@ -2969,7 +2976,7 @@ where
             io,
             ids,
             now_ms,
-            meta,
+            &meta,
             &response,
             Type::Confirmable,
             id,
@@ -3365,6 +3372,7 @@ fn dispatch_rx<
     const REQUESTS: usize,
 >(
     engine: &mut Engine<Mem>,
+    mut scratch: impl response::DispatchScratch,
     io: &mut T,
     site: &Site<N, Mem::Token>,
     inbox: &mut client::ClientInbox<CALLS, Mem::Token>,
@@ -3391,7 +3399,7 @@ where
         return Ok(());
     };
 
-    let mut scratch = Mem::RxScratch::default();
+    let mut scratch = scratch.packet();
     let n = match copy_rx(engine, rx, scratch.as_mut()) {
         Ok(n) => n,
         Err(e) => {
@@ -6041,8 +6049,9 @@ where
             engine.peek_q_block2(body)
         }
         .map_err(Error::Block)?;
-        match encode_issued::<S, T, REQUESTS>(engine, meta, response, ty, mid, issued, true, oscore)
-        {
+        match encode_issued::<S, T, REQUESTS>(
+            engine, &meta, response, ty, mid, issued, true, oscore,
+        ) {
             Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))) => {
                 // NUM is expressed in the requested SZX. A selective offset
                 // cannot be silently reinterpreted after size negotiation.
@@ -6174,13 +6183,13 @@ where
             retained.oscore_request = meta.oscore.map(|request| (meta.token, request));
         }
         engine.storage_mut().set_tx_body_transfer(body, retained)?;
-        let mid = q_response_mid(engine, io, ids, now_ms, meta, ty, closed)?;
+        let mid = q_response_mid(engine, io, ids, now_ms, &meta, ty, closed)?;
         return issue_q_window(
             engine,
             io,
             ids,
             now_ms,
-            SendResponse { mid, ..meta },
+            &SendResponse { mid, ..meta },
             &response,
             Type::Confirmable,
             body,
@@ -6192,7 +6201,7 @@ where
     // selects one bounded window, including after an initial M=0 selection;
     // it need not infer delivery from the server's local issue bitmap.
     issue_q_selection(
-        engine, io, ids, now_ms, meta, &response, ty, body, oscore, closed,
+        engine, io, ids, now_ms, &meta, &response, ty, body, oscore, closed,
     )
 }
 
@@ -6293,7 +6302,7 @@ where
             io,
             ids,
             now_ms,
-            meta,
+            &meta,
             response,
             ty,
             id,
@@ -6306,7 +6315,7 @@ where
             io,
             ids,
             now_ms,
-            meta,
+            &meta,
             response,
             ty,
             id,
@@ -6539,7 +6548,7 @@ where
                         io,
                         ids,
                         now_ms,
-                        meta,
+                        &meta,
                         response,
                         ty,
                         id,
@@ -6554,7 +6563,7 @@ where
                         io,
                         ids,
                         now_ms,
-                        meta,
+                        &meta,
                         response,
                         ty,
                         id,
@@ -6567,7 +6576,7 @@ where
                     io,
                     ids,
                     now_ms,
-                    meta,
+                    &meta,
                     response,
                     ty,
                     id,
@@ -6705,7 +6714,7 @@ where
         Err(e) => return Err(Error::Block(e)),
     };
     let tx = encode_issued::<S, T, REQUESTS>(
-        engine, meta, response, ty, mid, issued, false, oscore_ctx,
+        engine, &meta, response, ty, mid, issued, false, oscore_ctx,
     )?;
     let keep = if let Some((now_ms, closed)) = replay.filter(|_| ty == Type::Acknowledgement) {
         remember_tx_reply(
@@ -6752,7 +6761,7 @@ fn q_response_mid<S, T>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     first_ty: Type,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<MessageId, Error<T::Error>>
@@ -6946,7 +6955,7 @@ where
         let value = crate::message::BlockValue::new(num, end < length, q.szx())
             .map_err(|e| Error::Block(e.into()))?;
         let mid = if step == 0 {
-            q_response_mid(engine, io, ids, now_ms, meta, first_ty, closed)?
+            q_response_mid(engine, io, ids, now_ms, &meta, first_ty, closed)?
         } else {
             ids.next_for(engine, io, now_ms)?
         };
@@ -6996,7 +7005,7 @@ fn issue_q_selection<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     first_ty: Type,
     id: SlotId,
@@ -7063,7 +7072,7 @@ fn issue_q_window<S, T, const REQUESTS: usize>(
     io: &mut T,
     ids: &mut AppIds,
     now_ms: u64,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     first_ty: Type,
     id: SlotId,
@@ -7153,7 +7162,7 @@ where
 fn send_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
@@ -7175,7 +7184,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn encode_issued<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,

@@ -83,6 +83,9 @@ pub trait MemoryProfile {
     /// Stack scratch for one RX datagram copy ([`crate::storage::DatagramScratch`]
     /// of [`Self::RX_DATAGRAM_BYTES`]).
     type RxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
+    /// Resident initialized byte backing for reusable App dispatch scratch.
+    /// Independent of temporary scratch auto-traits; validate both slice capacities.
+    type ResidentRxScratch: Default + AsRef<[u8]> + AsMut<[u8]> + Send + Sync;
     /// Stack scratch for one TX datagram copy ([`crate::storage::DatagramScratch`]
     /// of [`Self::TX_DATAGRAM_BYTES`]).
     type TxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
@@ -373,6 +376,7 @@ where
     const RX_DATAGRAM_BYTES: usize = P::RX_DATAGRAM_BYTES;
     const TX_DATAGRAM_BYTES: usize = P::TX_DATAGRAM_BYTES;
     type RxScratch = P::RxScratch;
+    type ResidentRxScratch = P::ResidentRxScratch;
     type TxScratch = P::TxScratch;
 
     fn rx_payload(&self, id: SlotId) -> Option<&[u8]> {

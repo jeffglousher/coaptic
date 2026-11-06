@@ -24,6 +24,7 @@ impl MemoryProfile for Eight {
     type Observe = storage::ObserveTable<8>;
     type Exchange = storage::ExchangeTable<8>;
     type RxScratch = storage::DatagramScratch<256>;
+    type ResidentRxScratch = storage::DatagramScratch<256>;
     type TxScratch = storage::DatagramScratch<256>;
 }
 

@@ -1227,10 +1227,10 @@ where
                 return Some(Err(CallFailure::ResponseBodyBounds));
             }
             if let Some(bytes) = rx_body_payload(&self.engine, id) {
-                P::store(&mut self.assembled, bytes);
+                P::store::<S>(&mut self.assembled, bytes);
             }
             release_rx_body(&mut self.engine, id);
-            if let Some(bytes) = P::view(&self.assembled) {
+            if let Some(bytes) = P::view::<S>(&self.assembled) {
                 return Some(response.map(|response| response.with_assembled(bytes)));
             }
         }

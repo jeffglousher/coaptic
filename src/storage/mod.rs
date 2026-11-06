@@ -184,6 +184,9 @@ pub trait DatagramSlots {
     /// [`DatagramScratch`] sized to [`MemoryProfile::RX_DATAGRAM_BYTES`]
     /// so Constrained does not reserve Default 1472.
     type RxScratch: Default + AsRef<[u8]> + AsMut<[u8]>;
+    /// Resident initialized byte backing for reusable App dispatch scratch.
+    /// Independent of temporary scratch auto-traits; validate both slice capacities.
+    type ResidentRxScratch: Default + AsRef<[u8]> + AsMut<[u8]> + Send + Sync;
 
     /// Stack array for one TX datagram copy. [`Memory`] uses
     /// [`DatagramScratch`] sized to [`MemoryProfile::TX_DATAGRAM_BYTES`].
