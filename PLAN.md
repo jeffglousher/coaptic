@@ -31,6 +31,20 @@ or infer peak-RAM savings from selected future/frame sizes. Runtime adapter work
 is complete for this batch. Embassy firmware migration and new platforms remain
 deferred.
 
+The response-ownership follow-up did not qualify another implementation. Borrowed
+handler responses reduced selected futures but increased complete-App async CPU
+cost by 2.50% and failed 17 of 28 workload bounds. A unified reply view and two
+smaller response-metadata representations failed the prospective native-frame
+guard before timing. The final borrowed-origin representation saved 216 bytes in
+each selected complete future, while one allocated Service polling frame grew
+16 bytes. That is a conservative guard refusal, not a measured CPU regression.
+All four candidates remain unmerged; the accepted implementation above is intact.
+See [sources, measurements and limits](architecture/requirements/RESPONSE-OWNERSHIP-20261106.md).
+Do not repeat these unchanged candidates. Before another ownership rewrite,
+identify the packet construction and dispatch live ranges responsible for work
+and overlapping memory; preserve independent body/packet capacities. API
+ergonomics alone is not a performance justification.
+
 Emitted-copy follow-ups are rejected too. Direct inline fill removes a staging
 array, and scalar TX writes remove the emitted full replay-row copy; the complete
 App cohort still fails sync acceptance. Adding fixed-table expiry bounds reduces
