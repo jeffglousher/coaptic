@@ -28,6 +28,7 @@ pub struct DatagramScratch<const N: usize>([u8; N]);
 /// entropy or I/O. This contract lets App share packet and collected-body
 /// storage without retaining a second runtime capacity field.
 pub trait ResidentScratch: Default + AsRef<[u8]> + AsMut<[u8]> + Send + Sync {
+    /// Exact writable slice length for every initialized instance.
     const CAPACITY: usize;
 }
 
