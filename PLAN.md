@@ -8,35 +8,28 @@ it is not silently treated as finished software work.
 
 ## Current work
 
-Optimize phase lifetimes against pinned bd63199 with original replay and client
-inbox behavior. Share blockwise dispatch bytes with the collected-body hold,
-declare resident capacity on the byte backing type instead of storing it, and borrow
-response metadata through the five retained-send helpers. Validate custom capacity
-and construction/drop timing, whole-App ceilings, 32/64-bit layouts and both modes.
+The phase-sharing batch demonstrates 0.625% lower complete-App CPU cost in both
+sync and async operation against pinned bd63199, with both selected Service
+progress futures 1,416 bytes smaller (8.37%). All 28 workload preservation bounds
+pass; App/pool owners, 32-bit layouts and configured capacities stay unchanged.
+See the [implementation, measurement and tradeoffs](architecture/requirements/PHASE-SHARING-20261106.md).
+Feature combinations, strict lint, Rust 1.89 checks and rustdoc all pass.
+Exact sources, raw comparisons and rejected hypotheses are retained in the
+[portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/3e03f251877cd44c7a6e8515ac1225500da95a0a/tools/benchmark/evidence/phase-sharing-static-20261106).
 
-This distinct batch targets complete future storage. Before timing, require no
-App/pool or selected future/frame growth and strictly smaller selected Service
-progress futures. App/pool shrink is not required for this lifetime-only target;
-count nested fields once. Retain the same 28 workloads, 64 paired processes,
-pinned baseline and every-cell/ordinary/all sync/async CPU upper bound of 1.02.
-No prior failure is reclassified under this prospective memory criterion.
+Blockwise dispatch shares collected-body backing, resident capacity lives in its
+type and five send helpers borrow response metadata. Original replay, client
+inbox and chunk-copy behavior remain. The untimed capacity-field precursor grew
+32-bit Service Apps by eight bytes and is retained. Earlier replay combinations
+4bf0738, ecf1747 and 995ae93 failed four, one and two CPU bounds respectively;
+none is adopted or reclassified. Their raw cohorts, source patches and checks
+remain in the companion evidence alongside the accepted integration.
 
-Untimed precursor73e3aaf passes981 focused tests and strict lint, but adds8 bytes
-to each selected32-bit Service App. Preserve its exact source/layout/checks;
-no runtime cohort ran. The revision removes its capacity field entirely through
-the new ResidentScratch fixed-capacity contract, checked against actual readable
-and writable slices before entropy. Temporary scratch contracts remain unchanged.
-Retain large-capacity and Default/drop tests; reject understated/overstated
-resident declarations while datagram-only Apps continue to ignore them.
-
-The replay combinations remain rejected: 4bf0738 fails four CPU bounds, ecf1747
-one, and 995ae93 two, despite aggregate CPU reductions. Verified evidence is in
-companion eeda37b, d3cc15d and 2617bd9. The last combination lowers aggregate CPU
-1.49% sync/2.25% async but regresses SmallDevice unprotected sync 2.87%; retained
-fixed OSCORE async upper bound also exceeds 2%. Its metadata borrowing shrinks
-nested Q-window/selection futures 456 bytes, without further complete-future
-reduction. Preserve all raw cohorts and untimed precursor88afd58. Do not repeat
-these unchanged integrations or infer causality by subtracting separate cohorts.
+Continue only from measured complete-App costs and live owners. Independent body
+and packet capacity remains the largest resident cost; do not shrink capacities
+or infer peak-RAM savings from selected future/frame sizes. Runtime adapter work
+is complete for this batch. Embassy firmware migration and new platforms remain
+deferred.
 
 Emitted-copy follow-ups are rejected too. Direct inline fill removes a staging
 array, and scalar TX writes remove the emitted full replay-row copy; the complete
