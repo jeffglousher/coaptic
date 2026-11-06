@@ -8,6 +8,28 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+Optimize phase lifetimes against pinned bd63199 with original replay and client
+inbox behavior. Share blockwise dispatch bytes with the collected-body hold,
+compress its capacity to an exact small prefix or large-buffer marker, and borrow
+response metadata through the five retained-send helpers. Validate custom capacity
+and construction/drop timing, whole-App ceilings, 32/64-bit layouts and both modes.
+
+This distinct batch targets complete future storage. Before timing, require no
+App/pool or selected future/frame growth and strictly smaller selected Service
+progress futures. App/pool shrink is not required for this lifetime-only target;
+count nested fields once. Retain the same 28 workloads, 64 paired processes,
+pinned baseline and every-cell/ordinary/all sync/async CPU upper bound of 1.02.
+No prior failure is reclassified under this prospective memory criterion.
+
+The replay combinations remain rejected: 4bf0738 fails four CPU bounds, ecf1747
+one, and 995ae93 two, despite aggregate CPU reductions. Verified evidence is in
+companion eeda37b, d3cc15d and 2617bd9. The last combination lowers aggregate CPU
+1.49% sync/2.25% async but regresses SmallDevice unprotected sync 2.87%; retained
+fixed OSCORE async upper bound also exceeds 2%. Its metadata borrowing shrinks
+nested Q-window/selection futures 456 bytes, without further complete-future
+reduction. Preserve all raw cohorts and untimed precursor88afd58. Do not repeat
+these unchanged integrations or infer causality by subtracting separate cohorts.
+
 Emitted-copy follow-ups are rejected too. Direct inline fill removes a staging
 array, and scalar TX writes remove the emitted full replay-row copy; the complete
 App cohort still fails sync acceptance. Adding fixed-table expiry bounds reduces
