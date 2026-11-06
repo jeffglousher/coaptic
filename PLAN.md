@@ -8,6 +8,29 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The phase-sharing batch demonstrates 0.625% lower complete-App CPU cost in both
+sync and async operation against pinned bd63199, with both selected Service
+progress futures 1,416 bytes smaller (8.37%). All 28 workload preservation bounds
+pass; App/pool owners, 32-bit layouts and configured capacities stay unchanged.
+See the [implementation, measurement and tradeoffs](architecture/requirements/PHASE-SHARING-20261106.md).
+Feature combinations, strict lint, Rust 1.89 checks and rustdoc all pass.
+Exact sources, raw comparisons and rejected hypotheses are retained in the
+[portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/3e03f251877cd44c7a6e8515ac1225500da95a0a/tools/benchmark/evidence/phase-sharing-static-20261106).
+
+Blockwise dispatch shares collected-body backing, resident capacity lives in its
+type and five send helpers borrow response metadata. Original replay, client
+inbox and chunk-copy behavior remain. The untimed capacity-field precursor grew
+32-bit Service Apps by eight bytes and is retained. Earlier replay combinations
+4bf0738, ecf1747 and 995ae93 failed four, one and two CPU bounds respectively;
+none is adopted or reclassified. Their raw cohorts, source patches and checks
+remain in the companion evidence alongside the accepted integration.
+
+Continue only from measured complete-App costs and live owners. Independent body
+and packet capacity remains the largest resident cost; do not shrink capacities
+or infer peak-RAM savings from selected future/frame sizes. Runtime adapter work
+is complete for this batch. Embassy firmware migration and new platforms remain
+deferred.
+
 Emitted-copy follow-ups are rejected too. Direct inline fill removes a staging
 array, and scalar TX writes remove the emitted full replay-row copy; the complete
 App cohort still fails sync acceptance. Adding fixed-table expiry bounds reduces

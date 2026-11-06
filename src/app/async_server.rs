@@ -662,6 +662,7 @@ where
         };
         poll_engine_async(
             &mut self.engine,
+            P::provider::<S>(&mut self.assembled),
             &mut io,
             &self.site,
             &mut self.ids,
@@ -693,6 +694,7 @@ pub(super) async fn dispatch_rx_async<
     const REQUESTS: usize,
 >(
     engine: &mut Engine<Mem>,
+    scratch: impl super::response::DispatchScratch,
     io: &mut T,
     site: &Site<N, Mem::Token>,
     inbox: &mut client::ClientInbox<CALLS, Mem::Token>,
@@ -721,6 +723,7 @@ where
     };
     let result = super::dispatch_rx_io_async(
         owner.engine,
+        scratch,
         io,
         site,
         inbox,

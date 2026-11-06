@@ -440,6 +440,8 @@ impl SlotPool for AllocDatagramPool {
 
 impl<T: OwnedToken> DatagramSlots for AllocMemory<T> {
     type RxScratch = super::DatagramScratch<{ super::profiles::Default::RX_DATAGRAM_BYTES }>;
+    type ResidentRxScratch =
+        super::DatagramScratch<{ super::profiles::Default::RX_DATAGRAM_BYTES }>;
     type TxScratch = super::DatagramScratch<{ super::profiles::Default::TX_DATAGRAM_BYTES }>;
 
     fn rx_payload(&self, id: SlotId) -> Option<&[u8]> {

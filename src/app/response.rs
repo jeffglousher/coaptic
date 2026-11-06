@@ -5,7 +5,7 @@
 use crate::message::{
     Code, ContentFormat, Echo, MessageId, MissingBlocks, OwnedToken, ProblemDetails, Token, Type,
 };
-use crate::storage::{Endpoint, MemoryProfile};
+use crate::storage::{DatagramSlots, Endpoint, MemoryProfile, ResidentScratch};
 
 /// Bytes copied into a [`Response`] when the payload is not `'static`.
 ///
@@ -1048,29 +1048,15 @@ fn encode_problem_payload(
 ///
 /// One App-owned hold (not a field of [`Response`]). Handler returns and
 /// Observe sequence updates copy the small [`Response`] header only.
-/// Datagram App (`BLOCK_WISE = false`) uses [`AssembledNone`] (ZST).
+/// Datagram Apps create profile-sized packet scratch only during dispatch.
 pub(crate) trait AssembledBytes {
     /// Copy `src` (truncated at [`RESPONSE_BODY`]).
     fn store(&mut self, src: &[u8]);
     /// Held bytes after [`Self::store`].
     ///
-    /// [`AssembledBuf`]: `len == 0` (never stored, or stored empty) returns
+    /// [`AssembledBuf`]: empty (never stored, or stored empty) returns
     /// `Some(&[])`. Empty and unset are not distinguished.
-    /// [`AssembledNone`]: always `None`.
     fn view(&self) -> Option<&[u8]>;
-}
-
-/// ZST stand-in: `.block_wise::<false>()` has no client Block2 hold.
-#[derive(Default)]
-#[doc(hidden)]
-pub struct AssembledNone;
-
-impl AssembledBytes for AssembledNone {
-    fn store(&mut self, _src: &[u8]) {}
-
-    fn view(&self) -> Option<&[u8]> {
-        None
-    }
 }
 
 /// Owned [`RESPONSE_BODY`] hold for a completed client Block2 / Q-Block2 body.
@@ -1079,14 +1065,17 @@ impl AssembledBytes for AssembledNone {
 #[doc(hidden)]
 pub struct AssembledBuf {
     bytes: [u8; RESPONSE_BODY],
-    len: u16,
+    // Length plus one leaves zero available for the shared storage enum tag.
+    len: core::num::NonZeroU16,
 }
+
+const _: () = assert!(RESPONSE_BODY < u16::MAX as usize);
 
 impl Default for AssembledBuf {
     fn default() -> Self {
         Self {
             bytes: [0u8; RESPONSE_BODY],
-            len: 0,
+            len: core::num::NonZeroU16::MIN,
         }
     }
 }
@@ -1095,77 +1084,193 @@ impl AssembledBytes for AssembledBuf {
     fn store(&mut self, src: &[u8]) {
         let n = src.len().min(RESPONSE_BODY);
         self.bytes[..n].copy_from_slice(&src[..n]);
-        self.len = n as u16;
+        self.len = core::num::NonZeroU16::new(n as u16 + 1).expect("bounded body length plus one");
     }
 
     fn view(&self) -> Option<&[u8]> {
-        Some(&self.bytes[..usize::from(self.len)])
+        Some(&self.bytes[..usize::from(self.len.get() - 1)])
     }
 }
 
-/// Selects [`AssembledNone`] or [`AssembledBuf`] from `BLOCK_WISE`.
+/// Supplies either an on-demand packet owner or a borrowed reusable buffer.
+#[doc(hidden)]
+pub trait DispatchScratch {
+    type Packet<'a>: AsRef<[u8]> + AsMut<[u8]>
+    where
+        Self: 'a;
+    fn packet(&mut self) -> Self::Packet<'_>;
+}
+
+impl<S: DispatchScratch> DispatchScratch for &mut S {
+    type Packet<'a>
+        = S::Packet<'a>
+    where
+        Self: 'a;
+    fn packet(&mut self) -> Self::Packet<'_> {
+        (**self).packet()
+    }
+}
+
+/// Datagram-only Apps keep their original on-demand scratch and App ceiling.
+#[doc(hidden)]
+pub struct DatagramDispatch<R>(core::marker::PhantomData<fn() -> R>);
+impl<R> Default for DatagramDispatch<R> {
+    fn default() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
+impl<R: Default + AsRef<[u8]> + AsMut<[u8]>> DispatchScratch for DatagramDispatch<R> {
+    type Packet<'a>
+        = R
+    where
+        Self: 'a;
+    fn packet(&mut self) -> R {
+        R::default()
+    }
+}
+
+/// Reusable dispatch bytes sharing the collected-body lifetime where possible.
 ///
-/// Bound on [`super::App`] so the hold is a ZST when `BLOCK_WISE` is false.
-/// Blanket-implemented for every [`MemoryProfile`].
+/// A collected Response borrows App, so another mutable App operation cannot
+/// overlap that view. Large custom scratch types retain their full capacity;
+/// switching between their packet and collected-body variants initializes the
+/// selected owner, while ordinary profiles keep the body buffer throughout.
+#[doc(hidden)]
+pub struct SharedScratch<R> {
+    storage: ScratchStorage<R>,
+}
+
+// Inline storage reserves the maximum capacity while sharing mutually exclusive
+// packet and collected-body owners without an additional allocation.
+#[allow(clippy::large_enum_variant)]
+enum ScratchStorage<R> {
+    Packet(R),
+    Body(AssembledBuf),
+}
+
+impl<R: ResidentScratch> Default for SharedScratch<R> {
+    fn default() -> Self {
+        let mut packet = R::default();
+        let _ = packet.as_mut();
+        let storage = if R::CAPACITY <= RESPONSE_BODY {
+            ScratchStorage::Body(AssembledBuf::default())
+        } else {
+            ScratchStorage::Packet(packet)
+        };
+        Self { storage }
+    }
+}
+
+impl<R: ResidentScratch> SharedScratch<R> {
+    fn scratch(&mut self) -> &mut [u8] {
+        if R::CAPACITY > RESPONSE_BODY && matches!(self.storage, ScratchStorage::Body(_)) {
+            self.storage = ScratchStorage::Packet(R::default());
+        }
+        match &mut self.storage {
+            ScratchStorage::Packet(packet) => packet.as_mut(),
+            ScratchStorage::Body(body) => {
+                body.len = core::num::NonZeroU16::MIN;
+                &mut body.bytes[..R::CAPACITY]
+            }
+        }
+    }
+
+    fn store(&mut self, src: &[u8]) {
+        if matches!(self.storage, ScratchStorage::Packet(_)) {
+            self.storage = ScratchStorage::Body(AssembledBuf::default());
+        }
+        if let ScratchStorage::Body(body) = &mut self.storage {
+            body.store(src);
+        }
+    }
+
+    fn view(&self) -> Option<&[u8]> {
+        match &self.storage {
+            ScratchStorage::Packet(_) => Some(&[]),
+            ScratchStorage::Body(body) => body.view(),
+        }
+    }
+}
+
+impl<R: ResidentScratch> DispatchScratch for SharedScratch<R> {
+    type Packet<'a>
+        = &'a mut [u8]
+    where
+        Self: 'a;
+    fn packet(&mut self) -> &mut [u8] {
+        self.scratch()
+    }
+}
+
+/// Selects reusable dispatch storage, sharing the client hold when blockwise.
 #[doc(hidden)]
 pub trait AppAssembled<const BLOCK_WISE: bool> {
-    /// [`AssembledNone`] or [`AssembledBuf`].
-    #[doc(hidden)]
-    type Buf: Default;
-
-    /// Copy `src` into the hold (no-op on the datagram stub).
-    #[doc(hidden)]
-    fn store(buf: &mut Self::Buf, src: &[u8]);
-
-    /// Held bytes: [`AssembledBuf`] returns `Some` even when `len == 0`;
-    /// [`AssembledNone`] returns `None`.
-    #[doc(hidden)]
-    fn view(buf: &Self::Buf) -> Option<&[u8]>;
+    /// Resident storage initialized at App construction.
+    type Buf<S: DatagramSlots>: Default;
+    /// Datagram-only providers carry no borrowed owner across suspension.
+    type Provider<'a, S: DatagramSlots + 'a>: DispatchScratch;
+    fn provider<'a, S: DatagramSlots + 'a>(buf: &'a mut Self::Buf<S>) -> Self::Provider<'a, S>;
+    /// Copy collected bytes, or do nothing when blockwise is disabled.
+    fn store<S: DatagramSlots>(buf: &mut Self::Buf<S>, src: &[u8]);
+    /// Collected bytes, or None when blockwise is disabled.
+    fn view<S: DatagramSlots>(buf: &Self::Buf<S>) -> Option<&[u8]>;
 }
 
 impl<P: MemoryProfile> AppAssembled<false> for P {
-    type Buf = AssembledNone;
-
-    fn store(buf: &mut Self::Buf, src: &[u8]) {
-        buf.store(src);
+    type Buf<S: DatagramSlots> = ();
+    type Provider<'a, S: DatagramSlots + 'a> = DatagramDispatch<S::RxScratch>;
+    fn provider<'a, S: DatagramSlots + 'a>(_buf: &'a mut Self::Buf<S>) -> Self::Provider<'a, S> {
+        DatagramDispatch::default()
     }
-
-    fn view(buf: &Self::Buf) -> Option<&[u8]> {
-        buf.view()
+    fn store<S: DatagramSlots>(_buf: &mut Self::Buf<S>, _src: &[u8]) {}
+    fn view<S: DatagramSlots>(_buf: &Self::Buf<S>) -> Option<&[u8]> {
+        None
     }
 }
 
 impl<P: MemoryProfile> AppAssembled<true> for P {
-    type Buf = AssembledBuf;
-
-    fn store(buf: &mut Self::Buf, src: &[u8]) {
+    type Buf<S: DatagramSlots> = SharedScratch<S::ResidentRxScratch>;
+    type Provider<'a, S: DatagramSlots + 'a> = &'a mut SharedScratch<S::ResidentRxScratch>;
+    fn provider<'a, S: DatagramSlots + 'a>(buf: &'a mut Self::Buf<S>) -> Self::Provider<'a, S> {
+        buf
+    }
+    fn store<S: DatagramSlots>(buf: &mut Self::Buf<S>, src: &[u8]) {
         buf.store(src);
     }
-
-    fn view(buf: &Self::Buf) -> Option<&[u8]> {
+    fn view<S: DatagramSlots>(buf: &Self::Buf<S>) -> Option<&[u8]> {
         buf.view()
     }
 }
 
-pub(crate) type AssembledField<P, const BLOCK_WISE: bool> = <P as AppAssembled<BLOCK_WISE>>::Buf;
+pub(crate) type AssembledField<P, const BLOCK_WISE: bool, S> =
+    <P as AppAssembled<BLOCK_WISE>>::Buf<S>;
 
 #[cfg(test)]
 mod assembled_hold_tests {
     use super::{
-        AppAssembled, AssembledBuf, AssembledBytes, AssembledNone, INLINE_PAYLOAD, RESPONSE_BODY,
-        Response, ResponseError,
+        AppAssembled, AssembledBuf, AssembledBytes, INLINE_PAYLOAD, RESPONSE_BODY, Response,
+        ResponseError, SharedScratch,
     };
     use crate::{Code, profiles};
     use core::mem::size_of;
 
     #[test]
-    fn datagram_assembled_hold_is_zst() {
+    fn datagram_scratch_has_no_separate_assembled_hold() {
         assert_eq!(
-            size_of::<<profiles::Default as AppAssembled<false>>::Buf>(),
+            size_of::<
+                <profiles::Default as AppAssembled<false>>::Buf<
+                    crate::storage::Memory<profiles::Default>,
+                >,
+            >(),
             0
         );
-        assert_eq!(size_of::<AssembledNone>(), 0);
-        assert!(size_of::<<profiles::Default as AppAssembled<true>>::Buf>() >= RESPONSE_BODY);
+        assert!(
+            size_of::<
+                <profiles::Default as AppAssembled<true>>::Buf<
+                    crate::storage::Memory<profiles::Default>,
+                >,
+            >() >= RESPONSE_BODY
+        );
         assert!(size_of::<AssembledBuf>() >= RESPONSE_BODY);
     }
 
@@ -1176,10 +1281,104 @@ mod assembled_hold_tests {
         let mut stored_empty = AssembledBuf::default();
         stored_empty.store(&[]);
         assert_eq!(stored_empty.view(), Some(&[][..]));
-        let mut none = AssembledNone;
-        assert_eq!(none.view(), None);
-        none.store(b"x");
-        assert_eq!(none.view(), None);
+    }
+
+    #[test]
+    fn dispatch_reuses_collected_body_storage_without_stale_views() {
+        let mut shared = SharedScratch::<crate::storage::DatagramScratch<1152>>::default();
+        let packet = shared.scratch().as_ptr();
+        shared.scratch()[..4].copy_from_slice(b"wire");
+        shared.store(b"response");
+        assert_eq!(shared.view(), Some(&b"response"[..]));
+        assert_eq!(shared.view().unwrap().as_ptr(), packet);
+        assert_eq!(shared.scratch().len(), 1152);
+        assert_eq!(shared.scratch().as_ptr(), packet);
+        assert_eq!(shared.view(), Some(&[][..]));
+        shared.store(&[7; RESPONSE_BODY + 1]);
+        assert_eq!(shared.view().unwrap(), &[7; RESPONSE_BODY]);
+    }
+
+    #[test]
+    fn large_custom_dispatch_scratch_keeps_capacity_across_collection() {
+        let mut shared = SharedScratch::<crate::storage::DatagramScratch<8192>>::default();
+        assert_eq!(shared.scratch().len(), 8192);
+        shared.scratch()[8191] = 9;
+        shared.store(b"body");
+        assert_eq!(shared.view(), Some(&b"body"[..]));
+        assert_eq!(shared.scratch().len(), 8192);
+        shared.scratch()[8191] = 3;
+        shared.store(&[]);
+        assert_eq!(shared.view(), Some(&[][..]));
+        assert_eq!(shared.scratch().len(), 8192);
+    }
+
+    #[test]
+    fn shared_capacity_preserves_boundary_and_large_slices() {
+        fn round_trip<const N: usize>() {
+            let mut shared = SharedScratch::<crate::storage::DatagramScratch<N>>::default();
+            assert_eq!(shared.scratch().len(), N);
+            if N != 0 {
+                shared.scratch()[N - 1] = 19;
+                assert_eq!(shared.scratch()[N - 1], 19);
+            }
+            shared.store(&[7; RESPONSE_BODY + 1]);
+            assert_eq!(shared.view(), Some(&[7; RESPONSE_BODY][..]));
+            assert_eq!(shared.scratch().len(), N);
+            assert_eq!(shared.view(), Some(&[][..]));
+            shared.store(&[]);
+            assert_eq!(shared.view(), Some(&[][..]));
+            assert_eq!(shared.scratch().len(), N);
+        }
+        round_trip::<0>();
+        round_trip::<RESPONSE_BODY>();
+        round_trip::<{ RESPONSE_BODY + 1 }>();
+        round_trip::<65536>();
+    }
+
+    #[test]
+    fn shared_capacity_keeps_custom_construction_and_drop_timing() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        static CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct Counted(crate::storage::DatagramScratch<8192>);
+        impl Default for Counted {
+            fn default() -> Self {
+                CONSTRUCTIONS.fetch_add(1, Ordering::Relaxed);
+                Self(crate::storage::DatagramScratch::default())
+            }
+        }
+        impl AsRef<[u8]> for Counted {
+            fn as_ref(&self) -> &[u8] {
+                self.0.as_ref()
+            }
+        }
+        impl AsMut<[u8]> for Counted {
+            fn as_mut(&mut self) -> &mut [u8] {
+                self.0.as_mut()
+            }
+        }
+        impl crate::storage::ResidentScratch for Counted {
+            const CAPACITY: usize = 8192;
+        }
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let mut shared = SharedScratch::<Counted>::default();
+        assert_eq!(CONSTRUCTIONS.load(Ordering::Relaxed), 1);
+        shared.scratch();
+        shared.scratch();
+        assert_eq!(CONSTRUCTIONS.load(Ordering::Relaxed), 1);
+        shared.store(b"one");
+        shared.store(b"two");
+        assert_eq!(DROPS.load(Ordering::Relaxed), 1);
+        assert_eq!(CONSTRUCTIONS.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.scratch().len(), 8192);
+        shared.scratch();
+        assert_eq!(CONSTRUCTIONS.load(Ordering::Relaxed), 2);
+        drop(shared);
+        assert_eq!(DROPS.load(Ordering::Relaxed), 2);
     }
 
     #[test]

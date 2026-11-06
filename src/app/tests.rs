@@ -10573,6 +10573,7 @@ fn qblock1_confirmable_upload_advances_across_a_full_acknowledged_set() {
         type Observe = <profiles::Default as MemoryProfile>::Observe;
         type Exchange = <profiles::Default as MemoryProfile>::Exchange;
         type RxScratch = <profiles::Default as MemoryProfile>::RxScratch;
+        type ResidentRxScratch = <profiles::Default as MemoryProfile>::ResidentRxScratch;
         type TxScratch = <profiles::Default as MemoryProfile>::TxScratch;
     }
     static BODY: [u8; 11000] = [b'Q'; 11000];
@@ -11618,6 +11619,7 @@ impl MemoryProfile for LargeDownload {
     type Observe = <profiles::Default as MemoryProfile>::Observe;
     type Exchange = <profiles::Default as MemoryProfile>::Exchange;
     type RxScratch = <profiles::Default as MemoryProfile>::RxScratch;
+    type ResidentRxScratch = <profiles::Default as MemoryProfile>::ResidentRxScratch;
     type TxScratch = <profiles::Default as MemoryProfile>::TxScratch;
 }
 

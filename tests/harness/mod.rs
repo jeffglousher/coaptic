@@ -51,6 +51,7 @@ impl MemoryProfile for SweepProfile {
     type Observe = ObserveTable<8>;
     type Exchange = ExchangeTable<SWEEP_DGRAM_SLOTS>;
     type RxScratch = DatagramScratch<SWEEP_DGRAM_BYTES>;
+    type ResidentRxScratch = DatagramScratch<SWEEP_DGRAM_BYTES>;
     type TxScratch = DatagramScratch<SWEEP_DGRAM_BYTES>;
 }
 

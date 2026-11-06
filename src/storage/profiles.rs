@@ -38,6 +38,7 @@ impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithObserve<P, EN
     type Observe = ObserveTable<ENTRIES, P::Token>;
     type Exchange = P::Exchange;
     type RxScratch = P::RxScratch;
+    type ResidentRxScratch = P::ResidentRxScratch;
     type TxScratch = P::TxScratch;
 }
 
@@ -68,6 +69,7 @@ impl<P: MemoryProfile, const ENTRIES: usize> MemoryProfile for WithDedup<P, ENTR
     type Observe = P::Observe;
     type Exchange = P::Exchange;
     type RxScratch = P::RxScratch;
+    type ResidentRxScratch = P::ResidentRxScratch;
     type TxScratch = P::TxScratch;
 }
 
@@ -100,6 +102,7 @@ impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
     type Observe = P::Observe;
     type Exchange = P::Exchange;
     type RxScratch = DatagramScratch<BYTES>;
+    type ResidentRxScratch = DatagramScratch<BYTES>;
     type TxScratch = P::TxScratch;
 }
 
@@ -132,6 +135,7 @@ impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
     type Observe = P::Observe;
     type Exchange = ExchangeTable<SLOTS, P::Token>;
     type RxScratch = P::RxScratch;
+    type ResidentRxScratch = P::ResidentRxScratch;
     type TxScratch = DatagramScratch<BYTES>;
 }
 
@@ -164,6 +168,7 @@ impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
     type Observe = P::Observe;
     type Exchange = P::Exchange;
     type RxScratch = P::RxScratch;
+    type ResidentRxScratch = P::ResidentRxScratch;
     type TxScratch = P::TxScratch;
 }
 
@@ -196,6 +201,7 @@ impl<P: MemoryProfile, const SLOTS: usize, const BYTES: usize> MemoryProfile
     type Observe = P::Observe;
     type Exchange = P::Exchange;
     type RxScratch = P::RxScratch;
+    type ResidentRxScratch = P::ResidentRxScratch;
     type TxScratch = P::TxScratch;
 }
 
@@ -230,6 +236,7 @@ macro_rules! impl_profile {
             type Observe = ObserveTable<$obs>;
             type Exchange = ExchangeTable<$tx_n>;
             type RxScratch = DatagramScratch<$rx_b>;
+            type ResidentRxScratch = DatagramScratch<$rx_b>;
             type TxScratch = DatagramScratch<$tx_b>;
         }
 
@@ -363,6 +370,7 @@ macro_rules! memory_profile {
             type Observe = $crate::storage::ObserveTable<$obs, $token>;
             type Exchange = $crate::storage::ExchangeTable<$tx_n, $token>;
             type RxScratch = $crate::storage::DatagramScratch<$rx_b>;
+            type ResidentRxScratch = $crate::storage::DatagramScratch<$rx_b>;
             type TxScratch = $crate::storage::DatagramScratch<$tx_b>;
         }
     };
