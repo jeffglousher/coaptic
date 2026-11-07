@@ -715,7 +715,7 @@ where
         &mut self,
         _body: SlotId,
         _tx: SlotId,
-    ) -> Result<(&[u8], &mut [u8]), SlotError> {
+    ) -> Result<(&[u8], AccessMut<'_>), SlotError> {
         Err(SlotError::InvalidSlot)
     }
 }
@@ -977,18 +977,12 @@ where
         &mut self,
         body: SlotId,
         tx: SlotId,
-    ) -> Result<(&[u8], &mut [u8]), SlotError> {
+    ) -> Result<(&[u8], AccessMut<'_>), SlotError> {
         if body.index() >= self.bodies.tx.slot_count() || tx.index() >= self.tx.slot_count() {
             return Err(SlotError::InvalidSlot);
         }
         let body = self.bodies.tx.payload(body).ok_or(SlotError::NotOccupied)?;
-        if !self.tx.is_occupied(tx) {
-            return Err(SlotError::NotOccupied);
-        }
-        if self.tx.is_pinned(tx) {
-            return Err(SlotError::Pinned);
-        }
-        let tx = self.tx.payload_mut(tx).ok_or(SlotError::NotOccupied)?;
+        let tx = self.tx.access_mut(tx)?;
         Ok((body, tx))
     }
 }

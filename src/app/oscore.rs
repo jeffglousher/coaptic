@@ -453,9 +453,10 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS:
         .map_err(super::Error::from)
 }
 
-/// Encode a body range into a fresh TX reservation without staging the chunk.
-/// The caller owns the empty TX slot and releases it on failure. No reference
-/// to either storage area survives this synchronous call.
+/// Encode a body range while borrowing its backing and the TX slot together.
+/// The TX guard owns admission through the length commit and unpins on every
+/// exit. Protected replacement preserves retained ciphertext on failure; fresh
+/// packets and unprotected encoding write directly into the admitted slot.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_body_response<
     S: crate::storage::BodyDatagramSlots,
@@ -467,26 +468,11 @@ pub(crate) fn encode_body_response<
     request: Request,
     engine: &mut Engine<S>,
     tx: SlotId,
-    msg: Message<'_, S::Token>,
+    msg: &Message<'_, S::Token>,
     body: SlotId,
     range: core::ops::Range<usize>,
     fresh_piv: bool,
 ) -> Result<(), super::Error<E>> {
-    // A retained packet still needs transactional replacement. Keep that rare
-    // case on the existing path; normal block replies acquire an empty slot.
-    if !engine
-        .storage()
-        .tx_payload(tx)
-        .ok_or(crate::storage::SlotError::NotOccupied)?
-        .is_empty()
-    {
-        return encode_retained_body_response(
-            ctx, peer, request, engine, tx, msg, body, range, fresh_piv,
-        );
-    }
-    if engine.storage_mut().tx_datagram().is_pinned(tx) {
-        return Err(crate::storage::SlotError::Pinned.into());
-    }
     #[cfg(feature = "oscore")]
     let protected = ctx.is_some();
     #[cfg(not(feature = "oscore"))]
@@ -498,18 +484,35 @@ pub(crate) fn encode_body_response<
         .ok_or(super::Error::Block(
             crate::error::BlockTransferError::Overflow,
         ))?;
-    let (body, out) = engine.storage_mut().tx_body_and_tx_mut(body, tx)?;
+    let (body, mut access) = engine.storage_mut().tx_body_and_tx_mut(body, tx)?;
     let payload = body.get(range).ok_or(super::Error::Block(
         crate::error::BlockTransferError::Overflow,
     ))?;
-    let msg = msg.with_payload(payload);
+    let msg = Message::new(msg.ty(), msg.code(), msg.message_id())
+        .with_token(msg.token())
+        .with_options(msg.options())
+        .with_payload(payload);
     let limit = if protected {
-        out.len().min(S::TX_DATAGRAM_BYTES)
+        access.capacity().min(S::TX_DATAGRAM_BYTES)
     } else {
-        out.len()
+        access.capacity()
     };
-    let n = stage_response(ctx, peer, request, &msg, fresh_piv, &mut out[..limit])?;
-    engine.storage_mut().set_tx_len(tx, n)?;
+    if protected && !access.payload().is_empty() {
+        encode_retained_body_response::<S, E>(&mut access, limit, |out| {
+            stage_response(ctx, peer, request, &msg, fresh_piv, out)
+        })?;
+    } else {
+        let n = stage_response(
+            ctx,
+            peer,
+            request,
+            &msg,
+            fresh_piv,
+            &mut access.bytes_mut()[..limit],
+        )?;
+        access.set_len(n)?;
+    }
+    drop(access);
     #[cfg(feature = "diagnostics")]
     if !protected {
         crate::storage::WorkMetrics::add(
@@ -523,43 +526,18 @@ pub(crate) fn encode_body_response<
 
 #[cold]
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn encode_retained_body_response<S: crate::storage::BodyDatagramSlots, E, const REQUESTS: usize>(
-    ctx: &mut Field<REQUESTS, S::Token>,
-    peer: Endpoint,
-    request: Request,
-    engine: &mut Engine<S>,
-    tx: SlotId,
-    msg: Message<'_, S::Token>,
-    body: SlotId,
-    range: core::ops::Range<usize>,
-    fresh_piv: bool,
+fn encode_retained_body_response<S: Storage + DatagramSlots, E>(
+    access: &mut crate::storage::AccessMut<'_>,
+    limit: usize,
+    encode: impl FnOnce(&mut [u8]) -> Result<usize, super::Error<E>>,
 ) -> Result<(), super::Error<E>> {
-    let bytes = engine
-        .tx_body_payload(body)
-        .ok_or(super::Error::Block(
-            crate::error::BlockTransferError::NoTransfer,
-        ))?
-        .get(range)
-        .ok_or(super::Error::Block(
-            crate::error::BlockTransferError::Overflow,
-        ))?;
-    let mut chunk = [0u8; 1024];
-    let n = bytes.len();
-    if n > chunk.len() {
-        return Err(super::Error::Block(
-            crate::error::BlockTransferError::Overflow,
-        ));
-    }
-    chunk[..n].copy_from_slice(bytes);
-    #[cfg(feature = "diagnostics")]
-    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().block_tx_staged_bytes, n);
-    let msg = msg.with_payload(&chunk[..n]);
-    if fresh_piv {
-        encode_notification(ctx, peer, request, engine, tx, &msg)
-    } else {
-        encode_message(ctx, peer, request, engine, tx, &msg)
-    }
+    // Only protected replacement needs a separate wire image. Keep the body
+    // borrowed and commit through the same admitted slot after protection.
+    let mut wire = S::TxScratch::default();
+    let limit = limit.min(wire.as_ref().len());
+    let n = encode(&mut wire.as_mut()[..limit])?;
+    access.bytes_mut()[..n].copy_from_slice(&wire.as_ref()[..n]);
+    access.set_len(n).map_err(super::Error::from)
 }
 
 fn stage_response<E, const REQUESTS: usize, K: OwnedToken>(
@@ -1092,7 +1070,11 @@ mod request_capacity_tests {
             let (_, binding) = server.unprotect_request(&parsed, &mut plain).unwrap();
             (Some(server), binding)
         }
-        fn exercise<S: BodyDatagramSlots<Token = Token>>(make: impl Fn() -> S, fits: bool) {
+        fn exercise<S: BodyDatagramSlots<Token = Token>>(
+            make: impl Fn() -> S,
+            fits: bool,
+            retained: bool,
+        ) {
             let payload = core::array::from_fn::<_, 1024, _>(|i| (i % 251) as u8);
             for protected in [false, true] {
                 for fresh_piv in [false, true] {
@@ -1106,6 +1088,14 @@ mod request_capacity_tests {
                         let transfer = engine.tx_body_transfer(body).unwrap();
                         let expected_tx = engine.acquire_tx().unwrap();
                         let actual_tx = engine.acquire_tx().unwrap();
+                        let original = [0x40, 0x01, 0x12, 0x34];
+                        if retained {
+                            for tx in [expected_tx, actual_tx] {
+                                engine.storage_mut().tx_payload_mut(tx).unwrap()[..original.len()]
+                                    .copy_from_slice(&original);
+                                engine.storage_mut().set_tx_len(tx, original.len()).unwrap();
+                            }
+                        }
                         let (mut expected_ctx, binding) = bound_context();
                         let (mut actual_ctx, same_binding) = bound_context();
                         assert_eq!(binding, same_binding);
@@ -1149,7 +1139,7 @@ mod request_capacity_tests {
                             binding,
                             &mut engine,
                             actual_tx,
-                            msg,
+                            &msg,
                             body,
                             range.clone(),
                             fresh_piv,
@@ -1157,10 +1147,6 @@ mod request_capacity_tests {
                         if fits || range.len() <= 32 {
                             expected.unwrap();
                             actual.unwrap();
-                            assert_eq!(
-                                engine.storage().tx_payload(actual_tx),
-                                engine.storage().tx_payload(expected_tx)
-                            );
                         } else {
                             assert!(matches!(
                                 expected,
@@ -1174,9 +1160,20 @@ mod request_capacity_tests {
                                     EncodeError::BufferTooSmall
                                 )))
                             ));
-                            assert_eq!(engine.storage().tx_payload(expected_tx), Some(&[][..]));
-                            assert_eq!(engine.storage().tx_payload(actual_tx), Some(&[][..]));
+                            if !retained {
+                                assert_eq!(engine.storage().tx_payload(actual_tx), Some(&[][..]));
+                            } else if protected {
+                                assert_eq!(
+                                    engine.storage().tx_payload(actual_tx),
+                                    Some(original.as_slice())
+                                );
+                            }
                         }
+                        assert_eq!(
+                            engine.storage().tx_payload(actual_tx),
+                            engine.storage().tx_payload(expected_tx)
+                        );
+                        assert!(!engine.storage_mut().tx_datagram().is_pinned(actual_tx));
                         assert_eq!(
                             actual_ctx.as_ref().map(|ctx| ctx.sender_seq()),
                             expected_ctx.as_ref().map(|ctx| ctx.sender_seq())
@@ -1187,23 +1184,34 @@ mod request_capacity_tests {
                 }
             }
         }
-        exercise(Memory::<profiles::Constrained>::with_block_wise, true);
         let caps = Capacities::from_profile::<profiles::Constrained>()
             .with_block_wise::<profiles::Constrained>();
-        exercise(|| AllocMemory::try_new(caps, usize::MAX).unwrap(), true);
-        exercise(
-            || {
-                AllocMemory::try_new(
-                    Capacities {
-                        tx_datagram_bytes: 128,
-                        ..caps
-                    },
-                    usize::MAX,
-                )
-                .unwrap()
-            },
-            false,
-        );
+        for retained in [false, true] {
+            exercise(
+                Memory::<profiles::Constrained>::with_block_wise,
+                true,
+                retained,
+            );
+            exercise(
+                || AllocMemory::try_new(caps, usize::MAX).unwrap(),
+                true,
+                retained,
+            );
+            exercise(
+                || {
+                    AllocMemory::try_new(
+                        Capacities {
+                            tx_datagram_bytes: 128,
+                            ..caps
+                        },
+                        usize::MAX,
+                    )
+                    .unwrap()
+                },
+                false,
+                retained,
+            );
+        }
     }
 
     #[test]
@@ -1225,7 +1233,7 @@ mod request_capacity_tests {
                 None,
                 &mut engine,
                 tx,
-                msg,
+                &msg,
                 body,
                 17..49,
                 false,
@@ -1261,7 +1269,7 @@ mod request_capacity_tests {
                             None,
                             &mut engine,
                             tx,
-                            msg,
+                            &msg,
                             body,
                             0..32,
                             fresh_piv,
@@ -1284,7 +1292,7 @@ mod request_capacity_tests {
                     None,
                     &mut engine,
                     tx,
-                    msg,
+                    &msg,
                     body,
                     1020..1030,
                     false,
@@ -1294,6 +1302,7 @@ mod request_capacity_tests {
                 ))
             ));
             assert_eq!(engine.storage().tx_payload(tx), Some(&[][..]));
+            assert!(!engine.storage_mut().tx_datagram().is_pinned(tx));
         }
         exercise(Memory::<profiles::Constrained>::with_block_wise());
         exercise(

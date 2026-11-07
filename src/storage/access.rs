@@ -1,8 +1,8 @@
 //! Temporary pin of occupied datagram or body bytes.
 //!
-//! This is the **advanced Engine path**. [`crate::App`] handlers and
-//! [`crate::App::poll`] do not need [`Access`] / [`AccessMut`]: the
-//! reactor pins internally and releases after encode. Reach these types
+//! This is the **advanced Engine path**. App callers need not manage
+//! [`Access`] / [`AccessMut`]: the reactor uses a TX guard internally
+//! when encoding a retained body and releases it after encode. Reach these types
 //! via [`crate::storage::Engine::access_rx`] (and the TX / body siblings)
 //! or [`crate::App::engine_mut`].
 //!
@@ -65,7 +65,7 @@ pub struct Access<'a> {
 /// [`Self::bytes_mut`] is the full slot capacity. [`Self::payload`] is the
 /// filled prefix. [`Self::set_len`] records how many bytes are live. Same
 /// pin rule as [`Access`]: release returns [`SlotError::Pinned`] until
-/// drop. The [`crate::App`] happy path does not use this type.
+/// drop. App encoding uses this guard internally; App callers need not manage it.
 #[must_use = "dropping AccessMut unpins the slot"]
 pub struct AccessMut<'a> {
     id: SlotId,

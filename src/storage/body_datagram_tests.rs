@@ -79,16 +79,27 @@ fn borrowed_ranges<S: BodyDatagramSlots<Token = Token>>(mut store: S) {
         let packet_ptr = store.tx_payload_mut(tx).unwrap().as_ptr();
         let mut expected = snapshot(&mut store, body, tx);
         {
-            let (retained, packet) = store.tx_body_and_tx_mut(body, tx).unwrap();
+            let (retained, mut packet) = store.tx_body_and_tx_mut(body, tx).unwrap();
             assert_eq!(retained.as_ptr(), body_ptr);
-            assert_eq!(packet.as_ptr(), packet_ptr);
+            assert_eq!(packet.bytes_mut().as_ptr(), packet_ptr);
             assert_eq!(retained, &payload[..len]);
-            assert_eq!(packet.len(), 1152);
+            assert_eq!(packet.id(), tx);
+            assert!(packet.is_pinned());
+            assert_eq!(packet.capacity(), 1152);
+            assert_eq!(packet.payload(), &[0xa5; 7]);
             let full = len.min(1024);
-            packet[8..8 + full].copy_from_slice(&retained[..full]);
-            packet[8 + full..8 + len].copy_from_slice(&retained[full..]);
+            packet.bytes_mut()[8..8 + full].copy_from_slice(&retained[..full]);
+            packet.bytes_mut()[8 + full..8 + len].copy_from_slice(&retained[full..]);
+            assert_eq!(packet.payload(), &[0xa5; 7]);
+            assert_eq!(packet.set_len(1153), Err(SlotError::LengthExceedsSlot));
+            assert_eq!(packet.payload().len(), 7);
+            packet.set_len(8 + len).unwrap();
+            assert_eq!(&packet.payload()[8..], retained);
+            assert!(packet.is_pinned());
         }
         expected.packet[8..8 + len].copy_from_slice(&payload[..len]);
+        expected.packet_len = 8 + len;
+        assert!(!store.tx_datagram().is_pinned(tx));
         assert_eq!(snapshot(&mut store, body, tx), expected);
         assert_eq!(store.tx_body_payload(body), Some(&payload[..len]));
         store.tx_body().unwrap().release(body).unwrap();

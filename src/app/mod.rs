@@ -7353,7 +7353,7 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
         mid,
         token,
         response,
-        |engine, ctx, msg, fresh_piv| {
+        |engine, ctx, peer, tx, oscore_req, msg, fresh_piv| {
             let msg = (*msg).with_payload(payload);
             if fresh_piv {
                 oscore::encode_notification(ctx, peer, oscore_req, engine, tx, &msg)
@@ -7394,9 +7394,9 @@ fn encode_body_response<S: BodyDatagramSlots, E, const REQUESTS: usize>(
         mid,
         token,
         response,
-        |engine, ctx, msg, fresh_piv| {
+        |engine, ctx, peer, tx, oscore_req, msg, fresh_piv| {
             oscore::encode_body_response(
-                ctx, peer, oscore_req, engine, tx, *msg, body, range, fresh_piv,
+                ctx, peer, oscore_req, engine, tx, msg, body, range, fresh_piv,
             )
         },
         block,
@@ -7418,6 +7418,9 @@ fn encode_response_with<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     encode_payload: impl FnOnce(
         &mut Engine<S>,
         &mut oscore::Field<REQUESTS, S::Token>,
+        Endpoint,
+        SlotId,
+        oscore::Request,
         &Message<'_, S::Token>,
         bool,
     ) -> Result<(), Error<E>>,
@@ -7476,6 +7479,9 @@ fn encode_response_locations<S: Storage + DatagramSlots, E, const REQUESTS: usiz
     encode_payload: impl FnOnce(
         &mut Engine<S>,
         &mut oscore::Field<REQUESTS, S::Token>,
+        Endpoint,
+        SlotId,
+        oscore::Request,
         &Message<'_, S::Token>,
         bool,
     ) -> Result<(), Error<E>>,
@@ -7517,6 +7523,9 @@ fn encode_response_options<
     encode_payload: impl FnOnce(
         &mut Engine<S>,
         &mut oscore::Field<REQUESTS, S::Token>,
+        Endpoint,
+        SlotId,
+        oscore::Request,
         &Message<'_, S::Token>,
         bool,
     ) -> Result<(), Error<E>>,
@@ -7590,7 +7599,7 @@ fn encode_response_options<
             let fresh_piv = response.fresh_piv()
                 || block.is_some_and(|b| b.q_block)
                 || (response.observe_seq().is_some() && ty != Type::Acknowledgement);
-            encode_payload(engine, oscore_ctx, &msg, fresh_piv)
+            encode_payload(engine, oscore_ctx, peer, tx, oscore_req, &msg, fresh_piv)
         }
         Err(EncodeError::OptionsFull) => {
             encode_options_full_500(engine, peer, tx, ty, mid, token, oscore_ctx, oscore_req)

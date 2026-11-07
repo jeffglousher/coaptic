@@ -261,13 +261,16 @@ pub trait DatagramSlots {
 /// Separate from [`BodySlots`] so body-only backends need not provide datagram
 /// byte access. App storage implements both capabilities together.
 pub trait BodyDatagramSlots: BodySlots + DatagramSlots {
-    /// Borrow the filled TX body and the full capacity of an occupied, unpinned
-    /// TX datagram. The two slices refer to independent storage areas, even when
-    /// the slot indices are equal. No payload is copied or allocated.
+    /// Borrow the filled TX body and pin an occupied, unpinned TX datagram for
+    /// writing through [`AccessMut`]. Body and datagram refer to independent
+    /// storage areas, even when their indices are equal. No payload is copied
+    /// or allocated.
     ///
-    /// This operation does not change filled lengths, sidecars, occupancy,
-    /// cursors, or pin state. The exclusive storage borrow prevents other access
-    /// until both slices are released. An already pinned body may be read.
+    /// The TX guard pins its datagram until dropped. Admission changes no other
+    /// state: bytes and filled length change only when the caller writes or uses
+    /// [`AccessMut::set_len`]. Sidecars, occupancy, cursors and body pin state are
+    /// preserved. The exclusive storage borrow prevents other access until the
+    /// returned borrows end. An already pinned body may be read.
     ///
     /// Returns [`SlotError::InvalidSlot`] for an absent body pool or an index
     /// outside its pool, [`SlotError::NotOccupied`] for a free slot, and
@@ -276,7 +279,7 @@ pub trait BodyDatagramSlots: BodySlots + DatagramSlots {
         &mut self,
         body: SlotId,
         tx: SlotId,
-    ) -> Result<(&[u8], &mut [u8]), SlotError>;
+    ) -> Result<(&[u8], AccessMut<'_>), SlotError>;
 }
 
 /// Work required before expiring retained dedup replies.
