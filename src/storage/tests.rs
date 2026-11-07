@@ -5998,3 +5998,223 @@ fn custom_dedup_expiry_defaults_to_inspection() {
         );
     }
 }
+
+// Run the same storage contract against fixed and allocated owned body pools.
+pub(super) fn static_body_pool_contract<P>(make: impl Fn() -> P)
+where
+    P: SlotPool + super::block::BodyOps<Token>,
+{
+    static BODY: [u8; 320] = [0x37; 320];
+    static OTHER: [u8; 48] = [0x62; 48];
+    static TOO_LARGE: [u8; 1025] = [0; 1025];
+    let key = BlockKey::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 7], 5683));
+    for role in [BlockRole::OutgoingBlock2, BlockRole::OutgoingQBlock2] {
+        let mut pool = make();
+        assert_eq!(pool.slot_count(), 1);
+        let cursor = pool.cursor();
+        assert_eq!(
+            pool.start_outgoing_static(key, BlockRole::IncomingBlock1, &BODY, 0),
+            Err(BlockTransferError::IdentityMismatch)
+        );
+        assert_eq!(
+            pool.start_outgoing_static(key, role, &TOO_LARGE, 0),
+            pool.start_outgoing(key, role, &TOO_LARGE, 0)
+        );
+        assert_eq!(pool.cursor(), cursor);
+        assert_eq!(pool.occupied_count(), 0);
+        let id = pool.start_outgoing_static(key, role, &BODY, 0).unwrap();
+        assert_eq!(pool.payload(id).unwrap().as_ptr(), BODY.as_ptr());
+        assert_eq!(pool.payload(id), Some(BODY.as_slice()));
+        let snapshot = pool.transfer(id).unwrap();
+        assert!(snapshot.static_body().is_none());
+        assert!(snapshot.q_receive().is_none());
+        assert!(snapshot.terminal_deadline().is_none());
+        assert!(snapshot.q_observe_sequence().is_none());
+        assert_eq!(pool.occupied_count(), 1);
+        assert_eq!(
+            pool.start_outgoing_static(key, role, &OTHER, 0),
+            Err(BlockTransferError::Saturated)
+        );
+        assert_eq!(
+            pool.start_outgoing(key, role, &OTHER, 0),
+            Err(BlockTransferError::Saturated)
+        );
+        assert_eq!(pool.payload(id).unwrap().as_ptr(), BODY.as_ptr());
+        {
+            let guard = pool.access(id).unwrap();
+            assert_eq!(guard.as_bytes().as_ptr(), BODY.as_ptr());
+            assert!(guard.is_pinned());
+        }
+        assert!(!pool.is_pinned(id));
+        for num in 0..20 {
+            if role == BlockRole::OutgoingQBlock2 && num == 10 {
+                pool.ack_outgoing(id, role, num).unwrap();
+            }
+            let issued = pool.next_outgoing(id, role).unwrap();
+            assert_eq!(issued.offset(), num as usize * 16);
+            assert_eq!(issued.len(), 16);
+            assert_eq!(pool.payload(id).unwrap().as_ptr(), BODY.as_ptr());
+        }
+        pool.release(id).unwrap();
+        assert!(pool.payload(id).is_none());
+        assert!(pool.transfer(id).is_none());
+        let id = pool.start_outgoing_static(key, role, &OTHER, 0).unwrap();
+        assert_eq!(pool.payload(id).unwrap().as_ptr(), OTHER.as_ptr());
+        let stale = pool.transfer(id).unwrap();
+        {
+            let mut guard = pool.access_mut(id).unwrap();
+            assert_eq!(guard.capacity(), 1024);
+            assert_ne!(guard.payload().as_ptr(), OTHER.as_ptr());
+            assert_eq!(guard.payload(), OTHER.as_slice());
+            guard.bytes_mut()[0] = 0x99;
+            guard.set_len(1).unwrap();
+            guard.set_len(OTHER.len()).unwrap();
+            assert_eq!(&guard.payload()[1..], &OTHER[1..]);
+            assert_eq!(guard.set_len(1025), Err(SlotError::LengthExceedsSlot));
+            assert_eq!(guard.payload().len(), OTHER.len());
+        }
+        pool.set_transfer(id, stale).unwrap();
+        assert_eq!(pool.payload(id).unwrap()[0], 0x99);
+        assert_ne!(pool.payload(id).unwrap().as_ptr(), OTHER.as_ptr());
+        pool.release(id).unwrap();
+
+        // Replacing a still-borrowed sidecar preserves bytes before incoming
+        // writes begin. An old outgoing snapshot cannot resurrect static bytes.
+        let id = pool.start_outgoing_static(key, role, &OTHER, 0).unwrap();
+        let outgoing = pool.transfer(id).unwrap();
+        let incoming = BlockTransfer::incoming(
+            key,
+            BlockRole::IncomingBlock1,
+            BlockValue::new(0, true, 0).unwrap(),
+            16,
+            1024,
+            None,
+        )
+        .unwrap();
+        pool.set_transfer(id, incoming).unwrap();
+        assert_eq!(pool.payload(id), Some(OTHER.as_slice()));
+        assert_ne!(pool.payload(id).unwrap().as_ptr(), OTHER.as_ptr());
+        pool.write_incoming(
+            id,
+            BlockRole::IncomingBlock1,
+            BlockValue::new(1, false, 0).unwrap(),
+            &[0x81; 16],
+        )
+        .unwrap();
+        assert_eq!(&pool.payload(id).unwrap()[..16], &OTHER[..16]);
+        assert_eq!(&pool.payload(id).unwrap()[16..], &[0x81; 16]);
+        pool.set_transfer(id, outgoing).unwrap();
+        assert_eq!(&pool.payload(id).unwrap()[16..], &[0x81; 16]);
+        pool.release(id).unwrap();
+        let copied = pool.start_outgoing(key, role, &[0x23; 32], 0).unwrap();
+        assert_eq!(pool.payload(copied), Some([0x23; 32].as_slice()));
+        pool.release(copied).unwrap();
+
+        let id = pool.start_outgoing_static(key, role, &BODY, 0).unwrap();
+        // Retain a pin after ending the Rust borrow to exercise runtime refusal.
+        core::mem::forget(pool.access(id).unwrap());
+        assert_eq!(pool.access_mut(id).unwrap_err(), SlotError::Pinned);
+        assert_eq!(pool.release(id), Err(SlotError::Pinned));
+        assert_eq!(pool.payload(id).unwrap().as_ptr(), BODY.as_ptr());
+        assert_eq!(pool.payload(id), Some(BODY.as_slice()));
+        assert_eq!(pool.transfer(id), Some(snapshot));
+        assert!(pool.is_pinned(id));
+    }
+}
+
+#[test]
+fn fixed_static_body_preserves_progress_capacity_and_copy_on_write() {
+    static_body_pool_contract(super::BodyPool::<1, 1024>::new);
+}
+
+#[test]
+fn fixed_static_body_direct_writes_and_length_changes_materialize() {
+    static BODY: [u8; 48] = [0x51; 48];
+    let key = BlockKey::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 7], 5683));
+    let mut pool = super::BodyPool::<1, 1024>::new();
+    let seeded = pool
+        .start_outgoing(key, BlockRole::OutgoingBlock2, &[0x77; 1024], 0)
+        .unwrap();
+    pool.release(seeded).unwrap();
+    let id = pool
+        .start_outgoing_static(key, BlockRole::OutgoingBlock2, &BODY, 0)
+        .unwrap();
+    assert_eq!(pool.set_len(id, 1025), Err(SlotError::LengthExceedsSlot));
+    assert_eq!(pool.payload(id).unwrap().as_ptr(), BODY.as_ptr());
+    pool.set_len(id, 1).unwrap();
+    pool.set_len(id, 64).unwrap();
+    assert_eq!(&pool.payload(id).unwrap()[..48], BODY.as_slice());
+    assert_eq!(&pool.payload(id).unwrap()[48..], &[0x77; 16]);
+    pool.release(id).unwrap();
+    let id = pool
+        .start_outgoing_static(key, BlockRole::OutgoingBlock2, &BODY, 0)
+        .unwrap();
+    let stale = pool.transfer(id).unwrap();
+    pool.payload_mut(id).unwrap()[0] = 0x29;
+    pool.set_transfer(id, stale).unwrap();
+    assert_eq!(pool.payload(id).unwrap()[0], 0x29);
+    assert_eq!(&pool.payload(id).unwrap()[1..], &BODY[1..]);
+}
+
+fn static_body_engine_admission<S: Storage<Token = Token> + BodySlots>(mut engine: Engine<S>) {
+    static BODY: [u8; 48] = [0x41; 48];
+    let key = BlockKey::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 7], 5683));
+    let classic = engine.start_static_block2(key, &BODY, 0).unwrap();
+    assert_eq!(
+        engine.tx_body_payload(classic).unwrap().as_ptr(),
+        BODY.as_ptr()
+    );
+    engine.release_tx_body(classic).unwrap();
+    let q = engine.start_static_q_block2(key, &BODY, 0).unwrap();
+    assert_eq!(engine.tx_body_payload(q).unwrap().as_ptr(), BODY.as_ptr());
+    #[cfg(feature = "diagnostics")]
+    assert_eq!(engine.work_metrics().body_snapshot_bytes, 0);
+    engine.release_tx_body(q).unwrap();
+    let copied = engine.start_block2(key, &BODY, 0).unwrap();
+    assert_ne!(
+        engine.tx_body_payload(copied).unwrap().as_ptr(),
+        BODY.as_ptr()
+    );
+    #[cfg(feature = "diagnostics")]
+    assert_eq!(engine.work_metrics().body_snapshot_bytes, BODY.len() as u64);
+}
+
+#[test]
+fn fixed_static_body_engine_admission_keeps_copy_accounting_exact() {
+    static_body_engine_admission(Engine::from_storage(
+        Memory::<profiles::Constrained>::with_block_wise(),
+    ));
+    let mut absent = Memory::<profiles::Constrained>::new();
+    let key = BlockKey::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 7], 5683));
+    assert_eq!(
+        absent.start_static_block2(key, b"body", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert_eq!(
+        absent.start_static_q_block2(key, b"body", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_static_body_engine_admission_keeps_copy_accounting_exact() {
+    let caps = Capacities::from_profile::<profiles::Constrained>();
+    static_body_engine_admission(Engine::from_storage(
+        super::AllocMemory::<Token>::try_new(
+            caps.with_block_wise::<profiles::Constrained>(),
+            usize::MAX,
+        )
+        .unwrap(),
+    ));
+    let mut absent = super::AllocMemory::<Token>::try_new(caps, usize::MAX).unwrap();
+    let key = BlockKey::new(Token::EMPTY, Endpoint::v4([192, 0, 2, 7], 5683));
+    assert_eq!(
+        absent.start_static_block2(key, b"body", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
+    assert_eq!(
+        absent.start_static_q_block2(key, b"body", 0),
+        Err(BlockTransferError::NoBodyPools)
+    );
+}

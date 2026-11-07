@@ -6705,6 +6705,50 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
 }
 
 #[test]
+fn static_body_matching_checks_length_and_distinct_storage_bytes() {
+    static BODY: [u8; 64] = [b'A'; 64];
+    static OTHER: [u8; 32] = [b'B'; 32];
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let key = BlockKey::new(
+        Token::new(b"same").unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+    )
+    .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+    let first = &BODY[..32];
+    let equal = &BODY[32..];
+    assert_ne!(first.as_ptr(), equal.as_ptr());
+    let id = app.engine.start_static_q_block2(key, first, 0).unwrap();
+    assert!(core::ptr::eq(
+        app.engine.tx_body_payload(id).unwrap(),
+        first
+    ));
+    assert!(retained_body_matches(&mut app.engine, id, first));
+    assert!(!retained_body_matches(&mut app.engine, id, &first[..16]));
+    assert!(retained_body_matches(&mut app.engine, id, equal));
+    assert!(!retained_body_matches(&mut app.engine, id, &OTHER));
+
+    // Advanced mutation must break the address shortcut and preserve exact
+    // comparison even when a caller restores an earlier transfer descriptor.
+    let before = app.engine.tx_body_transfer(id).unwrap();
+    {
+        let mut access = app.engine.storage_mut().access_tx_body_mut(id).unwrap();
+        access.bytes_mut()[0] = b'B';
+    }
+    app.engine
+        .storage_mut()
+        .set_tx_body_transfer(id, before)
+        .unwrap();
+    assert!(!retained_body_matches(&mut app.engine, id, first));
+    assert_eq!(app.engine.tx_body_payload(id).unwrap()[0], b'B');
+    app.engine.release_tx_body(id).unwrap();
+}
+
+#[test]
 fn response_option_bounds_are_typed_sticky_and_preserve_exact_values() {
     use crate::ResponseError;
     static LONG: [u8; 256] = [b'x'; 256];
@@ -11756,10 +11800,23 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
         let token = Token::new(b"q").unwrap();
         let key =
             BlockKey::new(token, peer).with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
-        let id = app.engine.start_q_block2(key, &BODY, 0).unwrap();
-        for _ in 0..10 {
-            app.engine.next_q_block2(id).unwrap();
-        }
+        // Admit through the handler so this also checks the static-payload
+        // retention path, rather than preloading a copied Engine snapshot.
+        let q = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+        let request = Message::new(Type::NonConfirmable, Code::GET, MessageId::new(99))
+            .with_token(token)
+            .with_options(&opts);
+        let mut wire = [0; 64];
+        let n = encode(&request, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(app.transport().count, 10);
+        let id = response_body_for(&app.engine, key).unwrap();
+        assert!(core::ptr::eq(
+            app.engine.tx_body_payload(id).unwrap(),
+            BODY.as_slice()
+        ));
         let mut previous = app.engine.tx_body_transfer(id).unwrap();
         // Initial/full-body reselection, valid Continue, repeated Continue,
         // old-set reselection, an invalid future Continue, then completion.

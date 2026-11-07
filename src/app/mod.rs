@@ -6279,6 +6279,18 @@ where
         );
     }
     let szx = szx_for(meta.block2, meta.q_block2);
+    // Ordinary responses can retain immutable application bytes in the same
+    // bounded body slot. Observe and deferred completion keep their existing
+    // snapshot/timer ownership; their callers disable `allow_borrowed`.
+    let static_body = if allow_borrowed
+        && response.code().is_success()
+        && response.observe_seq().is_none()
+        && !response.fresh_piv()
+    {
+        response.static_payload()
+    } else {
+        None
+    };
     let started = if meta.q_block2.is_some() {
         let etag = response
             .etag_bytes()
@@ -6288,10 +6300,16 @@ where
                 .map_err(BlockTransferError::from)
                 .map_err(Error::Block)?,
         );
-        engine.start_q_block2(key, response.payload(), szx)
+        match static_body {
+            Some(body) => engine.start_static_q_block2(key, body, szx),
+            None => engine.start_q_block2(key, response.payload(), szx),
+        }
     } else {
         let key = response_block_key(key.token(), key.endpoint(), response)?;
-        engine.start_block2(key, response.payload(), szx)
+        match static_body {
+            Some(body) => engine.start_static_block2(key, body, szx),
+            None => engine.start_block2(key, response.payload(), szx),
+        }
     };
     let id = match started {
         Ok(id) => id,
@@ -6542,17 +6560,20 @@ fn retained_body_matches<S: Storage + BodySlots>(
     id: SlotId,
     payload: &[u8],
 ) -> bool {
+    let body = engine.tx_body_payload(id);
+    let same_storage = body.is_some_and(|body| core::ptr::eq(body, payload));
     #[cfg(feature = "diagnostics")]
     {
-        let candidates = engine
-            .tx_body_payload(id)
-            .filter(|body| body.len() == payload.len())
+        let candidates = body
+            .filter(|body| !same_storage && body.len() == payload.len())
             .map_or(0, <[u8]>::len);
         let work = engine.work_metrics_mut();
         crate::storage::WorkMetrics::add(&mut work.body_compare_calls, 1);
         crate::storage::WorkMetrics::add(&mut work.body_compare_candidate_bytes, candidates);
     }
-    engine.tx_body_payload(id) == Some(payload)
+    // Equal slice addresses include length. Different storage still requires
+    // exact bytes: an ETag alone cannot establish immutable body identity.
+    same_storage || engine.tx_body_payload(id) == Some(payload)
 }
 
 #[allow(clippy::too_many_arguments)]

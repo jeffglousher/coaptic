@@ -504,14 +504,23 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
             return None;
         }
         let idx = id.index();
-        Some(&self.bytes[idx][..self.lens[idx]])
+        let bytes = match self.transfers[idx]
+            .as_ref()
+            .and_then(BlockTransfer::static_body)
+        {
+            Some(body) => body,
+            None => &self.bytes[idx],
+        };
+        Some(&bytes[..self.lens[idx]])
     }
 
     /// Writable complete-body buffer (full capacity).
+    /// A borrowed static body is first copied into the existing backing.
     pub fn payload_mut(&mut self, id: SlotId) -> Option<&mut [u8]> {
         if !self.occ.is_occupied(id) {
             return None;
         }
+        self.materialize(id.index());
         Some(&mut self.bytes[id.index()])
     }
 
@@ -527,20 +536,27 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
         if len > BYTES {
             return Err(SlotError::LengthExceedsSlot);
         }
+        self.materialize(id.index());
         self.lens[id.index()] = len;
         Ok(())
     }
 
     /// [`BlockTransfer`] sidecar for an occupied slot.
+    /// Pool-owned static backing is omitted from this protocol snapshot.
     #[must_use]
     pub fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.transfers.get(id.index()).copied().flatten()
+        self.transfers
+            .get(id.index())
+            .copied()
+            .flatten()
+            .map(BlockTransfer::without_static_body)
     }
 
     /// Replace the sidecar on an occupied slot.
+    /// Preserves payload bytes, materializing borrowed backing before replacement.
     pub fn set_transfer(
         &mut self,
         id: SlotId,
@@ -553,7 +569,8 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
                 SlotError::InvalidSlot
             });
         }
-        self.transfers[id.index()] = Some(transfer);
+        self.materialize(id.index());
+        self.transfers[id.index()] = Some(transfer.without_static_body());
         Ok(())
     }
 
@@ -562,14 +579,23 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
         self.occ.try_pin(id)?;
         let idx = id.index();
         let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
-        let bytes = &self.bytes[idx][..self.lens[idx]];
+        let bytes = match self.transfers[idx]
+            .as_ref()
+            .and_then(BlockTransfer::static_body)
+        {
+            Some(body) => body,
+            None => &self.bytes[idx],
+        };
+        let bytes = &bytes[..self.lens[idx]];
         Ok(Access::new(id, bytes, pin))
     }
 
     /// Write access to the full body buffer. Pins `id` until the guard is dropped.
+    /// Static bytes are materialized only after pin admission succeeds.
     pub fn access_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError> {
         self.occ.try_pin(id)?;
         let idx = id.index();
+        self.materialize(idx);
         let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
         let bytes = &mut self.bytes[idx];
         let len = &mut self.lens[idx];
@@ -770,6 +796,34 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
         Ok(id)
     }
 
+    /// Reserve an outgoing Block2/Q-Block2 slot backed by immutable static bytes.
+    ///
+    /// Byte limits, occupied-slot counts and backing allocation are unchanged.
+    /// Writable access or sidecar replacement copies into that existing backing;
+    /// ordinary reads and outgoing progress do not copy the body. Other roles
+    /// are refused with [`BlockTransferError::IdentityMismatch`].
+    pub fn start_outgoing_static(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        if !matches!(role, BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let mut transfer = if role.is_q_block() {
+            BlockTransfer::outgoing_q(key, role, body.len(), szx, BYTES)?
+        } else {
+            BlockTransfer::outgoing(key, role, body.len(), szx, BYTES)?
+        };
+        let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
+        transfer.retain_static_body(body);
+        self.lens[id.index()] = body.len();
+        self.transfers[id.index()] = Some(transfer);
+        Ok(id)
+    }
+
     /// Issue the next outgoing range from `id`.
     ///
     /// Classic Block is in-order. Q-Block issues the next unsent NUM in the
@@ -883,6 +937,19 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
         Ok(BlockProgress::new(id, filled, complete))
     }
 
+    fn materialize(&mut self, idx: usize) {
+        if let Some(body) = self.transfers[idx]
+            .as_ref()
+            .and_then(BlockTransfer::static_body)
+        {
+            self.bytes[idx][..body.len()].copy_from_slice(body);
+            self.transfers[idx]
+                .as_mut()
+                .expect("static body owner")
+                .clear_static_body();
+        }
+    }
+
     fn reset(&mut self, id: SlotId) {
         let idx = id.index();
         self.lens[idx] = 0;
@@ -955,6 +1022,16 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> super::block::BodyOp
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
         BodyPool::start_outgoing(self, key, role, body, szx)
+    }
+
+    fn start_outgoing_static(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        BodyPool::start_outgoing_static(self, key, role, body, szx)
     }
 
     fn next_outgoing(

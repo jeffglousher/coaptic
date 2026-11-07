@@ -523,6 +523,44 @@ struct NotificationSnapshot {
     max_age: Option<u32>,
 }
 
+// Ordinary outgoing response bodies do not use a receive/retention timer.
+// Keep their immutable backing in that same role-exclusive owner.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum BodyRetention {
+    None,
+    Wait(QBlockReceiveWait),
+    Static(&'static [u8]),
+}
+
+impl BodyRetention {
+    const fn wait(self) -> Option<QBlockReceiveWait> {
+        match self {
+            Self::Wait(wait) => Some(wait),
+            Self::None | Self::Static(_) => None,
+        }
+    }
+
+    fn wait_mut(&mut self) -> Option<&mut QBlockReceiveWait> {
+        match self {
+            Self::Wait(wait) => Some(wait),
+            Self::None | Self::Static(_) => None,
+        }
+    }
+}
+
+impl core::fmt::Debug for BodyRetention {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::None => f.write_str("None"),
+            Self::Wait(wait) => wait.fmt(f),
+            Self::Static(bytes) => f
+                .debug_struct("StaticBody")
+                .field("len", &bytes.len())
+                .finish(),
+        }
+    }
+}
+
 /// Exact bounded request matchability context, not a hash. Token/MID and block
 /// control options may change, but method and cache-key options may not.
 /// Block1/Q-Block1 retain the NUM0-only If-None-Match separately from the
@@ -629,7 +667,7 @@ pub struct BlockTransfer<T: OwnedToken = Token> {
     complete: bool,
     expected_len: Option<u32>,
     q: Option<QWindow>,
-    q_receive: Option<QBlockReceiveWait>,
+    q_receive: BodyRetention,
     pub(crate) request_binding: Option<RequestBinding>,
     // Highest authenticated request PIV and its Token for timed Q-Block1 reports.
     #[cfg(feature = "oscore")]
@@ -662,6 +700,35 @@ pub(crate) struct IssueCheckpoint {
 const _: () = assert!(core::mem::size_of::<IssueCheckpoint>() <= 16);
 
 impl<T: OwnedToken> BlockTransfer<T> {
+    pub(crate) fn retain_static_body(&mut self, body: &'static [u8]) {
+        debug_assert!(matches!(
+            self.role,
+            BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
+        ));
+        debug_assert!(matches!(self.q_receive, BodyRetention::None));
+        self.q_receive = BodyRetention::Static(body);
+    }
+
+    pub(crate) const fn static_body(&self) -> Option<&'static [u8]> {
+        match self.q_receive {
+            BodyRetention::Static(body) => Some(body),
+            _ => None,
+        }
+    }
+
+    // Body backing belongs to the pool, not a copied protocol sidecar. Removing
+    // it from snapshots prevents stale set_transfer calls from reviving it.
+    pub(crate) fn without_static_body(mut self) -> Self {
+        self.clear_static_body();
+        self
+    }
+
+    pub(crate) fn clear_static_body(&mut self) {
+        if matches!(self.q_receive, BodyRetention::Static(_)) {
+            self.q_receive = BodyRetention::None;
+        }
+    }
+
     /// Outgoing uploads reuse the incoming request-binding area for the control
     /// options that must survive fragmentation. `role` distinguishes the layouts.
     pub(crate) fn retain_upload_controls(
@@ -768,7 +835,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
             complete: false,
             expected_len,
             q: None,
-            q_receive: None,
+            q_receive: BodyRetention::None,
             request_binding: None,
             #[cfg(feature = "oscore")]
             oscore_request: None,
@@ -851,7 +918,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
                 continue_trigger: None,
                 continue_ack: None,
             }),
-            q_receive: None,
+            q_receive: BodyRetention::None,
             request_binding: None,
             #[cfg(feature = "oscore")]
             oscore_request: None,
@@ -974,7 +1041,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
                 complete: false,
                 expected_len: Some(len),
                 q,
-                q_receive: None,
+                q_receive: BodyRetention::None,
                 request_binding: None,
                 #[cfg(feature = "oscore")]
                 oscore_request: None,
@@ -1172,7 +1239,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
         if self.role == BlockRole::OutgoingBlock2
             && self.notification.is_some_and(|n| !n.code.is_success())
         {
-            self.q_receive = Some(QBlockReceiveWait {
+            self.q_receive = BodyRetention::Wait(QBlockReceiveWait {
                 attempts: 0,
                 timeout_ms: 0,
                 next_timeout_ms: deadline,
@@ -1185,7 +1252,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
             self.role,
             BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
         ) {
-            match self.q_receive {
+            match self.q_receive.wait() {
                 Some(wait) => Some(wait.next_timeout_ms),
                 None => None,
             }
@@ -1198,7 +1265,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
     // Reuse that storage for the representation epoch and bounded retention.
     pub(crate) fn remember_q_observe(&mut self, sequence: u32, deadline: u64) {
         debug_assert_eq!(self.role, BlockRole::OutgoingQBlock2);
-        self.q_receive = Some(QBlockReceiveWait {
+        self.q_receive = BodyRetention::Wait(QBlockReceiveWait {
             attempts: 0,
             timeout_ms: sequence,
             next_timeout_ms: deadline,
@@ -1207,7 +1274,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
 
     pub(crate) const fn q_observe_sequence(self) -> Option<u32> {
         if matches!(self.role, BlockRole::OutgoingQBlock2) {
-            match self.q_receive {
+            match self.q_receive.wait() {
                 Some(state) => Some(state.timeout_ms),
                 None => None,
             }
@@ -1230,18 +1297,25 @@ impl<T: OwnedToken> BlockTransfer<T> {
 
     pub(crate) fn set_q_observe_confirmable(&mut self) {
         debug_assert!(self.q_observe_sequence().is_some());
-        if let Some(state) = self.q_receive.as_mut() {
+        if let Some(state) = self.q_receive.wait_mut() {
             state.attempts |= 1;
         }
     }
 
     pub(crate) fn q_observe_confirmable(self) -> bool {
         self.q_observe_sequence().is_some()
-            && self.q_receive.is_some_and(|state| state.attempts & 1 != 0)
+            && self
+                .q_receive
+                .wait()
+                .is_some_and(|state| state.attempts & 1 != 0)
     }
 
     pub(crate) fn q_observe_recovery(self) -> bool {
-        self.q_observe_confirmable() && self.q_receive.is_some_and(|state| state.attempts & 2 != 0)
+        self.q_observe_confirmable()
+            && self
+                .q_receive
+                .wait()
+                .is_some_and(|state| state.attempts & 2 != 0)
     }
 
     // After the original CON stream completes, its existing window bitmap can
@@ -1283,7 +1357,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
         window.base = base;
         window.mask = mask;
         self.complete = false;
-        self.q_receive.as_mut().expect("Q Observe").attempts |= 2;
+        self.q_receive.wait_mut().expect("Q Observe").attempts |= 2;
         Ok(())
     }
 
@@ -1404,7 +1478,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
         if matches!(self.role, BlockRole::OutgoingBlock2) {
             None
         } else {
-            self.q_receive
+            self.q_receive.wait()
         }
     }
 
@@ -1419,17 +1493,20 @@ impl<T: OwnedToken> BlockTransfer<T> {
             return;
         }
         if self.q_holes().is_some() {
-            self.q_receive = Some(QBlockReceiveWait::new(now_ms));
+            self.q_receive = BodyRetention::Wait(QBlockReceiveWait::new(now_ms));
         } else {
-            self.q_receive = None;
+            self.q_receive = BodyRetention::None;
         }
     }
 
     /// Record a due recover: doubled wait, or `None` when max retransmit is
     /// already reached (caller should drop the partial body).
     pub fn note_q_recover(&mut self, now_ms: u64) -> Option<QBlockReceiveWait> {
-        let next = self.q_receive.and_then(|wait| wait.next_attempt(now_ms))?;
-        self.q_receive = Some(next);
+        let next = self
+            .q_receive
+            .wait()
+            .and_then(|wait| wait.next_attempt(now_ms))?;
+        self.q_receive = BodyRetention::Wait(next);
         Some(next)
     }
 
@@ -2108,6 +2185,13 @@ pub(crate) trait BodyOps<T: OwnedToken = Token> {
         key: BlockKey<T>,
         role: BlockRole,
         body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError>;
+    fn start_outgoing_static(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        body: &'static [u8],
         szx: u8,
     ) -> Result<SlotId, BlockTransferError>;
     fn next_outgoing(

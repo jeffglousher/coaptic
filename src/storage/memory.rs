@@ -889,6 +889,15 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
         Err(BlockTransferError::NoBodyPools)
     }
 
+    fn start_static_block2(
+        &mut self,
+        _key: BlockKey<P::Token>,
+        _body: &'static [u8],
+        _szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
     fn next_bert2(
         &mut self,
         _id: SlotId,
@@ -928,6 +937,15 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
     }
 
     fn next_q_block2(&mut self, _id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
+        Err(BlockTransferError::NoBodyPools)
+    }
+
+    fn start_static_q_block2(
+        &mut self,
+        _key: BlockKey<P::Token>,
+        _body: &'static [u8],
+        _szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
         Err(BlockTransferError::NoBodyPools)
     }
 
@@ -1205,6 +1223,17 @@ where
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingBlock2)
     }
 
+    fn start_static_block2(
+        &mut self,
+        key: BlockKey<P::Token>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .tx
+            .start_outgoing_static(key, BlockRole::OutgoingBlock2, body, szx)
+    }
+
     fn next_bert2(
         &mut self,
         id: SlotId,
@@ -1253,6 +1282,17 @@ where
 
     fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.bodies.tx.next_outgoing(id, BlockRole::OutgoingQBlock2)
+    }
+
+    fn start_static_q_block2(
+        &mut self,
+        key: BlockKey<P::Token>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.bodies
+            .tx
+            .start_outgoing_static(key, BlockRole::OutgoingQBlock2, body, szx)
     }
 
     fn ack_q_block2(&mut self, id: SlotId, num: u32) -> Result<BlockProgress, BlockTransferError> {

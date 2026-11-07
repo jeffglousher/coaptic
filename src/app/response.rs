@@ -885,6 +885,16 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         }
     }
 
+    // Preserve the stronger lifetime only for the explicit static variant.
+    // A Response<'static> can also own inline bytes; borrowing those past the
+    // response's lifetime would not be valid.
+    pub(crate) fn static_payload(&self) -> Option<&'static [u8]> {
+        match self.payload {
+            Payload::Static(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
     /// Whether [`Self::payload`] is shorter than the source that produced it.
     ///
     /// `true` after [`Self::payload_copy`] / [`super::App::take_response`]

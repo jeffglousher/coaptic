@@ -611,6 +611,18 @@ pub trait BodySlots: Storage {
         szx: u8,
     ) -> Result<SlotId, crate::error::BlockTransferError>;
 
+    /// Reserve an outgoing Block2 slot backed by immutable static bytes.
+    ///
+    /// The same body capacity and slot admission limits apply as for
+    /// [`Self::start_block2`]. Existing backing remains allocated. Writable
+    /// access or sidecar replacement materializes the bytes in that backing.
+    fn start_static_block2(
+        &mut self,
+        key: BlockKey<Self::Token>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, crate::error::BlockTransferError>;
+
     /// Issue the next in-order outgoing Block2 range from `id`.
     fn next_block2(
         &mut self,
@@ -656,6 +668,16 @@ pub trait BodySlots: Storage {
         &mut self,
         key: BlockKey<Self::Token>,
         body: &[u8],
+        szx: u8,
+    ) -> Result<SlotId, crate::error::BlockTransferError>;
+
+    /// Reserve an outgoing Q-Block2 slot backed by immutable static bytes.
+    /// Same capacity, reservation and materialization contract as
+    /// [`Self::start_static_block2`]; Q-Block validation is unchanged.
+    fn start_static_q_block2(
+        &mut self,
+        key: BlockKey<Self::Token>,
+        body: &'static [u8],
         szx: u8,
     ) -> Result<SlotId, crate::error::BlockTransferError>;
 

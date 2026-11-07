@@ -1084,6 +1084,18 @@ impl<T: OwnedToken> BodySlots for AllocMemory<T> {
             .start_outgoing(key, BlockRole::OutgoingBlock2, body, szx)
     }
 
+    fn start_static_block2(
+        &mut self,
+        key: BlockKey<T>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .start_outgoing_static(key, BlockRole::OutgoingBlock2, body, szx)
+    }
+
     fn next_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
         self.tx_body
             .as_mut()
@@ -1145,6 +1157,18 @@ impl<T: OwnedToken> BodySlots for AllocMemory<T> {
             .as_mut()
             .ok_or(BlockTransferError::NoBodyPools)?
             .start_outgoing(key, BlockRole::OutgoingQBlock2, body, szx)
+    }
+
+    fn start_static_q_block2(
+        &mut self,
+        key: BlockKey<T>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.tx_body
+            .as_mut()
+            .ok_or(BlockTransferError::NoBodyPools)?
+            .start_outgoing_static(key, BlockRole::OutgoingQBlock2, body, szx)
     }
 
     fn next_q_block2(&mut self, id: SlotId) -> Result<OutgoingBlock, BlockTransferError> {
@@ -1237,6 +1261,26 @@ struct AllocBodySlot<T: OwnedToken = Token> {
     transfer: Option<BlockTransfer<T>>,
 }
 
+impl<T: OwnedToken> AllocBodySlot<T> {
+    fn payload(&self) -> &[u8] {
+        let bytes = match self.transfer.as_ref().and_then(BlockTransfer::static_body) {
+            Some(body) => body,
+            None => &self.buf,
+        };
+        &bytes[..self.len]
+    }
+
+    fn materialize(&mut self) {
+        if let Some(body) = self.transfer.as_ref().and_then(BlockTransfer::static_body) {
+            self.buf[..body.len()].copy_from_slice(body);
+            self.transfer
+                .as_mut()
+                .expect("static body owner")
+                .clear_static_body();
+        }
+    }
+}
+
 struct AllocBodyPool<T: OwnedToken = Token> {
     slots: Vec<AllocBodySlot<T>>,
     slot_bytes: usize,
@@ -1271,7 +1315,7 @@ impl<T: OwnedToken> AllocBodyPool<T> {
             return None;
         }
         let slot = self.slots.get(id.index())?;
-        Some(&slot.buf[..slot.len])
+        Some(slot.payload())
     }
 
     fn access(&mut self, id: SlotId) -> Result<Access<'_>, SlotError> {
@@ -1279,7 +1323,7 @@ impl<T: OwnedToken> AllocBodyPool<T> {
         let idx = id.index();
         let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
         let slot = self.slots.get(idx).ok_or(SlotError::InvalidSlot)?;
-        let bytes = &slot.buf[..slot.len];
+        let bytes = slot.payload();
         Ok(Access::new(id, bytes, pin))
     }
 
@@ -1288,6 +1332,7 @@ impl<T: OwnedToken> AllocBodyPool<T> {
         let idx = id.index();
         let pin = self.occ.pin_flag_mut(id).ok_or(SlotError::InvalidSlot)?;
         let slot = self.slots.get_mut(idx).ok_or(SlotError::InvalidSlot)?;
+        slot.materialize();
         Ok(AccessMut::new(id, slot.buf.as_mut(), &mut slot.len, pin))
     }
 
@@ -1295,7 +1340,10 @@ impl<T: OwnedToken> AllocBodyPool<T> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.slots.get(id.index())?.transfer
+        self.slots
+            .get(id.index())?
+            .transfer
+            .map(BlockTransfer::without_static_body)
     }
 
     fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {
@@ -1310,7 +1358,8 @@ impl<T: OwnedToken> AllocBodyPool<T> {
             .slots
             .get_mut(id.index())
             .ok_or(SlotError::InvalidSlot)?;
-        slot.transfer = Some(transfer);
+        slot.materialize();
+        slot.transfer = Some(transfer.without_static_body());
         Ok(())
     }
 
@@ -1473,6 +1522,29 @@ impl<T: OwnedToken> AllocBodyPool<T> {
             return Err(e);
         }
         self.slots[id.index()].transfer = Some(transfer);
+        Ok(id)
+    }
+
+    fn start_outgoing_static(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        if !matches!(role, BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let mut transfer = if role.is_q_block() {
+            BlockTransfer::outgoing_q(key, role, body.len(), szx, self.slot_bytes)?
+        } else {
+            BlockTransfer::outgoing(key, role, body.len(), szx, self.slot_bytes)?
+        };
+        let id = self.acquire().ok_or(BlockTransferError::Saturated)?;
+        transfer.retain_static_body(body);
+        let slot = &mut self.slots[id.index()];
+        slot.len = body.len();
+        slot.transfer = Some(transfer);
         Ok(id)
     }
 
@@ -1644,6 +1716,16 @@ impl<T: OwnedToken> BodyOps<T> for AllocBodyPool<T> {
         szx: u8,
     ) -> Result<SlotId, BlockTransferError> {
         AllocBodyPool::start_outgoing(self, key, role, body, szx)
+    }
+
+    fn start_outgoing_static(
+        &mut self,
+        key: BlockKey<T>,
+        role: BlockRole,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        AllocBodyPool::start_outgoing_static(self, key, role, body, szx)
     }
 
     fn next_outgoing(
@@ -2044,6 +2126,13 @@ impl<T: OwnedToken> SlotPool for AllocObserveTable<T> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn allocated_static_body_preserves_progress_capacity_and_copy_on_write() {
+        crate::storage::tests::static_body_pool_contract(|| {
+            super::AllocBodyPool::<crate::message::Token>::new(1, 1024).unwrap()
+        });
+    }
+
     use super::*;
 
     // Compare the accelerator against the public row view after mixed mutations.
