@@ -636,13 +636,17 @@ fn cancelled_immediate_static_q_releases_snapshot_and_retries_exact_bytes() {
     );
     #[cfg(feature = "alloc")]
     exercise(
-        builder()
-            .bind_alloc(
-                io(),
-                crate::storage::Capacities::from_profile::<profiles::Constrained>()
-                    .with_block_wise::<profiles::Constrained>(),
-            )
-            .unwrap(),
+        App::with_resources(
+            Resources::<profiles::Constrained>::new()
+                .routes::<1>()
+                .block_wise::<true>()
+                .allocated(usize::MAX),
+        )
+        .allow_unprotected()
+        .deterministic_for_tests()
+        .route("q", get(static_body))
+        .bind(io())
+        .unwrap(),
         &ready,
         &accepted,
         &second,

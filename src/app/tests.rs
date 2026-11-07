@@ -6706,6 +6706,8 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
 
 #[test]
 fn static_body_matching_checks_length_and_distinct_storage_bytes() {
+    use super::retained_body_matches;
+    use crate::storage::BodySlots;
     static BODY: [u8; 64] = [b'A'; 64];
     static OTHER: [u8; 32] = [b'B'; 32];
     let mut app = App::profile::<profiles::Default>()
@@ -11812,7 +11814,7 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
         app.transport_mut().inbox = Some((peer, wire, n));
         app.poll(0).unwrap();
         assert_eq!(app.transport().count, 10);
-        let id = response_body_for(&app.engine, key).unwrap();
+        let id = super::response_body_for(&app.engine, key).unwrap();
         assert!(core::ptr::eq(
             app.engine.tx_body_payload(id).unwrap(),
             BODY.as_slice()
