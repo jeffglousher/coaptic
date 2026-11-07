@@ -96,6 +96,27 @@ impl<T: OwnedToken> IntoResponse<T> for Response<'static, T> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Received<'a, T: OwnedToken> {
+    header: crate::message::Header,
+    token: T,
+    options: &'a [u8],
+    origin: &'a super::client::ReplyMeta,
+}
+
+impl<T: OwnedToken> core::fmt::Debug for Received<'_, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Keep the retained raw header/payload private and respect Token::Debug.
+        f.debug_struct("Received")
+            .field("header", &self.header)
+            .field("token", &self.token)
+            .field("options", &self.options)
+            .field("at_ms", &self.origin.received_at_ms())
+            .field("peer", &self.origin.peer())
+            .finish()
+    }
+}
+
 /// Owned response: handler intent, or a client snapshot from
 /// [`App::take_response`](super::App::take_response).
 ///
@@ -144,8 +165,7 @@ impl<T: OwnedToken> IntoResponse<T> for Response<'static, T> {
 #[derive(Clone, Copy, Debug)]
 pub struct Response<'a, T: OwnedToken = Token> {
     invalid: Option<ResponseError>,
-    received_header: Option<crate::message::ParsedMessage<'a, T>>,
-    received_at_ms: Option<u64>,
+    received: Option<Received<'a, T>>,
     code: Code,
     payload: Payload<'a>,
     content_format: Option<ContentFormat>,
@@ -153,15 +173,13 @@ pub struct Response<'a, T: OwnedToken = Token> {
     etag_len: u8,
     max_age: Option<u32>,
     observe: Option<u32>,
-    ty: Option<Type>,
-    token: Option<T>,
-    mid: Option<MessageId>,
-    peer: Option<Endpoint>,
     assembled: Option<&'a [u8]>,
     echo: Option<Echo>,
-    location_path: [&'a str; LOCATION_MAX],
+    // Ordinary responses need no Location backing initialized. Materialize each
+    // bounded array on its first valid append; empty strings remain valid values.
+    location_path: Option<[&'a str; LOCATION_MAX]>,
     location_path_len: u8,
-    location_query: [&'a str; LOCATION_MAX],
+    location_query: Option<[&'a str; LOCATION_MAX]>,
     location_query_len: u8,
     separate: bool,
     deferred: bool,
@@ -177,8 +195,7 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     pub const fn new(code: Code) -> Self {
         Self {
             invalid: None,
-            received_header: None,
-            received_at_ms: None,
+            received: None,
             code,
             payload: Payload::Empty,
             content_format: None,
@@ -186,15 +203,11 @@ impl<'a, T: OwnedToken> Response<'a, T> {
             etag_len: 0,
             max_age: None,
             observe: None,
-            ty: None,
-            token: None,
-            mid: None,
-            peer: None,
             assembled: None,
             echo: None,
-            location_path: [""; LOCATION_MAX],
+            location_path: None,
             location_path_len: 0,
-            location_query: [""; LOCATION_MAX],
+            location_query: None,
             location_query_len: 0,
             separate: false,
             deferred: false,
@@ -209,7 +222,10 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// assembly time does not extend Max-Age. Handler-created intents return `None`.
     #[must_use]
     pub const fn received_at_ms(&self) -> Option<u64> {
-        self.received_at_ms
+        match self.received {
+            Some(ref received) => Some(received.origin.received_at_ms()),
+            None => None,
+        }
     }
 
     /// All received options in wire order, including unknown elective options.
@@ -218,19 +234,11 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// elective values. Handler-created responses have no received header and
     /// yield an empty iterator. These bytes borrow App's completed-reply hold.
     pub fn received_options(&self) -> impl Iterator<Item = crate::message::Opt<'_>> {
-        self.received_header
-            .into_iter()
-            .flat_map(|header| header.options())
-    }
-
-    pub(crate) fn with_received_header(
-        mut self,
-        header: crate::message::ParsedMessage<'a, T>,
-        received_at_ms: u64,
-    ) -> Self {
-        self.received_header = Some(header);
-        self.received_at_ms = Some(received_at_ms);
-        self
+        crate::message::Options::new(
+            self.received
+                .as_ref()
+                .map_or(&[], |received| received.options),
+        )
     }
 
     /// Check payload and option bounds before returning or sending this response.
@@ -608,7 +616,14 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         {
             return self.invalid(ResponseError::LocationDotSegment);
         }
-        self.location_path[n] = segment;
+        match &mut self.location_path {
+            Some(values) => values[n] = segment,
+            None => {
+                let mut values = [""; LOCATION_MAX];
+                values[n] = segment;
+                self.location_path = Some(values);
+            }
+        }
         self.location_path_len += 1;
         self
     }
@@ -632,21 +647,46 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         if n >= LOCATION_MAX || query.len() > 255 {
             return self.invalid(ResponseError::LocationQueryBounds);
         }
-        self.location_query[n] = query;
+        match &mut self.location_query {
+            Some(values) => values[n] = query,
+            None => {
+                let mut values = [""; LOCATION_MAX];
+                values[n] = query;
+                self.location_query = Some(values);
+            }
+        }
         self.location_query_len += 1;
         self
+    }
+
+    // Counts decide ordinary encoding without borrowing either optional array.
+    pub(crate) const fn has_locations(&self) -> bool {
+        self.location_path_len != 0 || self.location_query_len != 0
+    }
+
+    pub(crate) const fn has_only_etag_and_format(&self) -> bool {
+        !self.has_locations()
+            && self.observe.is_none()
+            && self.max_age.is_none()
+            && self.echo.is_none()
     }
 
     /// Location-Path segments in insertion order.
     #[must_use]
     pub fn location_paths(&self) -> &[&str] {
-        &self.location_path[..usize::from(self.location_path_len)]
+        match &self.location_path {
+            Some(values) => &values[..usize::from(self.location_path_len)],
+            None => &[],
+        }
     }
 
     /// Location-Query values in insertion order.
     #[must_use]
     pub fn location_queries(&self) -> &[&str] {
-        &self.location_query[..usize::from(self.location_query_len)]
+        match &self.location_query {
+            Some(values) => &values[..usize::from(self.location_query_len)],
+            None => &[],
+        }
     }
 
     /// Defer application work accepted by [`super::App::poll_with`].
@@ -852,6 +892,16 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         }
     }
 
+    // Preserve the stronger lifetime only for the explicit static variant.
+    // A Response<'static> can also own inline bytes; borrowing those past the
+    // response's lifetime would not be valid.
+    pub(crate) fn static_payload(&self) -> Option<&'static [u8]> {
+        match self.payload {
+            Payload::Static(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
     /// Whether [`Self::payload`] is shorter than the source that produced it.
     ///
     /// `true` after [`Self::payload_copy`] / [`super::App::take_response`]
@@ -905,25 +955,37 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// populated it.
     #[must_use]
     pub const fn ty(&self) -> Option<Type> {
-        self.ty
+        match self.received {
+            Some(ref received) => Some(received.header.ty()),
+            None => None,
+        }
     }
 
     /// Token on a client snapshot, if populated (same as [`Call::token`](super::Call::token)).
     #[must_use]
     pub const fn token(&self) -> Option<T> {
-        self.token
+        match self.received {
+            Some(ref received) => Some(received.token),
+            None => None,
+        }
     }
 
     /// Message ID of the matched datagram on a client snapshot, if populated.
     #[must_use]
     pub const fn message_id(&self) -> Option<MessageId> {
-        self.mid
+        match self.received {
+            Some(ref received) => Some(received.header.message_id()),
+            None => None,
+        }
     }
 
     /// Remote endpoint that sent a client-snapshot response, if populated.
     #[must_use]
     pub const fn peer(&self) -> Option<Endpoint> {
-        self.peer
+        match self.received {
+            Some(ref received) => Some(received.origin.peer()),
+            None => None,
+        }
     }
 
     /// Complete assembled response body, if Block2 / Q-Block2 filled an RX body area.
@@ -946,21 +1008,23 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         self.assembled.is_some()
     }
 
-    pub(crate) fn from_client(
-        code: Code,
-        ty: Type,
-        token: T,
-        mid: MessageId,
-        peer: Endpoint,
+    pub(super) fn from_client(
+        header: crate::message::ParsedMessage<'a, T>,
+        origin: &'a super::client::ReplyMeta,
         payload: &[u8],
         content_format: Option<ContentFormat>,
     ) -> Self {
-        let mut response = Self::new(code).payload_copy(payload);
+        let mut response = Self::new(header.code()).payload_copy(payload);
         response.content_format = content_format;
-        response.ty = Some(ty);
-        response.token = Some(token);
-        response.mid = Some(mid);
-        response.peer = Some(peer);
+        // The retained header already owns type, Token, and Message ID. Keep
+        // their identity together instead of copying each into another field.
+        // Options already borrow this immutable inbox hold; origin can too.
+        response.received = Some(Received {
+            header: header.header(),
+            token: header.token(),
+            options: header.options_bytes(),
+            origin,
+        });
         response
     }
 
@@ -1468,5 +1532,107 @@ mod assembled_hold_tests {
         assert_eq!(full.payload(), &BORROWED);
         assert!(!full.payload_truncated());
         assert_eq!(full.payload_src_len(), 200);
+    }
+    #[cfg(feature = "std")]
+    #[test]
+    fn edited_snapshot_debug_does_not_reveal_retained_payload() {
+        use crate::message::{Message, MessageId, Token, decode, encode};
+        use crate::storage::Endpoint;
+        let payload = [165; INLINE_PAYLOAD];
+        let message =
+            Message::con(Code::CONTENT, MessageId::new(1), Token::EMPTY).with_payload(&payload);
+        let mut wire = [0; 256];
+        let len = encode(&message, &mut wire).unwrap();
+        let parsed = decode(&wire[..len]).unwrap();
+        let origin = super::super::client::ReplyMeta::from_parsed(
+            &parsed,
+            Endpoint::v4([192, 0, 2, 8], 5683),
+            0,
+        )
+        .unwrap();
+        let response: Response<'_, Token> = origin.response().payload_copy(b"edited");
+        let debug = std::format!("{response:?}");
+        assert!(
+            !debug.contains("165, 165"),
+            "retained payload leaked: {debug}"
+        );
+    }
+
+    #[test]
+    fn location_empty_first_values_and_overflow_preserve_both_arrays() {
+        const FIRST: Response<'static, crate::message::Token> = Response::created()
+            .with_static(b"payload")
+            .location_path("")
+            .location_query("");
+        assert_eq!(FIRST.location_paths(), &[""]);
+        assert_eq!(FIRST.location_queries(), &[""]);
+        assert_eq!(FIRST.validate(), Ok(()));
+        let values = ["", "one", "two", "three", "four", "five", "six", "seven"];
+        let mut full = FIRST;
+        for value in &values[1..] {
+            full = full.location_path(value).location_query(value);
+        }
+        assert_eq!(full.location_paths(), &values);
+        assert_eq!(full.location_queries(), &values);
+        assert_eq!(full.validate(), Ok(()));
+        // Count refusal precedes dot-segment validation and changes no entries.
+        let path_overflow = full.location_path(".");
+        let query_overflow = full.location_query("overflow");
+        assert_eq!(
+            path_overflow.validate(),
+            Err(ResponseError::LocationPathBounds)
+        );
+        assert_eq!(
+            query_overflow.validate(),
+            Err(ResponseError::LocationQueryBounds)
+        );
+        for response in [path_overflow, query_overflow] {
+            assert_eq!(response.location_paths(), &values);
+            assert_eq!(response.location_queries(), &values);
+            assert_eq!(response.payload(), b"payload");
+        }
+    }
+
+    #[test]
+    fn received_identity_is_atomic_and_survives_response_edits() {
+        use crate::message::{ContentFormat, Message, MessageId, Opt, Token, Type, decode, encode};
+        use crate::storage::Endpoint;
+        let token = Token::new(b"identity").unwrap();
+        let mid = MessageId::new(0x1234);
+        let peer = Endpoint::v4([192, 0, 2, 8], 5683);
+        let format = ContentFormat::TEXT_PLAIN.encode();
+        let options = [Opt::content_format(&format)];
+        let message = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+            .with_token(token)
+            .with_options(&options)
+            .with_payload(b"original");
+        let mut wire = [0; 64];
+        let len = encode(&message, &mut wire).unwrap();
+        let header = decode(&wire[..len]).unwrap();
+        let origin = super::super::client::ReplyMeta::from_parsed(&header, peer, 0).unwrap();
+        let response: Response<'_, Token> = origin
+            .response()
+            .content_format(ContentFormat::OCTET_STREAM)
+            .location_path("receipt")
+            .payload_copy(b"edited");
+        assert_eq!(response.received_at_ms(), Some(0));
+        assert_eq!(response.ty(), Some(Type::Acknowledgement));
+        assert_eq!(response.token(), Some(token));
+        assert_eq!(response.message_id(), Some(mid));
+        assert_eq!(response.peer(), Some(peer));
+        assert_eq!(response.format(), Some(ContentFormat::OCTET_STREAM));
+        assert_eq!(response.payload(), b"edited");
+        assert_eq!(response.location_paths(), &["receipt"]);
+        assert_eq!(
+            response.received_options().next().unwrap().value(),
+            format.as_bytes()
+        );
+        let handler = Response::<Token>::content(b"handler");
+        assert_eq!(handler.received_at_ms(), None);
+        assert_eq!(handler.ty(), None);
+        assert_eq!(handler.token(), None);
+        assert_eq!(handler.message_id(), None);
+        assert_eq!(handler.peer(), None);
+        assert!(handler.received_options().next().is_none());
     }
 }

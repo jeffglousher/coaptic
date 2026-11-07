@@ -62,6 +62,11 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
         }
     }
 
+    /// Borrow the validated options descriptor without copying the packet view.
+    pub(crate) const fn options_bytes(&self) -> &&'a [u8] {
+        &self.options
+    }
+
     /// Parsed header.
     #[must_use]
     pub const fn header(self) -> Header {

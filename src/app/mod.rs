@@ -380,18 +380,10 @@ impl DeferredSelection {
         payload: &[u8],
     ) -> Result<Self, EncodeError> {
         let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
-        for option in parsed.options().filter(|option| {
-            (parsed.code() == Code::FETCH && option.number() == crate::message::OptionNumber::ETAG)
-                || matches!(
-                    option.number(),
-                    crate::message::OptionNumber::IF_MATCH
-                        | crate::message::OptionNumber::IF_NONE_MATCH
-                        | crate::message::OptionNumber::URI_PATH
-                        | crate::message::OptionNumber::URI_QUERY
-                        | crate::message::OptionNumber::CONTENT_FORMAT
-                        | crate::message::OptionNumber::ACCEPT
-                )
-        }) {
+        for option in parsed
+            .options()
+            .filter(|option| Self::selects(parsed.code(), option.number()))
+        {
             push_opt(&mut options, option)?;
         }
         let message = Message::new(Type::NonConfirmable, parsed.code(), MessageId::new(0))
@@ -408,6 +400,47 @@ impl DeferredSelection {
         };
         selection.len = encode(&message, &mut selection.bytes)?;
         Ok(selection)
+    }
+
+    fn selects(code: Code, number: crate::message::OptionNumber) -> bool {
+        use crate::message::OptionNumber;
+        (code == Code::FETCH && number == OptionNumber::ETAG)
+            || matches!(
+                number,
+                OptionNumber::IF_MATCH
+                    | OptionNumber::IF_NONE_MATCH
+                    | OptionNumber::URI_PATH
+                    | OptionNumber::URI_QUERY
+                    | OptionNumber::CONTENT_FORMAT
+                    | OptionNumber::ACCEPT
+            )
+    }
+
+    fn matches_parts(&self, parsed: &ParsedMessage<'_, impl OwnedToken>, payload: &[u8]) -> bool {
+        let Some(bytes) = self.bytes.get(..self.len) else {
+            return false;
+        };
+        let Ok(stored) = crate::message::extended::decode(bytes) else {
+            return false;
+        };
+        if stored.ty() != Type::NonConfirmable || stored.message_id() != MessageId::new(0) {
+            return false;
+        }
+        // Admission already bounded and canonically encoded this prefix. Equal
+        // method, token bytes, ordered selected options and FETCH payload imply
+        // the same encoded length and option count, without rebuilding either
+        // bounded scratch array. Incoming MID and type are not identity.
+        stored.code() == parsed.code()
+            && stored.token() == parsed.token().as_bytes()
+            && stored.payload()
+                == if parsed.code() == Code::FETCH {
+                    payload
+                } else {
+                    &[]
+                }
+            && stored.options().eq(parsed
+                .options()
+                .filter(|option| Self::selects(parsed.code(), option.number())))
     }
 }
 
@@ -3827,7 +3860,7 @@ where
         no_response,
         block2,
         q_block2,
-        q_request: q_block2.map(|_| parsed),
+        q_request: q_block2.map(|_| QBlock2Request(parsed.options_bytes())),
         block1,
         oscore: oscore_req,
         request: parsed.code(),
@@ -4122,7 +4155,7 @@ where
                     issue_classic(
                         engine,
                         io,
-                        meta,
+                        &meta,
                         &response,
                         ty,
                         mid,
@@ -4153,7 +4186,7 @@ where
     // classic or bounded Q-Block2 follow-ups select it without re-running work.
     if (meta.block2.is_some() || meta.q_block2.is_some())
         && let Some(index) = deferred.rows.iter().position(|row| {
-            row.is_some_and(|row| {
+            row.as_ref().is_some_and(|row| {
                 row.completed
                     && row.meta.token == meta.token
                     && row.meta.dest == peer
@@ -4161,10 +4194,13 @@ where
             })
         })
     {
-        let row = deferred.rows[index].expect("matched snapshot");
-        let (body, retained) = row.snapshot.expect("completed snapshot");
-        let outcome = 'reply: {
-            if DeferredSelection::from_parts(
+        // Validate against the table in place, then retain only the immutable
+        // nongeneric reply metadata across sending. The table still owns the
+        // snapshot on failure or cancellation; no copied row or payload is needed.
+        let (body, retained, admissible) = {
+            let row = deferred.rows[index].as_ref().expect("matched snapshot");
+            let (body, retained) = row.snapshot.as_ref().expect("completed snapshot");
+            let admissible = row.selection.matches_parts(
                 &parsed,
                 match assembled {
                     InboundBody::Complete(id) => {
@@ -4172,16 +4208,16 @@ where
                     }
                     _ => parsed.payload(),
                 },
-            )
-            .ok()
-                != Some(row.selection)
-                || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
-                || row.meta.q_block2.is_some() != meta.q_block2.is_some()
-                || (row.observe.is_some()
-                    && meta
+            ) && (parsed.code() == Code::FETCH || parsed.payload().is_empty())
+                && row.meta.q_block2.is_some() == meta.q_block2.is_some()
+                && (row.observe.is_none()
+                    || meta
                         .block2
-                        .is_some_and(|requested| engine.requested_block2(body, requested).is_err()))
-            {
+                        .is_none_or(|requested| engine.requested_block2(*body, requested).is_ok()));
+            (*body, retained, admissible)
+        };
+        let outcome = 'reply: {
+            if !admissible {
                 send_response(
                     engine,
                     io,
@@ -4253,7 +4289,7 @@ where
                 issue_classic(
                     engine,
                     io,
-                    meta,
+                    &meta,
                     &response,
                     ty,
                     mid,
@@ -5559,7 +5595,7 @@ where
         )
     } else {
         issue_classic(
-            engine, io, meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
+            engine, io, &meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
         )
     };
     if outcome.is_err() {
@@ -6243,6 +6279,18 @@ where
         );
     }
     let szx = szx_for(meta.block2, meta.q_block2);
+    // Ordinary responses can retain immutable application bytes in the same
+    // bounded body slot. Observe and deferred completion keep their existing
+    // snapshot/timer ownership; their callers disable `allow_borrowed`.
+    let static_body = if allow_borrowed
+        && response.code().is_success()
+        && response.observe_seq().is_none()
+        && !response.fresh_piv()
+    {
+        response.static_payload()
+    } else {
+        None
+    };
     let started = if meta.q_block2.is_some() {
         let etag = response
             .etag_bytes()
@@ -6252,10 +6300,16 @@ where
                 .map_err(BlockTransferError::from)
                 .map_err(Error::Block)?,
         );
-        engine.start_q_block2(key, response.payload(), szx)
+        match static_body {
+            Some(body) => engine.start_static_q_block2(key, body, szx),
+            None => engine.start_q_block2(key, response.payload(), szx),
+        }
     } else {
         let key = response_block_key(key.token(), key.endpoint(), response)?;
-        engine.start_block2(key, response.payload(), szx)
+        match static_body {
+            Some(body) => engine.start_static_block2(key, body, szx),
+            None => engine.start_block2(key, response.payload(), szx),
+        }
     };
     let id = match started {
         Ok(id) => id,
@@ -6339,7 +6393,7 @@ where
         issue_classic(
             engine,
             io,
-            meta,
+            &meta,
             response,
             ty,
             meta.mid,
@@ -6395,6 +6449,43 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    let (tx, selected_block) =
+        encode_borrowed_classic::<S, T, REQUESTS>(engine, &meta, response, ty, key, oscore_ctx)?;
+    let keep = if selected_block && ty == Type::Acknowledgement {
+        remember_tx_reply(
+            engine,
+            tx,
+            meta.dest,
+            meta.mid,
+            meta.ty,
+            now_ms,
+            meta.request,
+            dedup_closed,
+        )
+    } else {
+        KeepTx::No
+    };
+    match keep {
+        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
+        KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
+    }
+}
+
+// Packet selection and encoding finish before transport can suspend. In
+// particular, the Gap error response must not become a send-future owner.
+#[allow(clippy::too_many_arguments)]
+fn encode_borrowed_classic<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    meta: &SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    ty: Type,
+    key: BlockKey<S::Token>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+) -> Result<(SlotId, bool), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: crate::storage::DatagramTransport,
+{
     let key = response_block_key(key.token(), key.endpoint(), response)?;
     let capacity =
         engine
@@ -6420,10 +6511,11 @@ where
             .map_err(BlockTransferError::from)
             .map_err(Error::Block)?,
     );
+    let gap_response;
     let (selected, payload, block) =
         match crate::storage::classic_block2_range(response.payload().len(), requested) {
             Ok((value, range)) => (
-                *response,
+                response,
                 &response.payload()[range],
                 Some(BlockOpt {
                     value,
@@ -6431,7 +6523,10 @@ where
                     size2: None,
                 }),
             ),
-            Err(BlockTransferError::Gap) => (Response::bad_request(), &[][..], None),
+            Err(BlockTransferError::Gap) => {
+                gap_response = Response::bad_request();
+                (&gap_response, &[][..], None)
+            }
             Err(error) => return Err(Error::Block(error)),
         };
     let tx = if block.is_some() {
@@ -6447,7 +6542,7 @@ where
         ty,
         meta.mid,
         meta.token,
-        &selected,
+        selected,
         payload,
         block,
         meta.block1,
@@ -6457,24 +6552,7 @@ where
         let _ = engine.release_tx(tx);
         return Err(error);
     }
-    let keep = if block.is_some() && ty == Type::Acknowledgement {
-        remember_tx_reply(
-            engine,
-            tx,
-            meta.dest,
-            meta.mid,
-            meta.ty,
-            now_ms,
-            meta.request,
-            dedup_closed,
-        )
-    } else {
-        KeepTx::No
-    };
-    match keep {
-        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
-        KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
-    }
+    Ok((tx, block.is_some()))
 }
 
 fn retained_body_matches<S: Storage + BodySlots>(
@@ -6482,17 +6560,20 @@ fn retained_body_matches<S: Storage + BodySlots>(
     id: SlotId,
     payload: &[u8],
 ) -> bool {
+    let body = engine.tx_body_payload(id);
+    let same_storage = body.is_some_and(|body| core::ptr::eq(body, payload));
     #[cfg(feature = "diagnostics")]
     {
-        let candidates = engine
-            .tx_body_payload(id)
-            .filter(|body| body.len() == payload.len())
+        let candidates = body
+            .filter(|body| !same_storage && body.len() == payload.len())
             .map_or(0, <[u8]>::len);
         let work = engine.work_metrics_mut();
         crate::storage::WorkMetrics::add(&mut work.body_compare_calls, 1);
         crate::storage::WorkMetrics::add(&mut work.body_compare_candidate_bytes, candidates);
     }
-    engine.tx_body_payload(id) == Some(payload)
+    // Equal slice addresses include length. Different storage still requires
+    // exact bytes: an ETag alone cannot establish immutable body identity.
+    same_storage || engine.tx_body_payload(id) == Some(payload)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6603,7 +6684,7 @@ where
             issue_classic(
                 engine,
                 io,
-                meta,
+                &meta,
                 &retained,
                 ty,
                 meta.mid,
@@ -6644,7 +6725,7 @@ where
         let result = issue_classic(
             engine,
             io,
-            selected,
+            &selected,
             response,
             ty,
             meta.mid,
@@ -6668,7 +6749,7 @@ where
 fn issue_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
@@ -6682,40 +6763,11 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let range = match meta.block2 {
-        Some(requested) => engine.requested_block2(id, requested),
-        None => engine.next_block2(id),
+    let (tx, issued) =
+        encode_classic::<S, T, REQUESTS>(engine, meta, response, ty, mid, id, oscore_ctx)?;
+    let Some(issued) = issued else {
+        return finish_send(engine, io, tx, meta.dest, pending);
     };
-    let issued = match range {
-        Ok(issued) => issued,
-        Err(BlockTransferError::Gap) => {
-            let _ = engine.release_tx_body(id);
-            let tx = admission::ordinary_tx(engine).ok_or(Error::Saturated)?;
-            let error = Response::bad_request();
-            if let Err(e) = encode_response(
-                engine,
-                meta.dest,
-                tx,
-                ty,
-                mid,
-                meta.token,
-                &error,
-                error.payload(),
-                None,
-                meta.block1,
-                oscore_ctx,
-                meta.oscore,
-            ) {
-                let _ = engine.release_tx(tx);
-                return Err(e);
-            }
-            return finish_send(engine, io, tx, meta.dest, pending);
-        }
-        Err(e) => return Err(Error::Block(e)),
-    };
-    let tx = encode_issued::<S, T, REQUESTS>(
-        engine, &meta, response, ty, mid, issued, false, oscore_ctx,
-    )?;
     let keep = if let Some((now_ms, closed)) = replay.filter(|_| ty == Type::Acknowledgement) {
         remember_tx_reply(
             engine,
@@ -6750,6 +6802,58 @@ where
         let _ = engine.release_tx_body(id);
     }
     Ok(())
+}
+
+// Range errors need an encoded packet, not a Response retained across I/O.
+#[allow(clippy::too_many_arguments)]
+fn encode_classic<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    meta: &SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    ty: Type,
+    mid: MessageId,
+    id: SlotId,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+) -> Result<(SlotId, Option<OutgoingBlock>), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots + DedupSlots,
+    T: crate::storage::DatagramTransport,
+{
+    let range = match meta.block2 {
+        Some(requested) => engine.requested_block2(id, requested),
+        None => engine.next_block2(id),
+    };
+    let issued = match range {
+        Ok(issued) => issued,
+        Err(BlockTransferError::Gap) => {
+            let _ = engine.release_tx_body(id);
+            let tx = admission::ordinary_tx(engine).ok_or(Error::Saturated)?;
+            let error = Response::bad_request();
+            if let Err(e) = encode_response(
+                engine,
+                meta.dest,
+                tx,
+                ty,
+                mid,
+                meta.token,
+                &error,
+                error.payload(),
+                None,
+                meta.block1,
+                oscore_ctx,
+                meta.oscore,
+            ) {
+                let _ = engine.release_tx(tx);
+                return Err(e);
+            }
+            return Ok((tx, None));
+        }
+        Err(e) => return Err(Error::Block(e)),
+    };
+    let tx = encode_issued::<S, T, REQUESTS>(
+        engine, meta, response, ty, mid, issued, false, oscore_ctx,
+    )?;
+    Ok((tx, Some(issued)))
 }
 
 // RFC 9177 section 4.4: M=0 asks for exactly NUM; a non-aligned
@@ -7016,7 +7120,11 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let selections = || meta.q_request.into_iter().flat_map(ParsedMessage::q_block2);
+    let selections = || {
+        meta.q_request
+            .into_iter()
+            .flat_map(QBlock2Request::q_block2)
+    };
     // Validate every requested starting range before the first send, so a
     // bad later option cannot turn a rejected request into partial output.
     for q in selections() {
@@ -7270,10 +7378,19 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
+    if block.is_none()
+        && block1.is_none()
+        && response.has_only_etag_and_format()
+        && !response.fresh_piv()
+    {
+        return encode_response_basic(
+            engine, peer, tx, ty, mid, token, response, payload, oscore_ctx, oscore_req,
+        );
+    }
     // Without Location options at most eight entries are reachable: ETag,
     // Observe, Content-Format, Max-Age, Block2/Q-Block2, Size2, Block1 and Echo.
     // The full path preserves both eight-entry Location lists and all metadata.
-    if response.location_paths().is_empty() && response.location_queries().is_empty() {
+    if !response.has_locations() {
         encode_response_options::<S, E, REQUESTS, 8>(
             engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
             oscore_req,
@@ -7284,6 +7401,39 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
             oscore_req,
         )
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_response_basic<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    oscore_ctx: &oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    response.validate().map_err(Error::Response)?;
+    let etag = response.etag_bytes();
+    let format = response.format();
+    let encoded = format.unwrap_or(ContentFormat::TEXT_PLAIN).encode();
+    // These two option numbers are already ordered. Select only present
+    // values; the both-absent case is the empty slice 1..1. This avoids
+    // initializing and moving general option scratch on ordinary replies.
+    let options = [
+        Opt::etag(etag.unwrap_or(&[])),
+        Opt::content_format(&encoded),
+    ];
+    let start = usize::from(etag.is_none());
+    let end = if format.is_some() { 2 } else { 1 };
+    let msg = Message::new(ty, response.code(), mid)
+        .with_token(token)
+        .with_options(&options[start..end])
+        .with_payload(payload);
+    oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
 }
 
 #[cold]
@@ -7993,6 +8143,17 @@ struct BlockOpt {
     size2: Option<usize>,
 }
 
+// Borrow the parsed request's existing options descriptor without retaining
+// another slice or imposing the Token's auto traits on the shared reference.
+#[derive(Clone, Copy)]
+struct QBlock2Request<'a>(&'a &'a [u8]);
+
+impl<'a> QBlock2Request<'a> {
+    fn q_block2(self) -> crate::message::BlockOptions<'a> {
+        crate::message::BlockOptions::q_block2(self.0)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SendResponse<'a, K: OwnedToken = crate::message::Token> {
     dest: Endpoint,
@@ -8002,7 +8163,7 @@ struct SendResponse<'a, K: OwnedToken = crate::message::Token> {
     no_response: NoResponse,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
-    q_request: Option<ParsedMessage<'a, K>>,
+    q_request: Option<QBlock2Request<'a>>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
     block1: Option<BlockOpt>,
     /// Request Partial IV when the inbound request was OSCORE-protected.

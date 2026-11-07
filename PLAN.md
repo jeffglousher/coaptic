@@ -8,7 +8,35 @@ it is not silently treated as finished software work.
 
 ## Current work
 
-The phase-sharing batch demonstrates 0.625% lower complete-App CPU cost in both
+The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
+CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
+All 28 workload bounds pass. Both selected Service progress futures are 2,536
+bytes smaller (16.37%), native Service Apps are 320 bytes smaller, and configured
+capacities and pool backing are unchanged. See the
+[implementation, measurements and tradeoffs](architecture/requirements/PACKET-LIVE-RANGES-20261106.md).
+All-feature library/integration/doctests, affected feature combinations, strict
+lint, Rust 1.89 checks and rustdoc pass on the exact measured source.
+Exact sources, raw comparisons, rejected attempts and reconstruction checks are
+retained in the [portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/e602a261fac18d839e92def713ae410f7c78d15d/tools/benchmark/evidence/packet-live-ranges-20261106).
+
+Shorter packet-preparation lifetimes, compact received-response metadata, lazy
+Location backing, static body retention and direct ordinary ETag/Content-Format
+encoding form the measured integration. Static retained replies avoid the full
+body snapshot and redundant equality scan; original chunk staging remains.
+Advanced mutation copies static bytes into existing reserved backing. The local
+ordinary encoder frame grows 48 bytes sync/32 bytes async and its code grows;
+selected futures and guarded dispatch/reclaim/retained-encoder frames shrink or
+stay equal. These are separate owner observations, not a peak-stack claim.
+
+Eight failed cohorts and three untimed precursors remain rejected or explicitly
+superseded. The completed-deferred matcher is outside the frozen timing fixture
+and receives no CPU credit. Continue from this integrated result, preserving the
+baseline, capacities and negative evidence. Independent body/packet backing is
+still the largest resident cost; new changes need measured whole-App benefit.
+Runtime adapter development is complete for this batch; Embassy firmware
+migration, new platforms and unrelated tooling remain deferred.
+
+The preceding phase-sharing batch demonstrates 0.625% lower complete-App CPU cost in both
 sync and async operation against pinned bd63199, with both selected Service
 progress futures 1,416 bytes smaller (8.37%). All 28 workload preservation bounds
 pass; App/pool owners, 32-bit layouts and configured capacities stay unchanged.

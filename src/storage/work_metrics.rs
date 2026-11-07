@@ -30,10 +30,11 @@ pub struct WorkMetrics {
     pub block_tx_staged_bytes: u64,
     /// Payload bytes in successful Engine TX encodings, including protection.
     pub tx_payload_encoded_bytes: u64,
-    /// Complete bodies passed to successful outgoing transfer starts.
+    /// Complete bodies passed to successful copying outgoing transfer starts.
     ///
     /// Built-in storage copies these bytes into a fresh body slot. A custom
-    /// storage implementation may retain them differently.
+    /// storage implementation may retain them differently. Explicit static
+    /// body admission borrows its bytes and does not increment this counter.
     pub body_snapshot_bytes: u64,
     /// Bytes passed to successful Engine raw RX slot writes.
     pub raw_rx_copied_bytes: u64,
@@ -41,7 +42,8 @@ pub struct WorkMetrics {
     pub raw_tx_copied_bytes: u64,
     /// Retained body equality checks after representation identity matches.
     pub body_compare_calls: u64,
-    /// Lengths of equally sized bodies presented to equality checks.
+    /// Lengths of equally sized bodies passed to byte equality checks after
+    /// the App's equal-address-and-length shortcut.
     ///
     /// This is a candidate-byte bound: comparisons may stop at a differing
     /// byte or use implementation-specific pointer or vectorized shortcuts.

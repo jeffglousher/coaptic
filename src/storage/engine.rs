@@ -1908,6 +1908,21 @@ impl<S: Storage + BodySlots> Engine<S> {
         result
     }
 
+    /// Reserve an outgoing Block2 slot backed by immutable static bytes.
+    ///
+    /// Capacity and occupied-slot admission are the same as [`Self::start_block2`].
+    /// Existing body backing remains reserved; writable access or sidecar
+    /// replacement materializes the bytes there. Read-only progress does not copy.
+    #[inline]
+    pub fn start_static_block2(
+        &mut self,
+        key: BlockKey<S::Token>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.start_static_block2(key, body, szx)
+    }
+
     /// Select a classic Block2 response range without advancing a transfer cursor.
     /// Used by App for independently tokened RFC 7959 requests.
     pub(crate) fn requested_block2(
@@ -2134,6 +2149,19 @@ impl<S: Storage + BodySlots> Engine<S> {
             super::WorkMetrics::add(&mut self.work_metrics.body_snapshot_bytes, body.len());
         }
         result
+    }
+
+    /// Reserve an outgoing Q-Block2 slot backed by immutable static bytes.
+    /// Same capacity, reservation and materialization contract as
+    /// [`Self::start_static_block2`]; Q-Block validation is unchanged.
+    #[inline]
+    pub fn start_static_q_block2(
+        &mut self,
+        key: BlockKey<S::Token>,
+        body: &'static [u8],
+        szx: u8,
+    ) -> Result<SlotId, BlockTransferError> {
+        self.storage.start_static_q_block2(key, body, szx)
     }
 
     /// Issue the next unsent outgoing Q-Block2 range in the current window.

@@ -6705,6 +6705,52 @@ fn qblock2_continuation_refuses_changed_identity_or_body_then_recovers() {
 }
 
 #[test]
+fn static_body_matching_checks_length_and_distinct_storage_bytes() {
+    use super::retained_body_matches;
+    use crate::storage::BodySlots;
+    static BODY: [u8; 64] = [b'A'; 64];
+    static OTHER: [u8; 32] = [b'B'; 32];
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let key = BlockKey::new(
+        Token::new(b"same").unwrap(),
+        Endpoint::v4([192, 0, 2, 1], 5683),
+    )
+    .with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
+    let first = &BODY[..32];
+    let equal = &BODY[32..];
+    assert_ne!(first.as_ptr(), equal.as_ptr());
+    let id = app.engine.start_static_q_block2(key, first, 0).unwrap();
+    assert!(core::ptr::eq(
+        app.engine.tx_body_payload(id).unwrap(),
+        first
+    ));
+    assert!(retained_body_matches(&mut app.engine, id, first));
+    assert!(!retained_body_matches(&mut app.engine, id, &first[..16]));
+    assert!(retained_body_matches(&mut app.engine, id, equal));
+    assert!(!retained_body_matches(&mut app.engine, id, &OTHER));
+
+    // Advanced mutation must break the address shortcut and preserve exact
+    // comparison even when a caller restores an earlier transfer descriptor.
+    let before = app.engine.tx_body_transfer(id).unwrap();
+    {
+        let mut access = app.engine.storage_mut().access_tx_body_mut(id).unwrap();
+        access.bytes_mut()[0] = b'B';
+    }
+    app.engine
+        .storage_mut()
+        .set_tx_body_transfer(id, before)
+        .unwrap();
+    assert!(!retained_body_matches(&mut app.engine, id, first));
+    assert_eq!(app.engine.tx_body_payload(id).unwrap()[0], b'B');
+    app.engine.release_tx_body(id).unwrap();
+}
+
+#[test]
 fn response_option_bounds_are_typed_sticky_and_preserve_exact_values() {
     use crate::ResponseError;
     static LONG: [u8; 256] = [b'x'; 256];
@@ -11756,10 +11802,23 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
         let token = Token::new(b"q").unwrap();
         let key =
             BlockKey::new(token, peer).with_identity(crate::storage::BodyTag::new(b"v1").unwrap());
-        let id = app.engine.start_q_block2(key, &BODY, 0).unwrap();
-        for _ in 0..10 {
-            app.engine.next_q_block2(id).unwrap();
-        }
+        // Admit through the handler so this also checks the static-payload
+        // retention path, rather than preloading a copied Engine snapshot.
+        let q = BlockValue::from_size(0, true, 16).unwrap().encode();
+        let opts = [Opt::uri_path("large"), Opt::q_block2(&q)];
+        let request = Message::new(Type::NonConfirmable, Code::GET, MessageId::new(99))
+            .with_token(token)
+            .with_options(&opts);
+        let mut wire = [0; 64];
+        let n = encode(&request, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, n));
+        app.poll(0).unwrap();
+        assert_eq!(app.transport().count, 10);
+        let id = super::response_body_for(&app.engine, key).unwrap();
+        assert!(core::ptr::eq(
+            app.engine.tx_body_payload(id).unwrap(),
+            BODY.as_slice()
+        ));
         let mut previous = app.engine.tx_body_transfer(id).unwrap();
         // Initial/full-body reselection, valid Continue, repeated Continue,
         // old-set reselection, an invalid future Continue, then completion.
@@ -14632,6 +14691,182 @@ fn deferred_selection_preserves_get_validator_behavior() {
         };
         assert_eq!(make(&with_tag) == make(&no_tag), code == Code::GET);
     }
+}
+
+#[test]
+fn deferred_selection_borrowed_match_agrees_with_serialized_identity() {
+    use crate::message::{OwnedToken, decode_with_token};
+
+    fn selection<K: OwnedToken>(
+        message: &Message<'_, K>,
+        payload: &[u8],
+    ) -> super::DeferredSelection {
+        let mut wire = [0; 2048];
+        let n = encode(message, &mut wire).unwrap();
+        let parsed = decode_with_token::<K>(&wire[..n]).unwrap();
+        super::DeferredSelection::from_parts(&parsed, payload).unwrap()
+    }
+    fn check<K: OwnedToken>(
+        stored: &super::DeferredSelection,
+        message: &Message<'_, K>,
+        payload: &[u8],
+        expected: bool,
+    ) {
+        let mut wire = [0; 2048];
+        let n = encode(message, &mut wire).unwrap();
+        let parsed = decode_with_token::<K>(&wire[..n]).unwrap();
+        let old = super::DeferredSelection::from_parts(&parsed, payload);
+        assert_eq!(old.ok().as_ref() == Some(stored), expected);
+        assert_eq!(stored.matches_parts(&parsed, payload), expected);
+    }
+
+    let token = Token::new(b"token").unwrap();
+    let options = [
+        Opt::new(OptionNumber::IF_MATCH, b"v0"),
+        Opt::etag(b"v1"),
+        Opt::uri_path(""),
+        Opt::uri_path("a"),
+        Opt::uri_path("b"),
+        Opt::new(OptionNumber::CONTENT_FORMAT, &[0]),
+        Opt::uri_query(""),
+        Opt::new(OptionNumber::ACCEPT, &[0]),
+    ];
+    let message = Message::con(Code::FETCH, MessageId::new(1), token)
+        .with_options(&options)
+        .with_payload(b"wire fragment");
+    let stored = selection(&message, b"assembled selection");
+    check(&stored, &message, b"assembled selection", true);
+    check(&stored, &message, b"changed selection", false);
+    check(
+        &stored,
+        &message.with_token(Token::new(b"other").unwrap()),
+        b"assembled selection",
+        false,
+    );
+    let changed_method = Message::con(Code::GET, MessageId::new(1), token).with_options(&options);
+    check(&stored, &changed_method, b"assembled selection", false);
+    let changed_transport = Message::non(Code::FETCH, MessageId::new(999), token)
+        .with_options(&options)
+        .with_payload(b"another fragment");
+    check(&stored, &changed_transport, b"assembled selection", true);
+
+    let mut reordered = options;
+    reordered.swap(3, 4);
+    check(
+        &stored,
+        &message.with_options(&reordered),
+        b"assembled selection",
+        false,
+    );
+    let mut changed = options;
+    changed[5] = Opt::new(OptionNumber::CONTENT_FORMAT, &[]);
+    check(
+        &stored,
+        &message.with_options(&changed),
+        b"assembled selection",
+        false,
+    );
+    let no_empty_path = [
+        options[0], options[1], options[3], options[4], options[5], options[6], options[7],
+    ];
+    check(
+        &stored,
+        &message.with_options(&no_empty_path),
+        b"assembled selection",
+        false,
+    );
+    let ignored = [
+        options[0],
+        options[1],
+        Opt::observe_register(),
+        options[2],
+        options[3],
+        options[4],
+        options[5],
+        options[6],
+        options[7],
+        Opt::new(OptionNumber::BLOCK2, &[0]),
+        Opt::new(OptionNumber::ECHO, b"fresh"),
+    ];
+    check(
+        &stored,
+        &message.with_options(&ignored),
+        b"assembled selection",
+        true,
+    );
+    let mut changed_tag = options;
+    changed_tag[1] = Opt::etag(b"v2");
+    check(
+        &stored,
+        &message.with_options(&changed_tag),
+        b"assembled selection",
+        false,
+    );
+    let get = selection(&changed_method, b"ignored body");
+    check(
+        &get,
+        &changed_method.with_options(&changed_tag),
+        b"different body",
+        true,
+    );
+
+    type LongToken = crate::message::extended::Token<32>;
+    let long = LongToken::new(&[7; 16]).unwrap();
+    let extended = message.with_token(long);
+    let stored = selection(&extended, b"assembled selection");
+    check(&stored, &extended, b"assembled selection", true);
+    let mut other = [7; 16];
+    other[15] = 8;
+    check(
+        &stored,
+        &extended.with_token(LongToken::new(&other).unwrap()),
+        b"assembled selection",
+        false,
+    );
+
+    // Equality cannot hide admission overflow: an extra selected empty option
+    // changes the sequence, and a byte beyond the admitted 512 changes its value.
+    let repeated = [Opt::uri_path(""); super::client::RESPONSE_OPTION_COUNT + 1];
+    let request = Message::con(Code::GET, MessageId::new(1), Token::EMPTY)
+        .with_options(&repeated[..super::client::RESPONSE_OPTION_COUNT]);
+    let stored = selection(&request, &[]);
+    check(&stored, &request, &[], true);
+    check(&stored, &request.with_options(&repeated), &[], false);
+    let value = [b'x'; 505];
+    let fits = [Opt::new(OptionNumber::URI_QUERY, &value[..504])];
+    let too_large = [Opt::new(OptionNumber::URI_QUERY, &value)];
+    let request = request.with_options(&fits);
+    let stored = selection(&request, &[]);
+    assert_eq!(stored.len, super::client::RESPONSE_OPTION_BYTES);
+    check(&stored, &request, &[], true);
+    check(&stored, &request.with_options(&too_large), &[], false);
+}
+
+#[test]
+fn deferred_selection_borrowed_match_refuses_invalid_retained_prefix() {
+    let message = Message::con(Code::GET, MessageId::new(1), Token::EMPTY);
+    let mut wire = [0; 16];
+    let n = encode(&message, &mut wire).unwrap();
+    let parsed = decode(&wire[..n]).unwrap();
+    let stored = super::DeferredSelection::from_request(&parsed).unwrap();
+    for len in [0, 3, super::client::RESPONSE_OPTION_BYTES + 1] {
+        let mut invalid = stored;
+        invalid.len = len;
+        assert!(!invalid.matches_parts(&parsed, &[]));
+    }
+    let mut invalid = stored;
+    invalid.bytes[0] = 0;
+    assert!(!invalid.matches_parts(&parsed, &[]));
+    let mut invalid = stored;
+    invalid.bytes[0] &= !0x30; // Valid CON, but admission always retains NON.
+    assert!(!invalid.matches_parts(&parsed, &[]));
+    let mut invalid = stored;
+    invalid.bytes[3] = 1; // Admission always canonicalizes the MID to zero.
+    assert!(!invalid.matches_parts(&parsed, &[]));
+    let mut invalid = stored;
+    invalid.bytes[invalid.len] = 0xf0; // Reserved option delta.
+    invalid.len += 1;
+    assert!(!invalid.matches_parts(&parsed, &[]));
 }
 
 fn terminal_q_app(

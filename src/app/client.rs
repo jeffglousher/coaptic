@@ -253,6 +253,14 @@ pub(super) struct ReplyMeta {
 }
 
 impl ReplyMeta {
+    pub(super) const fn peer(&self) -> Endpoint {
+        self.peer
+    }
+
+    pub(super) const fn received_at_ms(&self) -> u64 {
+        self.received_at_ms
+    }
+
     // Canonically encoded code, Token, MID and selected options. Capture time
     // and copied payload bookkeeping are not representation-header identity.
     pub(super) fn same_header(&self, other: &Self) -> bool {
@@ -311,11 +319,8 @@ impl ReplyMeta {
             crate::message::decode_with_token::<K>(&self.header[..usize::from(self.header_len)])
                 .expect("encoded response header");
         let mut response = Response::from_client(
-            parsed.code(),
-            parsed.ty(),
-            parsed.token(),
-            parsed.message_id(),
-            self.peer,
+            parsed,
+            self,
             &self.payload[..usize::from(self.payload_len)],
             parsed.content_format().and_then(Result::ok),
         )
@@ -346,7 +351,7 @@ impl ReplyMeta {
                 response = response.location_query(query);
             }
         }
-        response.with_received_header(parsed, self.received_at_ms)
+        response
     }
 }
 
