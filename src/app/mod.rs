@@ -380,18 +380,10 @@ impl DeferredSelection {
         payload: &[u8],
     ) -> Result<Self, EncodeError> {
         let mut options = OptionsBuilder::<{ client::RESPONSE_OPTION_COUNT }>::new();
-        for option in parsed.options().filter(|option| {
-            (parsed.code() == Code::FETCH && option.number() == crate::message::OptionNumber::ETAG)
-                || matches!(
-                    option.number(),
-                    crate::message::OptionNumber::IF_MATCH
-                        | crate::message::OptionNumber::IF_NONE_MATCH
-                        | crate::message::OptionNumber::URI_PATH
-                        | crate::message::OptionNumber::URI_QUERY
-                        | crate::message::OptionNumber::CONTENT_FORMAT
-                        | crate::message::OptionNumber::ACCEPT
-                )
-        }) {
+        for option in parsed
+            .options()
+            .filter(|option| Self::selects(parsed.code(), option.number()))
+        {
             push_opt(&mut options, option)?;
         }
         let message = Message::new(Type::NonConfirmable, parsed.code(), MessageId::new(0))
@@ -408,6 +400,47 @@ impl DeferredSelection {
         };
         selection.len = encode(&message, &mut selection.bytes)?;
         Ok(selection)
+    }
+
+    fn selects(code: Code, number: crate::message::OptionNumber) -> bool {
+        use crate::message::OptionNumber;
+        (code == Code::FETCH && number == OptionNumber::ETAG)
+            || matches!(
+                number,
+                OptionNumber::IF_MATCH
+                    | OptionNumber::IF_NONE_MATCH
+                    | OptionNumber::URI_PATH
+                    | OptionNumber::URI_QUERY
+                    | OptionNumber::CONTENT_FORMAT
+                    | OptionNumber::ACCEPT
+            )
+    }
+
+    fn matches_parts(&self, parsed: &ParsedMessage<'_, impl OwnedToken>, payload: &[u8]) -> bool {
+        let Some(bytes) = self.bytes.get(..self.len) else {
+            return false;
+        };
+        let Ok(stored) = crate::message::extended::decode(bytes) else {
+            return false;
+        };
+        if stored.ty() != Type::NonConfirmable || stored.message_id() != MessageId::new(0) {
+            return false;
+        }
+        // Admission already bounded and canonically encoded this prefix. Equal
+        // method, token bytes, ordered selected options and FETCH payload imply
+        // the same encoded length and option count, without rebuilding either
+        // bounded scratch array. Incoming MID and type are not identity.
+        stored.code() == parsed.code()
+            && stored.token() == parsed.token().as_bytes()
+            && stored.payload()
+                == if parsed.code() == Code::FETCH {
+                    payload
+                } else {
+                    &[]
+                }
+            && stored.options().eq(parsed
+                .options()
+                .filter(|option| Self::selects(parsed.code(), option.number())))
     }
 }
 
@@ -4167,7 +4200,7 @@ where
         let (body, retained, admissible) = {
             let row = deferred.rows[index].as_ref().expect("matched snapshot");
             let (body, retained) = row.snapshot.as_ref().expect("completed snapshot");
-            let admissible = DeferredSelection::from_parts(
+            let admissible = row.selection.matches_parts(
                 &parsed,
                 match assembled {
                     InboundBody::Complete(id) => {
@@ -4175,11 +4208,7 @@ where
                     }
                     _ => parsed.payload(),
                 },
-            )
-            .ok()
-            .as_ref()
-                == Some(&row.selection)
-                && (parsed.code() == Code::FETCH || parsed.payload().is_empty())
+            ) && (parsed.code() == Code::FETCH || parsed.payload().is_empty())
                 && row.meta.q_block2.is_some() == meta.q_block2.is_some()
                 && (row.observe.is_none()
                     || meta
