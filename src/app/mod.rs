@@ -4122,7 +4122,7 @@ where
                     issue_classic(
                         engine,
                         io,
-                        meta,
+                        &meta,
                         &response,
                         ty,
                         mid,
@@ -4260,7 +4260,7 @@ where
                 issue_classic(
                     engine,
                     io,
-                    meta,
+                    &meta,
                     &response,
                     ty,
                     mid,
@@ -5566,7 +5566,7 @@ where
         )
     } else {
         issue_classic(
-            engine, io, meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
+            engine, io, &meta, response, ty, meta.mid, id, pending, true, None, oscore_ctx,
         )
     };
     if outcome.is_err() {
@@ -6346,7 +6346,7 @@ where
         issue_classic(
             engine,
             io,
-            meta,
+            &meta,
             response,
             ty,
             meta.mid,
@@ -6634,7 +6634,7 @@ where
             issue_classic(
                 engine,
                 io,
-                meta,
+                &meta,
                 &retained,
                 ty,
                 meta.mid,
@@ -6675,7 +6675,7 @@ where
         let result = issue_classic(
             engine,
             io,
-            selected,
+            &selected,
             response,
             ty,
             meta.mid,
@@ -6699,7 +6699,7 @@ where
 fn issue_classic<S, T, const REQUESTS: usize>(
     engine: &mut Engine<S>,
     io: &mut T,
-    meta: SendResponse<'_, S::Token>,
+    meta: &SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     ty: Type,
     mid: MessageId,
@@ -6713,40 +6713,11 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let range = match meta.block2 {
-        Some(requested) => engine.requested_block2(id, requested),
-        None => engine.next_block2(id),
+    let (tx, issued) =
+        encode_classic::<S, T, REQUESTS>(engine, meta, response, ty, mid, id, oscore_ctx)?;
+    let Some(issued) = issued else {
+        return finish_send(engine, io, tx, meta.dest, pending);
     };
-    let issued = match range {
-        Ok(issued) => issued,
-        Err(BlockTransferError::Gap) => {
-            let _ = engine.release_tx_body(id);
-            let tx = admission::ordinary_tx(engine).ok_or(Error::Saturated)?;
-            let error = Response::bad_request();
-            if let Err(e) = encode_response(
-                engine,
-                meta.dest,
-                tx,
-                ty,
-                mid,
-                meta.token,
-                &error,
-                error.payload(),
-                None,
-                meta.block1,
-                oscore_ctx,
-                meta.oscore,
-            ) {
-                let _ = engine.release_tx(tx);
-                return Err(e);
-            }
-            return finish_send(engine, io, tx, meta.dest, pending);
-        }
-        Err(e) => return Err(Error::Block(e)),
-    };
-    let tx = encode_issued::<S, T, REQUESTS>(
-        engine, &meta, response, ty, mid, issued, false, oscore_ctx,
-    )?;
     let keep = if let Some((now_ms, closed)) = replay.filter(|_| ty == Type::Acknowledgement) {
         remember_tx_reply(
             engine,
@@ -6781,6 +6752,58 @@ where
         let _ = engine.release_tx_body(id);
     }
     Ok(())
+}
+
+// Range errors need an encoded packet, not a Response retained across I/O.
+#[allow(clippy::too_many_arguments)]
+fn encode_classic<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    meta: &SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    ty: Type,
+    mid: MessageId,
+    id: SlotId,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+) -> Result<(SlotId, Option<OutgoingBlock>), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + BodySlots + DedupSlots,
+    T: crate::storage::DatagramTransport,
+{
+    let range = match meta.block2 {
+        Some(requested) => engine.requested_block2(id, requested),
+        None => engine.next_block2(id),
+    };
+    let issued = match range {
+        Ok(issued) => issued,
+        Err(BlockTransferError::Gap) => {
+            let _ = engine.release_tx_body(id);
+            let tx = admission::ordinary_tx(engine).ok_or(Error::Saturated)?;
+            let error = Response::bad_request();
+            if let Err(e) = encode_response(
+                engine,
+                meta.dest,
+                tx,
+                ty,
+                mid,
+                meta.token,
+                &error,
+                error.payload(),
+                None,
+                meta.block1,
+                oscore_ctx,
+                meta.oscore,
+            ) {
+                let _ = engine.release_tx(tx);
+                return Err(e);
+            }
+            return Ok((tx, None));
+        }
+        Err(e) => return Err(Error::Block(e)),
+    };
+    let tx = encode_issued::<S, T, REQUESTS>(
+        engine, meta, response, ty, mid, issued, false, oscore_ctx,
+    )?;
+    Ok((tx, Some(issued)))
 }
 
 // RFC 9177 section 4.4: M=0 asks for exactly NUM; a non-aligned
