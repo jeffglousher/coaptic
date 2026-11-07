@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 
 use super::Access;
 use super::AccessMut;
+use super::BodyDatagramSlots;
 use super::BodySlots;
 use super::Capacities;
 use super::DatagramSlots;
@@ -807,6 +808,28 @@ impl<T: OwnedToken> DedupSlots for AllocMemory<T> {
 
     fn dedup_entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
         self.dedup.entry_ref(id)
+    }
+}
+
+impl<T: OwnedToken> BodyDatagramSlots for AllocMemory<T> {
+    fn tx_body_and_tx_mut(
+        &mut self,
+        body: SlotId,
+        tx: SlotId,
+    ) -> Result<(&[u8], &mut [u8]), SlotError> {
+        let bodies = self.tx_body.as_ref().ok_or(SlotError::InvalidSlot)?;
+        if body.index() >= bodies.slot_count() || tx.index() >= self.tx.slot_count() {
+            return Err(SlotError::InvalidSlot);
+        }
+        let body = bodies.payload(body).ok_or(SlotError::NotOccupied)?;
+        if !self.tx.is_occupied(tx) {
+            return Err(SlotError::NotOccupied);
+        }
+        if self.tx.is_pinned(tx) {
+            return Err(SlotError::Pinned);
+        }
+        let tx = self.tx.payload_mut(tx).ok_or(SlotError::NotOccupied)?;
+        Ok((body, tx))
     }
 }
 

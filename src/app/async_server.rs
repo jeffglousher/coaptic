@@ -713,7 +713,13 @@ pub(super) async fn dispatch_rx_async<
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodyDatagramSlots
+        + Exchanges
+        + DedupSlots,
     T: ProtocolIo,
 {
     let mut owner = RxOwner {
@@ -759,7 +765,7 @@ pub(super) async fn send_notification_async<S, T, const REQUESTS: usize>(
     seq: u32,
 ) -> Result<bool, Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots + DedupSlots,
     T: ProtocolIo,
 {
     let mut owner = NotifyOwner {
@@ -828,7 +834,7 @@ pub(super) async fn complete_deferred_observe_async<
 // Bound later sends by timers created during this same progress pass.
 pub(super) fn limit_engine_deadlines<S, T>(engine: &Engine<S>, io: &mut T)
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots,
     T: ProtocolIo,
 {
     let now = io.completed_at();
@@ -880,7 +886,13 @@ pub(super) async fn send_qblock_recover_async<S, T, const CALLS: usize, const RE
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + Exchanges + ObserveSlots,
+    S: Storage
+        + DatagramSlots
+        + PendingCons
+        + BodyDatagramSlots
+        + DedupSlots
+        + Exchanges
+        + ObserveSlots,
     T: ProtocolIo,
 {
     let expected = engine
@@ -926,7 +938,7 @@ where
 
 pub(super) async fn refresh_progress_deadlines_async<S, T>(engine: &Engine<S>, io: &mut T)
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots,
     T: ProtocolIo,
 {
     limit_engine_deadlines(engine, io);

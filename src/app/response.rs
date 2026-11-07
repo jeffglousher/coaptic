@@ -1489,6 +1489,7 @@ mod assembled_hold_tests {
         assert!(!full.payload_truncated());
         assert_eq!(full.payload_src_len(), 200);
     }
+    #[cfg(feature = "std")]
     #[test]
     fn edited_snapshot_debug_does_not_reveal_retained_payload() {
         use crate::message::{Message, MessageId, Token, decode, encode};

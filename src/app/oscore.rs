@@ -453,6 +453,139 @@ pub(crate) fn encode_notification<S: Storage + DatagramSlots, E, const REQUESTS:
         .map_err(super::Error::from)
 }
 
+/// Encode a body range into a fresh TX reservation without staging the chunk.
+/// The caller owns the empty TX slot and releases it on failure. No reference
+/// to either storage area survives this synchronous call.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_body_response<
+    S: crate::storage::BodyDatagramSlots,
+    E,
+    const REQUESTS: usize,
+>(
+    ctx: &mut Field<REQUESTS, S::Token>,
+    peer: Endpoint,
+    request: Request,
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    msg: Message<'_, S::Token>,
+    body: SlotId,
+    range: core::ops::Range<usize>,
+    fresh_piv: bool,
+) -> Result<(), super::Error<E>> {
+    // A retained packet still needs transactional replacement. Keep that rare
+    // case on the existing path; normal block replies acquire an empty slot.
+    if !engine
+        .storage()
+        .tx_payload(tx)
+        .ok_or(crate::storage::SlotError::NotOccupied)?
+        .is_empty()
+    {
+        return encode_retained_body_response(
+            ctx, peer, request, engine, tx, msg, body, range, fresh_piv,
+        );
+    }
+    if engine.storage_mut().tx_datagram().is_pinned(tx) {
+        return Err(crate::storage::SlotError::Pinned.into());
+    }
+    #[cfg(feature = "oscore")]
+    let protected = ctx.is_some();
+    #[cfg(not(feature = "oscore"))]
+    let protected = false;
+    let payload_len = range
+        .end
+        .checked_sub(range.start)
+        .filter(|len| *len <= 1024)
+        .ok_or(super::Error::Block(
+            crate::error::BlockTransferError::Overflow,
+        ))?;
+    let (body, out) = engine.storage_mut().tx_body_and_tx_mut(body, tx)?;
+    let payload = body.get(range).ok_or(super::Error::Block(
+        crate::error::BlockTransferError::Overflow,
+    ))?;
+    let msg = msg.with_payload(payload);
+    let limit = if protected {
+        out.len().min(S::TX_DATAGRAM_BYTES)
+    } else {
+        out.len()
+    };
+    let n = stage_response(ctx, peer, request, &msg, fresh_piv, &mut out[..limit])?;
+    engine.storage_mut().set_tx_len(tx, n)?;
+    #[cfg(feature = "diagnostics")]
+    if !protected {
+        crate::storage::WorkMetrics::add(
+            &mut engine.work_metrics_mut().tx_payload_encoded_bytes,
+            payload_len,
+        );
+    }
+    let _ = payload_len;
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn encode_retained_body_response<S: crate::storage::BodyDatagramSlots, E, const REQUESTS: usize>(
+    ctx: &mut Field<REQUESTS, S::Token>,
+    peer: Endpoint,
+    request: Request,
+    engine: &mut Engine<S>,
+    tx: SlotId,
+    msg: Message<'_, S::Token>,
+    body: SlotId,
+    range: core::ops::Range<usize>,
+    fresh_piv: bool,
+) -> Result<(), super::Error<E>> {
+    let bytes = engine
+        .tx_body_payload(body)
+        .ok_or(super::Error::Block(
+            crate::error::BlockTransferError::NoTransfer,
+        ))?
+        .get(range)
+        .ok_or(super::Error::Block(
+            crate::error::BlockTransferError::Overflow,
+        ))?;
+    let mut chunk = [0u8; 1024];
+    let n = bytes.len();
+    if n > chunk.len() {
+        return Err(super::Error::Block(
+            crate::error::BlockTransferError::Overflow,
+        ));
+    }
+    chunk[..n].copy_from_slice(bytes);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().block_tx_staged_bytes, n);
+    let msg = msg.with_payload(&chunk[..n]);
+    if fresh_piv {
+        encode_notification(ctx, peer, request, engine, tx, &msg)
+    } else {
+        encode_message(ctx, peer, request, engine, tx, &msg)
+    }
+}
+
+fn stage_response<E, const REQUESTS: usize, K: OwnedToken>(
+    ctx: &mut Field<REQUESTS, K>,
+    peer: Endpoint,
+    request: Request,
+    msg: &Message<'_, K>,
+    fresh_piv: bool,
+    out: &mut [u8],
+) -> Result<usize, super::Error<E>> {
+    if fresh_piv && is_active::<REQUESTS, K>(ctx) {
+        return stage_notification(ctx, peer, request, msg, out);
+    }
+    #[cfg(not(feature = "oscore"))]
+    let _ = (ctx, peer, request);
+    #[cfg(feature = "oscore")]
+    if !fresh_piv
+        && let Some(ctx) = selected(ctx, peer.association()).map_err(super::Error::Oscore)?
+    {
+        let request = request.ok_or_else(|| protect_err(OscoreError::Context))?;
+        return ctx.protect_response(msg, request, out).map_err(protect_err);
+    }
+    crate::message::encode(msg, out)
+        .map_err(|error| super::Error::Message(SlotMessageError::Encode(error)))
+}
+
 pub(crate) fn stage_notification<E, const REQUESTS: usize, K: OwnedToken>(
     ctx: &mut Field<REQUESTS, K>,
     peer: Endpoint,
@@ -934,6 +1067,244 @@ mod request_capacity_tests {
     use super::*;
     use crate::message::{Code, MessageId, Token, Type};
     use crate::storage::{AllocMemory, Capacities};
+
+    #[test]
+    fn direct_body_encoding_matches_staged_bytes_and_sequence_use() {
+        use crate::storage::{BlockKey, BodyDatagramSlots, Memory, profiles};
+        fn bound_context() -> (Option<crate::oscore::SecurityContext>, RequestRef) {
+            let make = |sender_id, recipient_id| {
+                crate::oscore::SecurityContext::derive(crate::oscore::DeriveParams {
+                    master_secret: &[0x37; 16],
+                    master_salt: &[],
+                    sender_id,
+                    recipient_id,
+                    id_context: &[],
+                })
+                .unwrap()
+            };
+            let mut client = make(&[1], &[2]);
+            let mut server = make(&[2], &[1]);
+            let request = Message::con(Code::GET, MessageId::new(1), Token::EMPTY);
+            let mut wire = [0; 128];
+            let n = client.protect_request(&request, &mut wire).unwrap();
+            let parsed = crate::message::decode(&wire[..n]).unwrap();
+            let mut plain = [0; 128];
+            let (_, binding) = server.unprotect_request(&parsed, &mut plain).unwrap();
+            (Some(server), binding)
+        }
+        fn exercise<S: BodyDatagramSlots<Token = Token>>(make: impl Fn() -> S, fits: bool) {
+            let payload = core::array::from_fn::<_, 1024, _>(|i| (i % 251) as u8);
+            for protected in [false, true] {
+                for fresh_piv in [false, true] {
+                    for range in [0..0, 17..49, 17..1024, 0..1024] {
+                        let mut engine = Engine::from_storage(make());
+                        let peer = Endpoint::v4([192, 0, 2, 1], 5683)
+                            .with_association(if protected { 0 } else { 9 });
+                        let body = engine
+                            .start_block2(BlockKey::new(Token::EMPTY, peer), &payload, 6)
+                            .unwrap();
+                        let transfer = engine.tx_body_transfer(body).unwrap();
+                        let expected_tx = engine.acquire_tx().unwrap();
+                        let actual_tx = engine.acquire_tx().unwrap();
+                        let (mut expected_ctx, binding) = bound_context();
+                        let (mut actual_ctx, same_binding) = bound_context();
+                        assert_eq!(binding, same_binding);
+                        if !protected {
+                            expected_ctx = None;
+                            actual_ctx = None;
+                        }
+                        let binding = protected.then_some(binding);
+                        let format = crate::message::ContentFormat::OCTET_STREAM.encode();
+                        let options = [
+                            crate::message::Opt::etag(b"snapshot"),
+                            crate::message::Opt::content_format(&format),
+                        ];
+                        let msg =
+                            Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(2))
+                                .with_token(Token::EMPTY)
+                                .with_options(&options);
+                        let staged = msg.with_payload(&payload[range.clone()]);
+                        let expected = if fresh_piv {
+                            encode_notification::<_, core::convert::Infallible, 4>(
+                                &mut expected_ctx,
+                                peer,
+                                binding,
+                                &mut engine,
+                                expected_tx,
+                                &staged,
+                            )
+                        } else {
+                            encode_message::<_, core::convert::Infallible, 4>(
+                                &expected_ctx,
+                                peer,
+                                binding,
+                                &mut engine,
+                                expected_tx,
+                                &staged,
+                            )
+                        };
+                        let actual = encode_body_response::<_, core::convert::Infallible, 4>(
+                            &mut actual_ctx,
+                            peer,
+                            binding,
+                            &mut engine,
+                            actual_tx,
+                            msg,
+                            body,
+                            range.clone(),
+                            fresh_piv,
+                        );
+                        if fits || range.len() <= 32 {
+                            expected.unwrap();
+                            actual.unwrap();
+                            assert_eq!(
+                                engine.storage().tx_payload(actual_tx),
+                                engine.storage().tx_payload(expected_tx)
+                            );
+                        } else {
+                            assert!(matches!(
+                                expected,
+                                Err(super::super::Error::Message(SlotMessageError::Encode(
+                                    EncodeError::BufferTooSmall
+                                )))
+                            ));
+                            assert!(matches!(
+                                actual,
+                                Err(super::super::Error::Message(SlotMessageError::Encode(
+                                    EncodeError::BufferTooSmall
+                                )))
+                            ));
+                            assert_eq!(engine.storage().tx_payload(expected_tx), Some(&[][..]));
+                            assert_eq!(engine.storage().tx_payload(actual_tx), Some(&[][..]));
+                        }
+                        assert_eq!(
+                            actual_ctx.as_ref().map(|ctx| ctx.sender_seq()),
+                            expected_ctx.as_ref().map(|ctx| ctx.sender_seq())
+                        );
+                        assert_eq!(engine.tx_body_payload(body), Some(payload.as_slice()));
+                        assert_eq!(engine.tx_body_transfer(body), Some(transfer));
+                    }
+                }
+            }
+        }
+        exercise(Memory::<profiles::Constrained>::with_block_wise, true);
+        let caps = Capacities::from_profile::<profiles::Constrained>()
+            .with_block_wise::<profiles::Constrained>();
+        exercise(|| AllocMemory::try_new(caps, usize::MAX).unwrap(), true);
+        exercise(
+            || {
+                AllocMemory::try_new(
+                    Capacities {
+                        tx_datagram_bytes: 128,
+                        ..caps
+                    },
+                    usize::MAX,
+                )
+                .unwrap()
+            },
+            false,
+        );
+    }
+
+    #[test]
+    fn body_encoding_preserves_snapshot_and_refuses_missing_security_binding() {
+        use crate::storage::{BlockKey, Memory, profiles};
+        fn exercise<S: crate::storage::BodyDatagramSlots<Token = Token>>(storage: S) {
+            let mut engine = Engine::from_storage(storage);
+            let peer = Endpoint::v4([127, 0, 0, 1], 5683);
+            let body = engine
+                .start_block2(BlockKey::new(Token::EMPTY, peer), &[0x5a; 1024], 6)
+                .unwrap();
+            let transfer = engine.tx_body_transfer(body).unwrap();
+            let tx = engine.acquire_tx().unwrap();
+            let mut ctx: Option<crate::oscore::SecurityContext> = None;
+            let msg = Message::new(Type::Acknowledgement, Code::CONTENT, MessageId::new(7));
+            encode_body_response::<_, core::convert::Infallible, 4>(
+                &mut ctx,
+                peer,
+                None,
+                &mut engine,
+                tx,
+                msg,
+                body,
+                17..49,
+                false,
+            )
+            .unwrap();
+            assert_eq!(engine.decode_tx(tx).unwrap().payload(), &[0x5a; 32]);
+            assert_eq!(engine.tx_body_transfer(body), Some(transfer));
+            assert_eq!(engine.tx_body_payload(body), Some(&[0x5a; 1024][..]));
+
+            ctx = Some(
+                crate::oscore::SecurityContext::derive(crate::oscore::DeriveParams {
+                    master_secret: &[0x24; 16],
+                    master_salt: &[],
+                    sender_id: &[1],
+                    recipient_id: &[2],
+                    id_context: &[],
+                })
+                .unwrap(),
+            );
+            let mut original = [0u8; 128];
+            let wire = engine.storage().tx_payload(tx).unwrap();
+            original[..wire.len()].copy_from_slice(wire);
+            let n = wire.len();
+            for fresh in [false, true] {
+                for fresh_piv in [false, true] {
+                    if fresh {
+                        engine.storage_mut().set_tx_len(tx, 0).unwrap();
+                    }
+                    assert!(matches!(
+                        encode_body_response::<_, core::convert::Infallible, 4>(
+                            &mut ctx,
+                            peer,
+                            None,
+                            &mut engine,
+                            tx,
+                            msg,
+                            body,
+                            0..32,
+                            fresh_piv,
+                        ),
+                        Err(super::super::Error::Oscore(OscoreError::Context))
+                    ));
+                    assert_eq!(
+                        engine.storage().tx_payload(tx).unwrap(),
+                        if fresh { &[][..] } else { &original[..n] }
+                    );
+                    assert_eq!(engine.tx_body_transfer(body), Some(transfer));
+                    assert_eq!(engine.tx_body_payload(body), Some(&[0x5a; 1024][..]));
+                }
+            }
+            ctx = None;
+            assert!(matches!(
+                encode_body_response::<_, core::convert::Infallible, 4>(
+                    &mut ctx,
+                    peer,
+                    None,
+                    &mut engine,
+                    tx,
+                    msg,
+                    body,
+                    1020..1030,
+                    false,
+                ),
+                Err(super::super::Error::Block(
+                    crate::error::BlockTransferError::Overflow
+                ))
+            ));
+            assert_eq!(engine.storage().tx_payload(tx), Some(&[][..]));
+        }
+        exercise(Memory::<profiles::Constrained>::with_block_wise());
+        exercise(
+            AllocMemory::try_new(
+                Capacities::from_profile::<profiles::Constrained>()
+                    .with_block_wise::<profiles::Constrained>(),
+                usize::MAX,
+            )
+            .unwrap(),
+        );
+    }
 
     #[test]
     fn request_protection_respects_actual_tx_before_replacing_binding() {

@@ -201,10 +201,10 @@ use crate::message::{
     OptionsBuilder, OwnedToken, ParsedMessage, Transmission, Type, encode, encode_uint,
 };
 use crate::storage::{
-    BlockKey, BlockRole, BodySlots, DatagramIo, DatagramIoError, DatagramSlots, DedupEntry,
-    DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, MemoryLayout, MemoryProfile,
-    Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots, OutgoingBlock,
-    PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
+    BlockKey, BlockRole, BodyDatagramSlots, BodySlots, DatagramIo, DatagramIoError, DatagramSlots,
+    DedupEntry, DedupKey, DedupSlots, Endpoint, Engine, EngineBuilder, Exchanges, MemoryLayout,
+    MemoryProfile, Metrics, Missing, ObserveInterest, ObserveKey, ObserveResource, ObserveSlots,
+    OutgoingBlock, PendingCons, Present, QBlockRecover, Retransmit, SlotError, SlotId, Storage,
 };
 
 /// RFC 7252 default Max-Age when a registration or notify omits it.
@@ -285,12 +285,21 @@ impl std::error::Error for OscoreInstallError {}
 ///
 /// Fixed [`crate::storage::Memory`] and allocator-backed `AllocMemory` (with
 /// `alloc`) use the same routing, request builders and protocol reactor.
+/// Custom backends implement [`BodyDatagramSlots`] to lend a retained body and
+/// an independent outgoing packet buffer together without staging the payload.
 pub trait AppStorage:
-    Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots
+    Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots + Exchanges + DedupSlots
 {
 }
-impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots>
-    AppStorage for S
+impl<
+    S: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodyDatagramSlots
+        + Exchanges
+        + DedupSlots,
+> AppStorage for S
 {
 }
 
@@ -2692,7 +2701,13 @@ fn poll_engine<
     mut ingress: Option<&mut AppIngress<'_>>,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodyDatagramSlots
+        + Exchanges
+        + DedupSlots,
     T: DatagramIo,
 {
     oscore_checkpoint.flush(oscore, &mut checkpoint_commit)?;
@@ -2923,7 +2938,7 @@ fn progress_q_observe<S, T, const REQUESTS: usize>(
     now_ms: u64,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + ObserveSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots + ObserveSlots,
     T: DatagramIo,
 {
     for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
@@ -3180,7 +3195,13 @@ fn send_qblock_recover<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + Exchanges + ObserveSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + BodyDatagramSlots
+        + DedupSlots
+        + Exchanges
+        + ObserveSlots,
     T: DatagramIo,
 {
     if recover.role() == BlockRole::IncomingQBlock2
@@ -3391,7 +3412,13 @@ fn dispatch_rx<
     rx: SlotId,
 ) -> Result<(), Error<T::Error>>
 where
-    Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
+    Mem: Storage
+        + DatagramSlots
+        + PendingCons
+        + ObserveSlots
+        + BodyDatagramSlots
+        + Exchanges
+        + DedupSlots,
     T: DatagramIo,
 {
     let Some(peer) = engine.rx_endpoint(rx) else {
@@ -4825,7 +4852,7 @@ fn supersede_notification<S, T, const N: usize, const REQUESTS: usize, const DEF
     pending: crate::storage::PendingCon,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots,
     T: crate::storage::DatagramTransport,
 {
     let interest = (0..engine.capacities().observe_entries).find_map(|index| {
@@ -5072,7 +5099,7 @@ fn notify_engine<S, T, const REQUESTS: usize, const DEFERRED: usize>(
     deferred: &DeferredTable<DEFERRED, S::Token>,
 ) -> Result<usize, Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
@@ -5328,7 +5355,7 @@ fn send_notification<S, T, const REQUESTS: usize>(
     seq: u32,
 ) -> Result<bool, Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
@@ -5514,7 +5541,7 @@ fn start_notify_block2<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + ObserveSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots + ObserveSlots,
     T: DatagramIo,
 {
     let key = response_block_key(meta.token, meta.dest, response)?;
@@ -5590,7 +5617,7 @@ fn send_separate<S, T, const REQUESTS: usize>(
     acknowledged: bool,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
@@ -5746,7 +5773,7 @@ fn send_response<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     response.validate().map_err(Error::Response)?;
@@ -5952,7 +5979,7 @@ fn retire_terminal_response<S: Storage + BodySlots + PendingCons + DatagramSlots
 
 // Suppressed terminal responses still end the relation and all owned retries.
 fn retire_suppressed_observe<
-    S: Storage + BodySlots + ObserveSlots + PendingCons + DatagramSlots,
+    S: Storage + BodyDatagramSlots + ObserveSlots + PendingCons + DatagramSlots,
 >(
     engine: &mut Engine<S>,
     interest: ObserveInterest<S::Token>,
@@ -6046,7 +6073,7 @@ fn encode_q_observe_first<S, T, const REQUESTS: usize>(
     oscore: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<SlotId, Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + BodyDatagramSlots + DedupSlots,
     T: crate::storage::DatagramTransport,
 {
     loop {
@@ -6104,7 +6131,7 @@ fn issue_q_observe_followup<S, T, const REQUESTS: usize>(
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let transfer = engine
@@ -6229,7 +6256,7 @@ fn start_outgoing<S, T, const REQUESTS: usize>(
     visible: Option<OutgoingVisibility<'_, S>>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     if allow_borrowed
@@ -6399,7 +6426,7 @@ fn issue_borrowed_classic<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let (tx, selected_block) =
@@ -6436,7 +6463,7 @@ fn encode_borrowed_classic<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(SlotId, bool), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: crate::storage::DatagramTransport,
 {
     let key = response_block_key(key.token(), key.endpoint(), response)?;
@@ -6541,7 +6568,7 @@ fn continue_outgoing<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let role = engine
@@ -6664,7 +6691,7 @@ fn issue_observe_preferred<S, T, const REQUESTS: usize>(
     maximum: u8,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     for szx in (0..=maximum).rev() {
@@ -6710,7 +6737,7 @@ fn issue_classic<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let (tx, issued) =
@@ -6766,7 +6793,7 @@ fn encode_classic<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(SlotId, Option<OutgoingBlock>), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + BodyDatagramSlots + DedupSlots,
     T: crate::storage::DatagramTransport,
 {
     let range = match meta.block2 {
@@ -6860,7 +6887,7 @@ fn complete_deferred_q<S, T, const REQUESTS: usize>(
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     if meta.no_response.suppresses(response.code()) {
@@ -6971,7 +6998,7 @@ fn issue_deferred_q<S, T, const REQUESTS: usize>(
     closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let q = meta.q_block2.expect("Q selection");
@@ -7000,12 +7027,6 @@ where
             break;
         }
         let end = (offset + size).min(length);
-        let mut scratch = [0u8; 1024];
-        scratch[..end - offset].copy_from_slice(
-            &engine
-                .tx_body_payload(body)
-                .ok_or(Error::Block(BlockTransferError::NoTransfer))?[offset..end],
-        );
         let value = crate::message::BlockValue::new(num, end < length, q.szx())
             .map_err(|e| Error::Block(e.into()))?;
         let mid = if step == 0 {
@@ -7014,7 +7035,7 @@ where
             ids.next_for(engine, io, now_ms)?
         };
         let tx = acquire_tx_or_evict(engine).ok_or(Error::Saturated)?;
-        if let Err(error) = encode_response(
+        if let Err(error) = encode_body_response(
             engine,
             meta.dest,
             tx,
@@ -7022,7 +7043,8 @@ where
             mid,
             meta.token,
             response,
-            &scratch[..end - offset],
+            body,
+            offset..end,
             Some(BlockOpt {
                 value,
                 q_block: true,
@@ -7067,7 +7089,7 @@ fn issue_q_selection<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let selections = || {
@@ -7138,7 +7160,7 @@ fn issue_q_window<S, T, const REQUESTS: usize>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let retained_observe = engine
@@ -7230,7 +7252,7 @@ fn send_issued<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     let tx = encode_issued::<S, T, REQUESTS>(
@@ -7251,23 +7273,12 @@ fn encode_issued<S, T, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
 ) -> Result<SlotId, Error<T::Error>>
 where
-    S: Storage + DatagramSlots + BodySlots + DedupSlots,
+    S: BodyDatagramSlots + DedupSlots,
     T: crate::storage::DatagramTransport,
 {
-    let source = issued_payload(engine, issued).map_err(Error::Block)?;
-    // A full block initializes every byte directly. Short final blocks keep
-    // their bounded zero-filled backing; only the issued prefix is encoded.
-    let mut chunk: [u8; 1024];
-    match <&[u8; 1024]>::try_from(source) {
-        Ok(full) => chunk = *full,
-        Err(_) => {
-            chunk = [0; 1024];
-            chunk[..source.len()].copy_from_slice(source);
-        }
-    }
-    let n = issued.len();
-    #[cfg(feature = "diagnostics")]
-    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().block_tx_staged_bytes, n);
+    issued_payload(engine, issued).map_err(Error::Block)?;
+    // The payload check validates the addition before any TX admission.
+    let end = issued.offset() + issued.len();
     let size2 = if q_block {
         engine.tx_body_transfer(issued.id()).map(|t| t.filled())
     } else {
@@ -7281,7 +7292,7 @@ where
         q_block,
         size2,
     });
-    if let Err(e) = encode_response(
+    if let Err(e) = encode_body_response(
         engine,
         meta.dest,
         tx,
@@ -7289,7 +7300,8 @@ where
         mid,
         meta.token,
         response,
-        &chunk[..n],
+        issued.id(),
+        issued.offset()..end,
         block,
         meta.block1,
         oscore_ctx,
@@ -7333,17 +7345,118 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
+    encode_response_with(
+        engine,
+        peer,
+        tx,
+        ty,
+        mid,
+        token,
+        response,
+        |engine, ctx, msg, fresh_piv| {
+            let msg = (*msg).with_payload(payload);
+            if fresh_piv {
+                oscore::encode_notification(ctx, peer, oscore_req, engine, tx, &msg)
+            } else {
+                oscore::encode_message(ctx, peer, oscore_req, engine, tx, &msg)
+            }
+        },
+        block,
+        block1,
+        oscore_ctx,
+        oscore_req,
+    )
+}
+
+// Select payload ownership at compile time: ordinary borrowed replies keep
+// their direct encoder, while retained bodies borrow a disjoint TX area.
+#[allow(clippy::too_many_arguments)]
+fn encode_body_response<S: BodyDatagramSlots, E, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    body: SlotId,
+    range: core::ops::Range<usize>,
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    encode_response_with(
+        engine,
+        peer,
+        tx,
+        ty,
+        mid,
+        token,
+        response,
+        |engine, ctx, msg, fresh_piv| {
+            oscore::encode_body_response(
+                ctx, peer, oscore_req, engine, tx, *msg, body, range, fresh_piv,
+            )
+        },
+        block,
+        block1,
+        oscore_ctx,
+        oscore_req,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_response_with<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    encode_payload: impl FnOnce(
+        &mut Engine<S>,
+        &mut oscore::Field<REQUESTS, S::Token>,
+        &Message<'_, S::Token>,
+        bool,
+    ) -> Result<(), Error<E>>,
+    block: Option<BlockOpt>,
+    block1: Option<BlockOpt>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
     // Without Location options at most eight entries are reachable: ETag,
     // Observe, Content-Format, Max-Age, Block2/Q-Block2, Size2, Block1 and Echo.
     // The full path preserves both eight-entry Location lists and all metadata.
     if response.location_paths().is_empty() && response.location_queries().is_empty() {
         encode_response_options::<S, E, REQUESTS, 8>(
-            engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
+            engine,
+            peer,
+            tx,
+            ty,
+            mid,
+            token,
+            response,
+            encode_payload,
+            block,
+            block1,
+            oscore_ctx,
             oscore_req,
         )
     } else {
         encode_response_locations(
-            engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx,
+            engine,
+            peer,
+            tx,
+            ty,
+            mid,
+            token,
+            response,
+            encode_payload,
+            block,
+            block1,
+            oscore_ctx,
             oscore_req,
         )
     }
@@ -7360,14 +7473,30 @@ fn encode_response_locations<S: Storage + DatagramSlots, E, const REQUESTS: usiz
     mid: MessageId,
     token: S::Token,
     response: &Response<'_, S::Token>,
-    payload: &[u8],
+    encode_payload: impl FnOnce(
+        &mut Engine<S>,
+        &mut oscore::Field<REQUESTS, S::Token>,
+        &Message<'_, S::Token>,
+        bool,
+    ) -> Result<(), Error<E>>,
     block: Option<BlockOpt>,
     block1: Option<BlockOpt>,
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
     encode_response_options::<S, E, REQUESTS, { 8 + 2 * LOCATION_MAX }>(
-        engine, peer, tx, ty, mid, token, response, payload, block, block1, oscore_ctx, oscore_req,
+        engine,
+        peer,
+        tx,
+        ty,
+        mid,
+        token,
+        response,
+        encode_payload,
+        block,
+        block1,
+        oscore_ctx,
+        oscore_req,
     )
 }
 
@@ -7385,7 +7514,12 @@ fn encode_response_options<
     mid: MessageId,
     token: S::Token,
     response: &Response<'_, S::Token>,
-    payload: &[u8],
+    encode_payload: impl FnOnce(
+        &mut Engine<S>,
+        &mut oscore::Field<REQUESTS, S::Token>,
+        &Message<'_, S::Token>,
+        bool,
+    ) -> Result<(), Error<E>>,
     block: Option<BlockOpt>,
     block1: Option<BlockOpt>,
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
@@ -7452,16 +7586,11 @@ fn encode_response_options<
         Ok(()) => {
             let msg = Message::new(ty, response.code(), mid)
                 .with_token(token)
-                .with_options(opts.as_slice())
-                .with_payload(payload);
-            if response.fresh_piv()
+                .with_options(opts.as_slice());
+            let fresh_piv = response.fresh_piv()
                 || block.is_some_and(|b| b.q_block)
-                || (response.observe_seq().is_some() && ty != Type::Acknowledgement)
-            {
-                oscore::encode_notification(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-            } else {
-                oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
-            }
+                || (response.observe_seq().is_some() && ty != Type::Acknowledgement);
+            encode_payload(engine, oscore_ctx, &msg, fresh_piv)
         }
         Err(EncodeError::OptionsFull) => {
             encode_options_full_500(engine, peer, tx, ty, mid, token, oscore_ctx, oscore_req)
@@ -7984,7 +8113,7 @@ fn oscore_inbound_error<S, T>(
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
 where
-    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    S: Storage + DatagramSlots + PendingCons + BodyDatagramSlots + DedupSlots,
     T: DatagramIo,
 {
     #[cfg(feature = "oscore")]
