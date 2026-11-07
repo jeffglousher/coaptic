@@ -16,6 +16,8 @@ capacities and pool backing are unchanged. See the
 [implementation, measurements and tradeoffs](architecture/requirements/PACKET-LIVE-RANGES-20261106.md).
 All-feature library/integration/doctests, affected feature combinations, strict
 lint, Rust 1.89 checks and rustdoc pass on the exact measured source.
+Exact sources, raw comparisons, rejected attempts and reconstruction checks are
+retained in the [portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/e602a261fac18d839e92def713ae410f7c78d15d/tools/benchmark/evidence/packet-live-ranges-20261106).
 
 Shorter packet-preparation lifetimes, compact received-response metadata, lazy
 Location backing, static body retention and direct ordinary ETag/Content-Format
