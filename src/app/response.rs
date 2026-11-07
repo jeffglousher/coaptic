@@ -175,9 +175,11 @@ pub struct Response<'a, T: OwnedToken = Token> {
     observe: Option<u32>,
     assembled: Option<&'a [u8]>,
     echo: Option<Echo>,
-    location_path: [&'a str; LOCATION_MAX],
+    // Ordinary responses need no Location backing initialized. Materialize each
+    // bounded array on its first valid append; empty strings remain valid values.
+    location_path: Option<[&'a str; LOCATION_MAX]>,
     location_path_len: u8,
-    location_query: [&'a str; LOCATION_MAX],
+    location_query: Option<[&'a str; LOCATION_MAX]>,
     location_query_len: u8,
     separate: bool,
     deferred: bool,
@@ -203,9 +205,9 @@ impl<'a, T: OwnedToken> Response<'a, T> {
             observe: None,
             assembled: None,
             echo: None,
-            location_path: [""; LOCATION_MAX],
+            location_path: None,
             location_path_len: 0,
-            location_query: [""; LOCATION_MAX],
+            location_query: None,
             location_query_len: 0,
             separate: false,
             deferred: false,
@@ -614,7 +616,14 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         {
             return self.invalid(ResponseError::LocationDotSegment);
         }
-        self.location_path[n] = segment;
+        match &mut self.location_path {
+            Some(values) => values[n] = segment,
+            None => {
+                let mut values = [""; LOCATION_MAX];
+                values[n] = segment;
+                self.location_path = Some(values);
+            }
+        }
         self.location_path_len += 1;
         self
     }
@@ -638,7 +647,14 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         if n >= LOCATION_MAX || query.len() > 255 {
             return self.invalid(ResponseError::LocationQueryBounds);
         }
-        self.location_query[n] = query;
+        match &mut self.location_query {
+            Some(values) => values[n] = query,
+            None => {
+                let mut values = [""; LOCATION_MAX];
+                values[n] = query;
+                self.location_query = Some(values);
+            }
+        }
         self.location_query_len += 1;
         self
     }
@@ -646,13 +662,19 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// Location-Path segments in insertion order.
     #[must_use]
     pub fn location_paths(&self) -> &[&str] {
-        &self.location_path[..usize::from(self.location_path_len)]
+        match &self.location_path {
+            Some(values) => &values[..usize::from(self.location_path_len)],
+            None => &[],
+        }
     }
 
     /// Location-Query values in insertion order.
     #[must_use]
     pub fn location_queries(&self) -> &[&str] {
-        &self.location_query[..usize::from(self.location_query_len)]
+        match &self.location_query {
+            Some(values) => &values[..usize::from(self.location_query_len)],
+            None => &[],
+        }
     }
 
     /// Defer application work accepted by [`super::App::poll_with`].
@@ -1512,6 +1534,41 @@ mod assembled_hold_tests {
             !debug.contains("165, 165"),
             "retained payload leaked: {debug}"
         );
+    }
+
+    #[test]
+    fn location_empty_first_values_and_overflow_preserve_both_arrays() {
+        const FIRST: Response<'static, crate::message::Token> = Response::created()
+            .with_static(b"payload")
+            .location_path("")
+            .location_query("");
+        assert_eq!(FIRST.location_paths(), &[""]);
+        assert_eq!(FIRST.location_queries(), &[""]);
+        assert_eq!(FIRST.validate(), Ok(()));
+        let values = ["", "one", "two", "three", "four", "five", "six", "seven"];
+        let mut full = FIRST;
+        for value in &values[1..] {
+            full = full.location_path(value).location_query(value);
+        }
+        assert_eq!(full.location_paths(), &values);
+        assert_eq!(full.location_queries(), &values);
+        assert_eq!(full.validate(), Ok(()));
+        // Count refusal precedes dot-segment validation and changes no entries.
+        let path_overflow = full.location_path(".");
+        let query_overflow = full.location_query("overflow");
+        assert_eq!(
+            path_overflow.validate(),
+            Err(ResponseError::LocationPathBounds)
+        );
+        assert_eq!(
+            query_overflow.validate(),
+            Err(ResponseError::LocationQueryBounds)
+        );
+        for response in [path_overflow, query_overflow] {
+            assert_eq!(response.location_paths(), &values);
+            assert_eq!(response.location_queries(), &values);
+            assert_eq!(response.payload(), b"payload");
+        }
     }
 
     #[test]
