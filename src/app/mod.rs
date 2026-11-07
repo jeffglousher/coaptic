@@ -7254,8 +7254,20 @@ where
     S: Storage + DatagramSlots + BodySlots + DedupSlots,
     T: crate::storage::DatagramTransport,
 {
-    let mut chunk = [0u8; 1024];
-    let n = copy_issued(engine, issued, &mut chunk).map_err(Error::Block)?;
+    let source = issued_payload(engine, issued).map_err(Error::Block)?;
+    // A full block initializes every byte directly. Short final blocks keep
+    // their bounded zero-filled backing; only the issued prefix is encoded.
+    let mut chunk: [u8; 1024];
+    match <&[u8; 1024]>::try_from(source) {
+        Ok(full) => chunk = *full,
+        Err(_) => {
+            chunk = [0; 1024];
+            chunk[..source.len()].copy_from_slice(source);
+        }
+    }
+    let n = issued.len();
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().block_tx_staged_bytes, n);
     let size2 = if q_block {
         engine.tx_body_transfer(issued.id()).map(|t| t.filled())
     } else {
@@ -7289,11 +7301,10 @@ where
     Ok(tx)
 }
 
-fn copy_issued<S: Storage + BodySlots>(
-    engine: &mut Engine<S>,
+fn issued_payload<S: Storage + BodySlots>(
+    engine: &Engine<S>,
     issued: OutgoingBlock,
-    dest: &mut [u8],
-) -> Result<usize, BlockTransferError> {
+) -> Result<&[u8], BlockTransferError> {
     let payload = engine
         .tx_body_payload(issued.id())
         .ok_or(BlockTransferError::NoTransfer)?;
@@ -7301,16 +7312,10 @@ fn copy_issued<S: Storage + BodySlots>(
         .offset()
         .checked_add(issued.len())
         .ok_or(BlockTransferError::Overflow)?;
-    if end > payload.len() || issued.len() > dest.len() {
+    if end > payload.len() || issued.len() > 1024 {
         return Err(BlockTransferError::Overflow);
     }
-    dest[..issued.len()].copy_from_slice(&payload[issued.offset()..end]);
-    #[cfg(feature = "diagnostics")]
-    crate::storage::WorkMetrics::add(
-        &mut engine.work_metrics_mut().block_tx_staged_bytes,
-        issued.len(),
-    );
-    Ok(issued.len())
+    Ok(&payload[issued.offset()..end])
 }
 
 #[allow(clippy::too_many_arguments)]
