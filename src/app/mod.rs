@@ -8051,9 +8051,10 @@ struct BlockOpt {
     size2: Option<usize>,
 }
 
-// Retain only validated selector bytes; response identity lives in SendResponse.
+// Borrow the parsed request's existing options descriptor without retaining
+// another slice or imposing the Token's auto traits on the shared reference.
 #[derive(Clone, Copy)]
-struct QBlock2Request<'a>(&'a [u8]);
+struct QBlock2Request<'a>(&'a &'a [u8]);
 
 impl<'a> QBlock2Request<'a> {
     fn q_block2(self) -> crate::message::BlockOptions<'a> {

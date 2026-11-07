@@ -62,9 +62,9 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
         }
     }
 
-    /// Validated encoded options, without header, Token or payload.
-    pub(crate) const fn options_bytes(self) -> &'a [u8] {
-        self.options
+    /// Borrow the validated options descriptor without copying the packet view.
+    pub(crate) const fn options_bytes(&self) -> &&'a [u8] {
+        &self.options
     }
 
     /// Parsed header.
