@@ -94,16 +94,8 @@ fn extended_token_snapshot_retains_selection_and_client_metadata() {
     let mut wire = [0; 64];
     let n = response_message.encode(&mut wire).unwrap();
     let parsed = decode_with_token::<LongToken>(&wire[..n]).unwrap();
-    let response = Response::from_client(
-        Code::CONTENT,
-        Type::Acknowledgement,
-        token(),
-        MessageId::new(9),
-        peer,
-        parsed.payload(),
-        None,
-    )
-    .with_received_header(parsed, 123);
+    let origin = crate::app::client::ReplyMeta::from_parsed(&parsed, peer, 123).unwrap();
+    let response: Response<'_, LongToken> = origin.response();
     assert_eq!(response.token(), Some(token()));
     assert_eq!(response.received_at_ms(), Some(123));
     assert_eq!(response.payload(), b"value");
