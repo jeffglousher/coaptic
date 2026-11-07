@@ -664,6 +664,13 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         self.location_path_len != 0 || self.location_query_len != 0
     }
 
+    pub(crate) const fn has_only_etag_and_format(&self) -> bool {
+        !self.has_locations()
+            && self.observe.is_none()
+            && self.max_age.is_none()
+            && self.echo.is_none()
+    }
+
     /// Location-Path segments in insertion order.
     #[must_use]
     pub fn location_paths(&self) -> &[&str] {

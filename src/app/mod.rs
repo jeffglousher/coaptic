@@ -7378,6 +7378,15 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     oscore_req: oscore::Request,
 ) -> Result<(), Error<E>> {
+    if block.is_none()
+        && block1.is_none()
+        && response.has_only_etag_and_format()
+        && !response.fresh_piv()
+    {
+        return encode_response_basic(
+            engine, peer, tx, ty, mid, token, response, payload, oscore_ctx, oscore_req,
+        );
+    }
     // Without Location options at most eight entries are reachable: ETag,
     // Observe, Content-Format, Max-Age, Block2/Q-Block2, Size2, Block1 and Echo.
     // The full path preserves both eight-entry Location lists and all metadata.
@@ -7392,6 +7401,39 @@ fn encode_response<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
             oscore_req,
         )
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_response_basic<S: Storage + DatagramSlots, E, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    peer: Endpoint,
+    tx: SlotId,
+    ty: Type,
+    mid: MessageId,
+    token: S::Token,
+    response: &Response<'_, S::Token>,
+    payload: &[u8],
+    oscore_ctx: &oscore::Field<REQUESTS, S::Token>,
+    oscore_req: oscore::Request,
+) -> Result<(), Error<E>> {
+    response.validate().map_err(Error::Response)?;
+    let etag = response.etag_bytes();
+    let format = response.format();
+    let encoded = format.unwrap_or(ContentFormat::TEXT_PLAIN).encode();
+    // These two option numbers are already ordered. Select only present
+    // values; the both-absent case is the empty slice 1..1. This avoids
+    // initializing and moving general option scratch on ordinary replies.
+    let options = [
+        Opt::etag(etag.unwrap_or(&[])),
+        Opt::content_format(&encoded),
+    ];
+    let start = usize::from(etag.is_none());
+    let end = if format.is_some() { 2 } else { 1 };
+    let msg = Message::new(ty, response.code(), mid)
+        .with_token(token)
+        .with_options(&options[start..end])
+        .with_payload(payload);
+    oscore::encode_message(oscore_ctx, peer, oscore_req, engine, tx, &msg)
 }
 
 #[cold]
