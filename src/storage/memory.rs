@@ -2,7 +2,6 @@
 
 use super::Access;
 use super::AccessMut;
-use super::BodyDatagramSlots;
 use super::BodySlots;
 use super::DatagramSlots;
 use super::DedupEntry;
@@ -103,7 +102,6 @@ pub trait MemoryLayout<const BLOCK_WISE: bool>: MemoryProfile {
         + PendingCons
         + ObserveSlots
         + BodySlots
-        + BodyDatagramSlots
         + Exchanges
         + DedupSlots
         + Default;
@@ -117,7 +115,6 @@ where
         + PendingCons
         + ObserveSlots
         + BodySlots
-        + BodyDatagramSlots
         + Exchanges
         + DedupSlots,
 {
@@ -132,7 +129,6 @@ where
         + PendingCons
         + ObserveSlots
         + BodySlots
-        + BodyDatagramSlots
         + Exchanges
         + DedupSlots,
 {
@@ -706,20 +702,6 @@ where
     }
 }
 
-impl<P: MemoryProfile> BodyDatagramSlots for Memory<P>
-where
-    P::RxDatagram: DatagramBytes,
-    P::TxDatagram: DatagramBytes,
-{
-    fn tx_body_and_tx_mut(
-        &mut self,
-        _body: SlotId,
-        _tx: SlotId,
-    ) -> Result<(&[u8], AccessMut<'_>), SlotError> {
-        Err(SlotError::InvalidSlot)
-    }
-}
-
 impl<P: MemoryProfile> BodySlots for Memory<P> {
     fn rx_body_payload(&self, _id: SlotId) -> Option<&[u8]> {
         None
@@ -963,27 +945,6 @@ impl<P: MemoryProfile> BodySlots for Memory<P> {
 
     fn access_tx_body_mut(&mut self, _id: SlotId) -> Result<AccessMut<'_>, SlotError> {
         Err(SlotError::InvalidSlot)
-    }
-}
-
-impl<P: MemoryProfile> BodyDatagramSlots for Memory<P, WithBodies<P>>
-where
-    P::RxDatagram: DatagramBytes,
-    P::TxDatagram: DatagramBytes,
-    P::RxBody: BodyOps<P::Token>,
-    P::TxBody: BodyOps<P::Token>,
-{
-    fn tx_body_and_tx_mut(
-        &mut self,
-        body: SlotId,
-        tx: SlotId,
-    ) -> Result<(&[u8], AccessMut<'_>), SlotError> {
-        if body.index() >= self.bodies.tx.slot_count() || tx.index() >= self.tx.slot_count() {
-            return Err(SlotError::InvalidSlot);
-        }
-        let body = self.bodies.tx.payload(body).ok_or(SlotError::NotOccupied)?;
-        let tx = self.tx.access_mut(tx)?;
-        Ok((body, tx))
     }
 }
 

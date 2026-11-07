@@ -659,6 +659,11 @@ impl<'a, T: OwnedToken> Response<'a, T> {
         self
     }
 
+    // Counts decide ordinary encoding without borrowing either optional array.
+    pub(crate) const fn has_locations(&self) -> bool {
+        self.location_path_len != 0 || self.location_query_len != 0
+    }
+
     /// Location-Path segments in insertion order.
     #[must_use]
     pub fn location_paths(&self) -> &[&str] {

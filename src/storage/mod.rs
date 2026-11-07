@@ -49,8 +49,6 @@ mod work_metrics;
 mod alloc_memory;
 
 #[cfg(test)]
-mod body_datagram_tests;
-#[cfg(test)]
 mod tests;
 
 pub use access::{Access, AccessMut};
@@ -254,32 +252,6 @@ pub trait DatagramSlots {
 
     /// Write access to an occupied TX datagram buffer. Pins `id` until dropped.
     fn access_tx_mut(&mut self, id: SlotId) -> Result<AccessMut<'_>, SlotError>;
-}
-
-/// Disjoint access to a retained outgoing body and a TX datagram buffer.
-///
-/// Separate from [`BodySlots`] so body-only backends need not provide datagram
-/// byte access. App storage implements both capabilities together.
-pub trait BodyDatagramSlots: BodySlots + DatagramSlots {
-    /// Borrow the filled TX body and pin an occupied, unpinned TX datagram for
-    /// writing through [`AccessMut`]. Body and datagram refer to independent
-    /// storage areas, even when their indices are equal. No payload is copied
-    /// or allocated.
-    ///
-    /// The TX guard pins its datagram until dropped. Admission changes no other
-    /// state: bytes and filled length change only when the caller writes or uses
-    /// [`AccessMut::set_len`]. Sidecars, occupancy, cursors and body pin state are
-    /// preserved. The exclusive storage borrow prevents other access until the
-    /// returned borrows end. An already pinned body may be read.
-    ///
-    /// Returns [`SlotError::InvalidSlot`] for an absent body pool or an index
-    /// outside its pool, [`SlotError::NotOccupied`] for a free slot, and
-    /// [`SlotError::Pinned`] for a pinned TX datagram. Refusal changes no state.
-    fn tx_body_and_tx_mut(
-        &mut self,
-        body: SlotId,
-        tx: SlotId,
-    ) -> Result<(&[u8], AccessMut<'_>), SlotError>;
 }
 
 /// Work required before expiring retained dedup replies.
