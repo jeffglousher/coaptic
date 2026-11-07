@@ -500,6 +500,17 @@ pub struct BlockOptions<'a> {
     inner: OptionsByNumber<'a>,
 }
 
+impl<'a> BlockOptions<'a> {
+    pub(crate) const fn q_block2(bytes: &'a [u8]) -> Self {
+        Self {
+            inner: OptionsByNumber {
+                inner: Options::new(bytes),
+                number: OptionNumber::Q_BLOCK2,
+            },
+        }
+    }
+}
+
 impl<'a> Iterator for BlockOptions<'a> {
     type Item = Result<BlockValue, ValueError>;
 
@@ -955,9 +966,7 @@ impl<'a, T: super::OwnedToken> ParsedMessage<'a, T> {
     /// Q-Block2 values in wire order. Repeatable; same format as [`BlockValue`].
     #[must_use]
     pub fn q_block2(self) -> BlockOptions<'a> {
-        BlockOptions {
-            inner: self.get_options(OptionNumber::Q_BLOCK2),
-        }
+        BlockOptions::q_block2(self.options_bytes())
     }
 
     /// Observe, if present.

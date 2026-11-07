@@ -320,6 +320,186 @@ fn cancelled_partial_deferred_q_keeps_immutable_snapshot() {
 }
 
 #[test]
+fn cancelled_deferred_q_followup_keeps_snapshot_for_recovery() {
+    struct RecordingIo<'a> {
+        inner: Io<'a>,
+        packet: &'a Cell<([u8; 128], usize)>,
+    }
+    impl DatagramTransport for RecordingIo<'_> {
+        type Error = ();
+    }
+    impl AsyncDatagramIo for RecordingIo<'_> {
+        async fn recv(&mut self, bytes: &mut [u8]) -> Result<(usize, Endpoint), ()> {
+            self.inner.recv(bytes).await
+        }
+        async fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            let mut packet = [0; 128];
+            packet[..bytes.len()].copy_from_slice(bytes);
+            self.packet.set((packet, bytes.len()));
+            self.inner.send(peer, bytes).await
+        }
+    }
+
+    let ready = Cell::new(true);
+    let accepted = Cell::new(0);
+    let calls = Cell::new(0);
+    let packet = Cell::new(([0; 128], 0));
+    let mut app = App::with_resources(
+        Resources::<profiles::Constrained>::new()
+            .routes::<1>()
+            .block_wise::<true>()
+            .deferred::<1>(),
+    )
+    .allow_unprotected()
+    .deterministic_for_tests()
+    .route("q", get(handler))
+    .bind(RecordingIo {
+        inner: Io {
+            ready: &ready,
+            accepted: &accepted,
+        },
+        packet: &packet,
+    })
+    .unwrap();
+    let q = BlockValue::new(0, false, 0).unwrap().encode();
+    let opts = [Opt::uri_path("q"), Opt::q_block2(&q)];
+    let request =
+        Message::new(Type::Confirmable, Code::GET, MessageId::new(91)).with_options(&opts);
+    let mut wire = [0; 64];
+    let n = encode(&request, &mut wire).unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+    let mut clock = || Ok::<_, ()>(10);
+    let mut timer = Timer;
+    let mut handle = None;
+    {
+        let mut progress =
+            pin!(
+                app.progress_with_async(10, &mut clock, &mut timer, 100, |_, candidate| {
+                    calls.set(calls.get() + 1);
+                    handle = candidate;
+                    Response::deferred()
+                })
+            );
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    let handle = handle.unwrap();
+    let payload = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+-";
+    {
+        let mut complete = pin!(app.complete_async(
+            handle,
+            Response::content(payload).etag(b"v1"),
+            10,
+            &mut clock,
+            &mut timer,
+            100
+        ));
+        assert!(matches!(
+            complete
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    let row = app.deferred.rows[0].unwrap();
+    assert!(row.completed);
+    let (body, retained) = row.snapshot.expect("completed Q snapshot");
+    assert_eq!(app.engine.tx_body_payload(body), Some(payload.as_slice()));
+    let before = accepted.get();
+    let q = BlockValue::new(2, false, 0).unwrap().encode();
+    let opts = [Opt::uri_path("q"), Opt::q_block2(&q)];
+    let request =
+        Message::new(Type::NonConfirmable, Code::GET, MessageId::new(92)).with_options(&opts);
+    let n = encode(&request, &mut wire).unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+    ready.set(false);
+    {
+        let mut progress =
+            pin!(
+                app.progress_with_async(10, &mut clock, &mut timer, 100, |_, _| {
+                    calls.set(calls.get() + 1);
+                    Response::content(b"must not replace the snapshot")
+                })
+            );
+        assert!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+    }
+    assert_eq!(calls.get(), 1);
+    assert_eq!(accepted.get(), before);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    let row = app.deferred.rows[0].unwrap();
+    assert_eq!(row.handle, handle);
+    assert!(row.completed);
+    let (retained_body, metadata) = row.snapshot.unwrap();
+    assert_eq!(retained_body, body);
+    assert!(metadata.same_header(&retained));
+    assert_eq!(app.engine.tx_body_payload(body), Some(payload.as_slice()));
+    let (pending_packet, pending_len) = packet.get();
+    let pending = crate::message::decode(&pending_packet[..pending_len]).unwrap();
+    assert_eq!(pending.code(), Code::CONTENT);
+    assert_eq!(pending.payload(), &payload[32..48]);
+    assert_eq!(pending.etag().next(), Some(&b"v1"[..]));
+    assert_eq!(pending.size2(), Some(Ok(64)));
+    assert_eq!(
+        pending.q_block2().next(),
+        Some(Ok(BlockValue::new(2, true, 0).unwrap()))
+    );
+
+    let request =
+        Message::new(Type::NonConfirmable, Code::GET, MessageId::new(93)).with_options(&opts);
+    let n = encode(&request, &mut wire).unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+    ready.set(true);
+    {
+        let mut progress =
+            pin!(
+                app.progress_with_async(10, &mut clock, &mut timer, 100, |_, _| {
+                    calls.set(calls.get() + 1);
+                    Response::content(b"must not replace the snapshot")
+                })
+            );
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert_eq!(calls.get(), 1);
+    assert_eq!(accepted.get(), before + 1);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    let (retry_packet, retry_len) = packet.get();
+    // A fresh NON exchange gets a fresh MID; every other wire byte is retained.
+    assert_eq!(retry_len, pending_len);
+    assert_eq!(&retry_packet[..2], &pending_packet[..2]);
+    assert_eq!(&retry_packet[4..retry_len], &pending_packet[4..pending_len]);
+    let row = app.deferred.rows[0].unwrap();
+    assert_eq!(row.handle, handle);
+    assert!(row.completed);
+    let (retained_body, metadata) = row.snapshot.unwrap();
+    assert_eq!(retained_body, body);
+    assert!(metadata.same_header(&retained));
+    assert_eq!(app.engine.tx_body_payload(body), Some(payload.as_slice()));
+    assert!(!app.cancel_deferred(handle));
+    app.deferred.expire(&mut app.engine, row.deadline_ms);
+    assert!(app.deferred.rows[0].is_none());
+    assert!(app.engine.tx_body_payload(body).is_none());
+}
+
+#[test]
 fn accepted_retry_with_failed_clock_retires_call_without_automatic_resend() {
     let ready = Cell::new(true);
     let accepted = Cell::new(0);

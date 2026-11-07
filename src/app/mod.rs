@@ -3827,7 +3827,7 @@ where
         no_response,
         block2,
         q_block2,
-        q_request: q_block2.map(|_| parsed),
+        q_request: q_block2.map(|_| QBlock2Request(parsed.options_bytes())),
         block1,
         oscore: oscore_req,
         request: parsed.code(),
@@ -4153,7 +4153,7 @@ where
     // classic or bounded Q-Block2 follow-ups select it without re-running work.
     if (meta.block2.is_some() || meta.q_block2.is_some())
         && let Some(index) = deferred.rows.iter().position(|row| {
-            row.is_some_and(|row| {
+            row.as_ref().is_some_and(|row| {
                 row.completed
                     && row.meta.token == meta.token
                     && row.meta.dest == peer
@@ -4161,10 +4161,13 @@ where
             })
         })
     {
-        let row = deferred.rows[index].expect("matched snapshot");
-        let (body, retained) = row.snapshot.expect("completed snapshot");
-        let outcome = 'reply: {
-            if DeferredSelection::from_parts(
+        // Validate against the table in place, then retain only the immutable
+        // nongeneric reply metadata across sending. The table still owns the
+        // snapshot on failure or cancellation; no copied row or payload is needed.
+        let (body, retained, admissible) = {
+            let row = deferred.rows[index].as_ref().expect("matched snapshot");
+            let (body, retained) = row.snapshot.as_ref().expect("completed snapshot");
+            let admissible = DeferredSelection::from_parts(
                 &parsed,
                 match assembled {
                     InboundBody::Complete(id) => {
@@ -4174,14 +4177,18 @@ where
                 },
             )
             .ok()
-                != Some(row.selection)
-                || (parsed.code() != Code::FETCH && !parsed.payload().is_empty())
-                || row.meta.q_block2.is_some() != meta.q_block2.is_some()
-                || (row.observe.is_some()
-                    && meta
+            .as_ref()
+                == Some(&row.selection)
+                && (parsed.code() == Code::FETCH || parsed.payload().is_empty())
+                && row.meta.q_block2.is_some() == meta.q_block2.is_some()
+                && (row.observe.is_none()
+                    || meta
                         .block2
-                        .is_some_and(|requested| engine.requested_block2(body, requested).is_err()))
-            {
+                        .is_none_or(|requested| engine.requested_block2(*body, requested).is_ok()));
+            (*body, retained, admissible)
+        };
+        let outcome = 'reply: {
+            if !admissible {
                 send_response(
                     engine,
                     io,
@@ -6395,6 +6402,43 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
+    let (tx, selected_block) =
+        encode_borrowed_classic::<S, T, REQUESTS>(engine, &meta, response, ty, key, oscore_ctx)?;
+    let keep = if selected_block && ty == Type::Acknowledgement {
+        remember_tx_reply(
+            engine,
+            tx,
+            meta.dest,
+            meta.mid,
+            meta.ty,
+            now_ms,
+            meta.request,
+            dedup_closed,
+        )
+    } else {
+        KeepTx::No
+    };
+    match keep {
+        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
+        KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
+    }
+}
+
+// Packet selection and encoding finish before transport can suspend. In
+// particular, the Gap error response must not become a send-future owner.
+#[allow(clippy::too_many_arguments)]
+fn encode_borrowed_classic<S, T, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    meta: &SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    ty: Type,
+    key: BlockKey<S::Token>,
+    oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
+) -> Result<(SlotId, bool), Error<T::Error>>
+where
+    S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
+    T: crate::storage::DatagramTransport,
+{
     let key = response_block_key(key.token(), key.endpoint(), response)?;
     let capacity =
         engine
@@ -6420,10 +6464,11 @@ where
             .map_err(BlockTransferError::from)
             .map_err(Error::Block)?,
     );
+    let gap_response;
     let (selected, payload, block) =
         match crate::storage::classic_block2_range(response.payload().len(), requested) {
             Ok((value, range)) => (
-                *response,
+                response,
                 &response.payload()[range],
                 Some(BlockOpt {
                     value,
@@ -6431,7 +6476,10 @@ where
                     size2: None,
                 }),
             ),
-            Err(BlockTransferError::Gap) => (Response::bad_request(), &[][..], None),
+            Err(BlockTransferError::Gap) => {
+                gap_response = Response::bad_request();
+                (&gap_response, &[][..], None)
+            }
             Err(error) => return Err(Error::Block(error)),
         };
     let tx = if block.is_some() {
@@ -6447,7 +6495,7 @@ where
         ty,
         meta.mid,
         meta.token,
-        &selected,
+        selected,
         payload,
         block,
         meta.block1,
@@ -6457,24 +6505,7 @@ where
         let _ = engine.release_tx(tx);
         return Err(error);
     }
-    let keep = if block.is_some() && ty == Type::Acknowledgement {
-        remember_tx_reply(
-            engine,
-            tx,
-            meta.dest,
-            meta.mid,
-            meta.ty,
-            now_ms,
-            meta.request,
-            dedup_closed,
-        )
-    } else {
-        KeepTx::No
-    };
-    match keep {
-        KeepTx::Yes => send_pinned_tx(engine, io, tx, meta.dest),
-        KeepTx::No => finish_send(engine, io, tx, meta.dest, None),
-    }
+    Ok((tx, block.is_some()))
 }
 
 fn retained_body_matches<S: Storage + BodySlots>(
@@ -7016,7 +7047,11 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let selections = || meta.q_request.into_iter().flat_map(ParsedMessage::q_block2);
+    let selections = || {
+        meta.q_request
+            .into_iter()
+            .flat_map(QBlock2Request::q_block2)
+    };
     // Validate every requested starting range before the first send, so a
     // bad later option cannot turn a rejected request into partial output.
     for q in selections() {
@@ -7993,6 +8028,16 @@ struct BlockOpt {
     size2: Option<usize>,
 }
 
+// Retain only validated selector bytes; response identity lives in SendResponse.
+#[derive(Clone, Copy)]
+struct QBlock2Request<'a>(&'a [u8]);
+
+impl<'a> QBlock2Request<'a> {
+    fn q_block2(self) -> crate::message::BlockOptions<'a> {
+        crate::message::BlockOptions::q_block2(self.0)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SendResponse<'a, K: OwnedToken = crate::message::Token> {
     dest: Endpoint,
@@ -8002,7 +8047,7 @@ struct SendResponse<'a, K: OwnedToken = crate::message::Token> {
     no_response: NoResponse,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
-    q_request: Option<ParsedMessage<'a, K>>,
+    q_request: Option<QBlock2Request<'a>>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
     block1: Option<BlockOpt>,
     /// Request Partial IV when the inbound request was OSCORE-protected.
