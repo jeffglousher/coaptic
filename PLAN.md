@@ -8,6 +8,18 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The subsequent libcoap-speed investigation has not qualified another library
+implementation. Eight complete CPU integrations fail at least one frozen
+workload bound; the latest native sync layout has an aggregate C-latency lead
+but two failed cells, and the cache16 async layout regresses. All remain
+unadopted. Keep the [comparison scopes, results and negative evidence](architecture/requirements/LIBCOAP-SPEED-20261109.md).
+The [portable measurements and offline verifier](https://github.com/jeffglousher/coaptic-validation/tree/47ca9e024c365a795eb22259a67d30191bdbac05/tools/benchmark/evidence/esp-libcoap-speed-20261109)
+reproduce the completed comparisons and their failed promotion decisions.
+Continue with a coherent cache32 server-path integration, original-stack
+startup checks and a fresh contemporaneous sync/async device comparison.
+Preserve configured capacities and normal-firmware restoration. Passing builds,
+reviews, static frames or a narrow benchmark do not complete the speed goal.
+
 The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
 CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
 All 28 workload bounds pass. Both selected Service progress futures are 2,536
