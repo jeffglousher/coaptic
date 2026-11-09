@@ -979,3 +979,135 @@ fn delayed_non_notification_commits_hold_and_max_age_at_acceptance() {
     assert_eq!(interest.lifetime().unwrap().due_ms(), 15_000);
     assert_eq!(app.engine.tx_occupied(), 0);
 }
+
+#[test]
+fn cancelled_client_con_ack_through_progress_retires_call_and_rejects_replay() {
+    struct RecordingIo<'a> {
+        inner: Io<'a>,
+        last: &'a Cell<([u8; 64], usize)>,
+    }
+    impl DatagramTransport for RecordingIo<'_> {
+        type Error = ();
+    }
+    impl AsyncDatagramIo for RecordingIo<'_> {
+        async fn recv(&mut self, bytes: &mut [u8]) -> Result<(usize, Endpoint), ()> {
+            self.inner.recv(bytes).await
+        }
+        async fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            let mut wire = [0; 64];
+            wire[..bytes.len()].copy_from_slice(bytes);
+            self.last.set((wire, bytes.len()));
+            self.inner.send(peer, bytes).await
+        }
+    }
+
+    const OTHER_PEER: Endpoint = Endpoint::v4([192, 0, 2, 9], 5683);
+    let ready = Cell::new(true);
+    let accepted = Cell::new(0);
+    let last = Cell::new(([0; 64], 0));
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .allow_unprotected()
+        .bind(RecordingIo {
+            inner: Io {
+                ready: &ready,
+                accepted: &accepted,
+            },
+            last: &last,
+        })
+        .unwrap();
+    let mut timer = Timer;
+    // Keep an unrelated live Call without occupying the ACK's control slot.
+    let other = {
+        let mut send = pin!(app.get("other").to(OTHER_PEER).non().send_async(
+            0,
+            || Ok::<_, ()>(0),
+            &mut timer
+        ));
+        match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(Ok(call)) => call,
+            result => panic!("other call: {result:?}"),
+        }
+    };
+    let call = {
+        let mut send = pin!(app.get("remote").to(PEER).send_async(
+            0,
+            || Ok::<_, ()>(0),
+            &mut timer
+        ));
+        match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(Ok(call)) => call,
+            result => panic!("client call: {result:?}"),
+        }
+    };
+    assert_eq!(accepted.get(), 2);
+    assert_eq!(app.engine.tx_occupied(), 1);
+
+    let mid = MessageId::new(70);
+    let response = Message::new(Type::Confirmable, Code::CONTENT, mid)
+        .with_token(call.token())
+        .with_payload(b"reply");
+    let mut wire = [0; 64];
+    let n = encode(&response, &mut wire).unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+    ready.set(false);
+    let mut clock = || Ok::<_, ()>(10);
+    {
+        let mut progress = pin!(app.progress_async(10, &mut clock, &mut timer, 100));
+        assert!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        let (pending, len) = last.get();
+        let ack = crate::message::decode(&pending[..len]).unwrap();
+        assert!(ack.is_empty_ack());
+        assert_eq!(ack.message_id(), mid);
+        assert_eq!(accepted.get(), 2);
+    }
+
+    assert!(app.engine.access_rx(rx).is_err());
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert_eq!(accepted.get(), 2, "the pending ACK was never accepted");
+    assert!(matches!(
+        app.take_response(call),
+        Some(Err(CallFailure::ContinuationFailed))
+    ));
+    assert!(app.take_response(other).is_none());
+
+    // An unaccepted ACK must not earn dedup admission or a cached ACK replay.
+    let retry_rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(retry_rx, &wire[..n], PEER).unwrap();
+    ready.set(true);
+    {
+        let mut progress = pin!(app.progress_async(10, &mut clock, &mut timer, 100));
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    let (sent, len) = last.get();
+    let reset = crate::message::decode(&sent[..len]).unwrap();
+    assert!(
+        reset.is_empty_rst(),
+        "cancelled response must not replay an ACK"
+    );
+    assert_eq!(reset.message_id(), mid);
+    assert_eq!(accepted.get(), 3);
+    assert!(app.engine.access_rx(retry_rx).is_err());
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    assert!(app.take_response(call).is_none());
+    assert!(app.take_response(other).is_none());
+    assert!(app.cancel(other), "the unrelated Call remains active");
+    assert!(matches!(
+        app.take_response(other),
+        Some(Err(CallFailure::Cancelled))
+    ));
+}
