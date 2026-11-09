@@ -42,14 +42,27 @@ are missing, and the exact pre-task contiguous-allocation margin is unqualified.
 Keep the [complete vectors, failed decisions and memory tradeoffs](https://github.com/jeffglousher/coaptic-validation/tree/098d86b7106bc6a1ffdf6e610a51b6d578792f54/tools/benchmark/evidence/esp-target-cpu-20261109).
 Both candidates remain unadopted; normal firmware is restored and verified.
 
-Next resolve actual async copy owners and executed paths before selecting another
-integration. The empty-control extraction is a checked, untimed local experiment:
-its dispatch frame shrinks, but the selected root future stays 9,896 bytes and
-selected combined code grows. It is not an accepted speed or peak-memory gain.
-The timer-probe prototype remains untimed and on hold. Preserve supported
-behavior, capacities, original workers and failures; do not rerun unchanged failed
-integrations. Builds, smaller frames and host throughput alone do not complete
-the host-and-device speed goal.
+The subsequent cold-client/control extraction and target constructor integration
+also fails its [four-pair complete-App CPU development screen](https://github.com/jeffglousher/coaptic-validation/tree/f9508db04dfd2f3fad2a767e1e697cd5d3edb280/tools/benchmark/evidence/async-client-cpu-20261109): 917,504 measured
+operations, sync ratio 0.98156, async 1.00910 and three cell points above 1.02.
+This is a continuation refusal, separate from the eight full 64-pair cohorts.
+Against its c015 target-layout control, the selected root future grows 224 bytes
+and whole-archive code grows 4,491 bytes despite a smaller main dispatch frame.
+Large constructor transfers remain. Keep this source unadopted; no full cohort
+or device rerun is justified for the unchanged candidate. Its public-App
+cancellation/duplicate regression
+was separately delivered in [#751](https://github.com/jeffglousher/coaptic/pull/751),
+with production source unchanged.
+
+Copy-owner analysis places the large client and control continuation transfers
+on response/empty-control branches; static sizes do not establish ordinary GET
+costs. Next finish the bounded matched task-priority study using accepted core
+and runtime sources, equal Rust/C policy and explicit loop/timer/API progress
+checks before firmware execution. Existing loops already block at bounded work
+intervals; no missing-yield defect or scheduler cause is established. The timer
+prototype remains untimed and on hold. Preserve capacities, original workers,
+security, failures and restoration guards. Builds, smaller frames and host
+throughput alone do not complete the host-and-device speed goal.
 
 The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
 CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
