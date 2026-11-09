@@ -267,6 +267,53 @@ both original failed decisions and the memory ledger. It reuses 21 focused
 counterexamples and 39 controller checks. Normal firmware is restored and
 verified; no source/profile adoption follows from offline arithmetic passing.
 
+## Cold-client/control integration, four-pair development screen
+
+The [portable vectors, source patch and offline verifier](https://github.com/jeffglousher/coaptic-validation/tree/f9508db04dfd2f3fad2a767e1e697cd5d3edb280/tools/benchmark/evidence/async-client-cpu-20261109)
+retain all 917,952 used cycle samples, including qualification separately, and
+819,200 separate calibration samples. Independent raw-record/hash joins and 29
+counterexamples pass. Frozen ledgers require the exact workloads and capacities;
+ordinary mode selection remains a compiled-runner/label attestation because its
+raw producer record has no mode field. Source, compiler and target-static joins
+are declared producer attestations, not an independently rebuilt firmware kit.
+
+The later local production source `84a785f075cb86bf805d0e1fe8a1eabcaae3218f`
+combines cold client/control extraction and target constructor annotations.
+Fresh matched builds against accepted a85 use one pinned host compiler and the
+original flags. Four process pairs in AB/BA/BA/AB order cover all 28 workloads,
+with actual sync/async execution, unprotected/OSCORE and fixed/allocated storage.
+All 280 processes complete: 224 measured processes verify 917,504 operations;
+56 qualification processes contribute 448 separately retained operations.
+
+The prospective development continuation condition requires both equal-cell
+geometric mode points at or below 0.995 and every cell point at or below 1.02.
+Sync is 0.98156356085 and async is 1.00909948513. Three cell points fail:
+SmallDevice unprotected async/32 bytes is 1.0264373; retained fixed unprotected
+async/11,264 bytes is 1.1295772; retained allocated unprotected sync/11,264 bytes
+is 1.0212497. The source remains rejected. Four pairs do not establish the
+original 64-pair one-sided confidence qualification or a significant regression.
+There is no unchanged full-cohort or firmware retry. This is a Rust-to-Rust
+in-memory server-App CPU screen, separate from libcoap and Wi-Fi comparisons.
+
+The separate Xtensa Os/fat static comparison uses the c015 target-annotation
+control and runtime 32f8, rather than the a85 host CPU baseline. It keeps Runtime
+at 88 bytes but grows
+the selected root future from 9,896 to 10,120 bytes. Main dispatch text plus
+literals falls 1,809 bytes, while selected unique code grows 2,525 bytes and
+whole-archive code grows 4,491 bytes. The main local frame falls from 13,200 to
+9,568 bytes, with separate empty/client helper frames of 5,344/6,224 bytes.
+The 4,972-byte transfer remains on the cold client-response branch; the control
+transfer changes from 3,812 to 3,810 bytes and a new 5,216-byte aggregate setup
+appears. These are static observations, not dynamic ordinary-GET counts,
+constructor-copy elimination, a peak-stack reduction or a released reservation.
+
+The final source patch includes the corrected cancellation test at local
+`4f434952ba86df35245fa9736f8a5a341de88bf0`; only that test differs from timed
+production 84. The identical test was independently reviewed and separately
+squash-merged in [#751](https://github.com/jeffglousher/coaptic/pull/751).
+Thirteen all-feature and twelve minimal-feature async-server tests pass on
+accepted production source. The rejected optimization was not merged.
+
 ## Continue from measured costs
 
 Preserve the exact sources, methods, failures and portable measurements. CPU
@@ -280,9 +327,12 @@ evidence artifacts.
 The idle-Observe and subsequent target CPU integrations above are rejected; do
 not repeat them unchanged. The common-boundary result supports investigating
 the large async processing cost, which persists for tiny requests. The timer
-prototype remains untimed and on hold. Next identify actual copy owners and
-executed paths before another source or layout integration. Preserve original
-workers, capacities, security and restoration guards.
+prototype remains untimed and on hold. Type and emitted-code inspection now
+places the large client/control continuation transfers on their corresponding
+response and empty-control paths. This does not establish that they dominate
+ordinary server requests. The four-pair integration above does not justify
+another unchanged layout campaign. Preserve original workers, capacities,
+security and restoration guards.
 
 The local empty-control extraction is checked and untimed, not adopted. It
 reduces the selected Os/fat dispatch frame from 13,200 to 9,808 bytes, while
@@ -291,6 +341,22 @@ adding a separate 4,768-byte helper frame; the selected root future remains
 1,731 bytes. Host regressions and strict lint pass, but these static changes
 do not establish runtime or peak-memory gains and do not justify promotion.
 The source and its exact archive comparison remain retained as a local experiment.
+
+Existing Rust async, Rust sync and C service loops all perform blocking delays
+at bounded work intervals. Their units differ; they are not per-datagram or
+wall-time fairness guarantees. Retained SDK configurations disable runtime
+statistics, and current packet spans include preemption. Periodic all-task scans
+execute in the actual Rust speed images, but no snapshot headers were received
+inside the eight retained Rust timing windows. That observation neither proves
+exact execution non-overlap nor attributes the measured medians to those scans.
+No isolated task CPU or missing-yield cause is established.
+
+The next distinct study prepares matched priority-1/priority-2 Rust and C workers
+from accepted core/runtime sources, one declared native profile and unchanged
+affinities, stacks, capacities, security and resource qualification. Its source,
+disk budget and bounded ready-traffic loop/timer/API progress checks must close
+before building or using the device. It tests scheduling sensitivity; acceptance
+still requires the complete speed, capacity, fairness and restoration evidence.
 
 The full objective still requires reproducible host and ESP32 gains in both
 modes, preservation of supported behavior and capacities, independent
