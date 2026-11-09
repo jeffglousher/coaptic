@@ -74,7 +74,7 @@ ESP32-S3 Wi-Fi server. They measure complete, body-verified unprotected GET
 and Block2 operations, not isolated parsing, library CPU or MAC retries.
 Both actual Rust server modes and both fixed Windows client modes run.
 
-The completed native screens use core
+The earlier native-hot and pipeline screens use core
 `c0151713fc187a4a2b8ed3cba1eb0b12df597d00` and the existing runtime integration
 `32f8fcac22fc16b1957c35f4f145df6be3a72532`. Their host-expanded core source is
 byte-identical to accepted `a85c51e`; this permits reuse of the named accepted
@@ -122,6 +122,58 @@ reservation once. Reserved workers, sampled working-stack use, heap observations
 selected futures and local function frames are separate observations. None
 justifies lowering task reservations or claiming whole-system peak savings.
 
+## Exact-H integration, 9 November UTC
+
+The combined idle-Observe fast path and cache32 placement uses core
+`de9230aa22dab0c67604ea4b040a1c1daa59a41e` and runtime 32f8. It is a distinct
+source from the preceding annotation-only c015 profiles. Exact-H Observe tests
+(113), the protected Xtensa check and both original-stack startup qualifications
+pass. Each startup qualification verifies 48 reads, excluded from performance.
+
+The fresh host cohort retains 180 cells and 403,200 verified operations with
+zero failures: H Mio/async, accepted a85 Mio/async and pinned libcoap, using the
+same twelve cases in three rounds. Geometric goodput/C ratios are 1.30214 Mio
+and 1.12069 async; every round aggregate is above C. Against contemporaneous
+a85, goodput ratios are 0.97949 and 1.01798. These mixed throughput point
+estimates establish no isolated CPU gain or per-cell preservation interval.
+
+The separate Wi-Fi cohort retains all 1,152 reads, twelve boots and 48 client
+processes, using both actual Rust modes, both Windows clients and opposite boot
+orders. All profiles retain cache32 and their original workers and capacities.
+
+| H server | Latency / strongest C | Latency / own Rust control | Static SRAM change / own control |
+| --- | ---: | ---: | ---: |
+| Sync O3/thin | 1.06576 | 1.16421 | -3,584 B |
+| Async Os/fat | 1.47413 | 0.94793 | -256 B |
+
+Both H profiles fail their frozen C-speed gates and remain unadopted. Sync saves
+memory but has 16.42% higher pooled latency than its Rust control. Async has
+5.21% lower latency than its Rust control and saves 256 bytes, but is still
+47.41% above the strict C reference. Boot variation is material; the older sync
+aggregate lead is not a result for this source or a replacement for this failure.
+All operation, resource and finite stability guards pass, and exact normal
+firmware restoration is verified. These facts do not establish RF or
+long-duration stability, isolated task CPU or whole-system peak memory.
+
+The [fresh portable package](https://github.com/jeffglousher/coaptic-validation/tree/021b691ed34167e488bde6915561613c98ae9455/tools/benchmark/evidence/esp-idle-observe-20261109)
+retains every host/device latency, qualification separately, source patches,
+hashes, limits and offline regrading. Seventeen counterexamples check integrity,
+privacy and gates, including exported CPU/cache/task/settling policy. Numeric
+guards are reproducible; source-to-binary and physical identity/restoration
+witnesses remain private producer attestations. Only instruction-cache settings
+are frozen per image; data-cache defaults are reconstructed, not individually
+attested. No H source/profile adoption follows from the verifier passing.
+
+Companion [#258](https://github.com/jeffglousher/coaptic-validation/pull/258)
+delivers the existing ESP runtime's task-local notification handling and a
+test-only future-deadline regression. One atomic word joins notification and
+parking; registered child I/O/deadlines still receive nonblocking probes during
+local work. It adds four bytes of shared state. The production blob matches
+runtime 32f8 used by the native cohorts; the later test does not change images.
+Focused network/OSCORE and pairing driver checks pass 11/11 and 12/12 against
+accepted a85 core. Existing unchanged-production Clippy/Xtensa evidence is reused.
+This delivery claims no isolated complete-App CPU gain for the runtime change.
+
 ## Continue from measured costs
 
 Preserve the exact sources, methods, failures and portable measurements. CPU
@@ -132,12 +184,13 @@ Whitelisted peer-latency vectors retain every observation. Firmware, ELF,
 credentials, private configuration and raw device API captures are not public
 evidence artifacts.
 
-The next integration keeps cache32 and assigns bounded IRAM to the actual
-server path. Incoming-body assembly is bypassed by these empty GET requests,
-so returning its helper to executable flash can release placement capacity
-for response encoders without removing supported behavior. New layouts still
-need original-stack startup qualification and a fresh matched comparison;
-static byte identity and feasibility alone establish no speed advantage.
+The combined cache32 placement and idle-Observe integration above is rejected;
+do not repeat it unchanged. Next compare MCU socket receive-return to send-entry
+wall spans at the same boundary in Rust and C, retaining packet identity,
+failures and coverage. Such spans include instrumentation and preemption; they
+are not isolated task CPU. Historical Rust-only traces do not supply the missing
+C comparison. Use the common-boundary result before another ownership or layout
+change, preserving the original workers, capacities and restoration guards.
 
 The full objective still requires reproducible host and ESP32 gains in both
 modes, preservation of supported behavior and capacities, independent
