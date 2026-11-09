@@ -187,6 +187,7 @@ where
 // Protocol traversal supplies a transport wrapper that samples its completion
 // clock on each accepted send. Ownership begins at construction, just as for
 // public request sending; dropping before the first poll also releases TX.
+#[cfg_attr(target_arch = "xtensa", inline(always))]
 pub(crate) fn finish_protocol<'a, S, T>(
     engine: &'a mut Engine<S>,
     io: &'a mut T,
@@ -198,11 +199,17 @@ where
     S: Storage + DatagramSlots + PendingCons,
     T: super::async_server::ProtocolIo,
 {
-    let owner = SendOwner::prepare(engine, tx, dest, pending.map(|(_, mid, _)| mid), None);
+    let mut owner = SendOwner::prepare(engine, tx, dest, pending.map(|(_, mid, _)| mid), None);
+    let jitter = pending.map(|(_, _, jitter)| jitter);
     async move {
-        let mut owner = owner?;
+        // Borrow the eager owner across suspension instead of moving it into a
+        // second coroutine field. Preparation failures still return by value.
+        let owner = match owner {
+            Ok(ref mut owner) => owner,
+            Err(error) => return Err(error),
+        };
         owner.engine.send_tx_async(io, tx).await?;
-        if let Some((_, _, jitter)) = pending
+        if let Some(jitter) = jitter
             && !owner.commit(io.completed_at(), jitter)
         {
             return Err(Error::CommitAfterSend);
@@ -220,6 +227,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use crate::message::{Code, Message, Type};
     use crate::storage::{EngineBuilder, Memory, profiles};
@@ -274,6 +283,12 @@ mod tests {
         }
     }
 
+    impl super::super::async_server::ProtocolIo for Io<'_> {
+        fn completed_at(&self) -> u64 {
+            50_000
+        }
+    }
+
     fn packet(ty: Type) -> (Engine<Memory<profiles::Constrained>>, SlotId, usize) {
         let mut engine = EngineBuilder::new()
             .profile::<profiles::Constrained>()
@@ -286,6 +301,130 @@ mod tests {
             .unwrap();
         let address = engine.access_tx(tx).unwrap().as_bytes().as_ptr() as usize;
         (engine, tx, address)
+    }
+
+    #[test]
+    fn protocol_cancellation_releases_exact_owner_after_transport_borrow() {
+        for ty in [Type::Confirmable, Type::NonConfirmable] {
+            for poll_first in [false, true] {
+                let (mut engine, tx, _) = packet(ty);
+                let other = engine.acquire_tx().unwrap();
+                let other_mid = MessageId::new(MID.get() + 1);
+                engine
+                    .encode_tx(other, &Message::new(ty, Code::GET, other_mid))
+                    .unwrap();
+                let address = engine.access_tx(tx).unwrap().as_bytes().as_ptr() as usize;
+                let ready = Cell::new(false);
+                let entered = Cell::new(0);
+                let dropped = Cell::new(false);
+                let mut io = Io {
+                    ready: &ready,
+                    entered: &entered,
+                    dropped: &dropped,
+                    address,
+                    result: Ok(None),
+                };
+                {
+                    let pending = (ty == Type::Confirmable).then_some((3, MID, 7));
+                    let mut send = pin!(finish_protocol(&mut engine, &mut io, tx, PEER, pending));
+                    if poll_first {
+                        assert!(
+                            send.as_mut()
+                                .poll(&mut Context::from_waker(Waker::noop()))
+                                .is_pending()
+                        );
+                    }
+                }
+                assert_eq!(entered.get(), usize::from(poll_first));
+                assert_eq!(dropped.get(), poll_first);
+                assert_eq!(engine.tx_occupied(), 1);
+                assert!(engine.pending_con(tx).is_none());
+                assert_eq!(engine.decode_tx(other).unwrap().message_id(), other_mid);
+            }
+        }
+    }
+
+    #[test]
+    fn protocol_completion_settles_owner_before_future_drop() {
+        for ty in [Type::Confirmable, Type::NonConfirmable] {
+            for result in [Ok(None), Err(())] {
+                let (mut engine, tx, _) = packet(ty);
+                let address = engine.access_tx(tx).unwrap().as_bytes().as_ptr() as usize;
+                let ready = Cell::new(false);
+                let entered = Cell::new(0);
+                let dropped = Cell::new(false);
+                let mut io = Io {
+                    ready: &ready,
+                    entered: &entered,
+                    dropped: &dropped,
+                    address,
+                    result,
+                };
+                let pending = (ty == Type::Confirmable).then_some((3, MID, 7));
+                let mut send =
+                    std::boxed::Box::pin(finish_protocol(&mut engine, &mut io, tx, PEER, pending));
+                let mut cx = Context::from_waker(Waker::noop());
+                assert!(send.as_mut().poll(&mut cx).is_pending());
+                ready.set(true);
+                assert!(matches!(
+                    (send.as_mut().poll(&mut cx), result),
+                    (Poll::Ready(Ok(())), Ok(_))
+                        | (
+                            Poll::Ready(Err(Error::Io(DatagramIoError::Io(())))),
+                            Err(())
+                        )
+                ));
+                // Completion must settle ownership itself, including if a caller
+                // forgets the completed future instead of running its destructor.
+                core::mem::forget(send);
+                assert!(dropped.get());
+                if ty == Type::Confirmable && result.is_ok() {
+                    assert_eq!(engine.tx_occupied(), 1);
+                    assert_eq!(
+                        engine.pending_con(tx).unwrap().rto().next_timeout_ms(),
+                        Some(
+                            50_000 + u64::from(crate::message::Transmission::initial_timeout_ms(7))
+                        )
+                    );
+                } else {
+                    assert_eq!(engine.tx_occupied(), 0);
+                    assert!(engine.pending_con(tx).is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn protocol_preparation_error_preserves_existing_pending_owner() {
+        let (mut engine, tx, address) = packet(Type::Confirmable);
+        let original = engine.reserve_pending_con(tx, PEER, MID).unwrap();
+        let ready = Cell::new(true);
+        let entered = Cell::new(0);
+        let dropped = Cell::new(false);
+        let mut io = Io {
+            ready: &ready,
+            entered: &entered,
+            dropped: &dropped,
+            address,
+            result: Ok(None),
+        };
+        {
+            let mut send = pin!(finish_protocol(
+                &mut engine,
+                &mut io,
+                tx,
+                PEER,
+                Some((3, MID, 7))
+            ));
+            assert!(matches!(
+                send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Err(Error::Saturated))
+            ));
+        }
+        assert_eq!(entered.get(), 0);
+        assert!(!dropped.get());
+        assert_eq!(engine.pending_con(tx), Some(original));
+        assert_eq!(engine.decode_tx(tx).unwrap().message_id(), MID);
     }
 
     #[test]
