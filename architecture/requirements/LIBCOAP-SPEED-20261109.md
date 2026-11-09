@@ -223,6 +223,50 @@ Full packet/body/firmware/identity/API joins remain private producer attestation
 not an independent firmware or packet rebuild kit. The H speed gates above still
 fail, and H remains unadopted.
 
+## Target CPU integration, 9 November UTC
+
+The [completed portable screen](https://github.com/jeffglousher/coaptic-validation/tree/098d86b7106bc6a1ffdf6e610a51b6d578792f54/tools/benchmark/evidence/esp-target-cpu-20261109)
+retains all 1,152 complete reads, 48 fresh client processes and twelve boots.
+Both actual Rust modes use c015 core and runtime 32f8, O3/thin LTO, selected
+IRAM placement and an explicit compiled core1 request. The two contemporaneous
+C controls and earlier Rust controls run in opposite complete boot orders.
+These are complete-read Wi-Fi latencies, not task CPU measurements or a new
+host comparison.
+
+Sync's strict strongest-C geometric ratio is 0.85375. Its three sync-client
+identity/test/large ratios are 1.04390, 1.01262 and 1.01595, so it fails the
+all-cell gate despite the aggregate lead. Its own-Rust ratio is 0.98407 with
+mixed individual cells. Async's strict C ratio is 1.48337; all six cells and
+both boot comparisons fail. Its own Os/fat ratio is 1.14253. Both candidates
+remain rejected and must not be retested unchanged.
+
+Async physical net static addition falls from 9,984 to 8,960 bytes, and observed
+lifetime stack use falls from 112,056 to 88,564 bytes. Its reserved worker stays
+196,608 bytes while its image grows 255,984 bytes to 1,439,088. Sync retains
+60,928 bytes of net static addition and its 98,304-byte worker; its image grows
+304 bytes. C workers remain 16,384 bytes. These observations do not release a
+stack reservation or establish minimum RAM, peak use or an isolated CPU cause.
+C running-heap values remain unavailable; terminal cleanup is a separate phase.
+
+All planned reads and finite resource/stability guards pass, with no observed
+repeated request sends, Rust drops, wait errors, API refusal or unexpected
+disconnect. RSSI ranges from -54 to -34 dBm; the final pinned-C boot reports
+-54 dBm and the other boots -34 to -41 dBm. Preserve that uneven RF observation
+and the per-boot mapping. Operational completion does not establish controlled
+radio conditions or long-duration stability.
+
+Compiled core1 is not an observed Rust task-core result: the one-shot startup
+records are absent from these captures. C records startup core1, including its
+floating control. The exact worker-plus-4,096-byte pre-task contiguous margin
+is unqualified in these speed-screen images; running heap guards do not
+replace it. New candidate I/D cache and SDK settings are attested per image;
+missing data-cache/tick facts in older controls remain unqualified. Source,
+binary, physical identity and API joins remain private producer attestations.
+The public verifier reconstructs all cell/tail/boot results, ten comparisons,
+both original failed decisions and the memory ledger. It reuses 21 focused
+counterexamples and 39 controller checks. Normal firmware is restored and
+verified; no source/profile adoption follows from offline arithmetic passing.
+
 ## Continue from measured costs
 
 Preserve the exact sources, methods, failures and portable measurements. CPU
@@ -233,14 +277,20 @@ Whitelisted peer-latency vectors retain every observation. Firmware, ELF,
 credentials, private configuration and raw device API captures are not public
 evidence artifacts.
 
-The combined cache32 placement and idle-Observe integration above is rejected;
-do not repeat it unchanged. The common-boundary result supports investigating
-the large async processing cost, which persists for tiny requests. It does not
-support the timer-probe prototype as a material GET optimization; that prototype
-remains untimed and on hold. Next qualify one coherent target code-generation,
-selected IRAM-placement and explicit worker-affinity integration. Preserve the
-original workers, capacities, security and restoration guards; measure the final
-integration against both C controls before adopting a source or layout.
+The idle-Observe and subsequent target CPU integrations above are rejected; do
+not repeat them unchanged. The common-boundary result supports investigating
+the large async processing cost, which persists for tiny requests. The timer
+prototype remains untimed and on hold. Next identify actual copy owners and
+executed paths before another source or layout integration. Preserve original
+workers, capacities, security and restoration guards.
+
+The local empty-control extraction is checked and untimed, not adopted. It
+reduces the selected Os/fat dispatch frame from 13,200 to 9,808 bytes, while
+adding a separate 4,768-byte helper frame; the selected root future remains
+9,896 bytes. Selected poll/dispatch/helper/drop code including literals grows
+1,731 bytes. Host regressions and strict lint pass, but these static changes
+do not establish runtime or peak-memory gains and do not justify promotion.
+The source and its exact archive comparison remain retained as a local experiment.
 
 The full objective still requires reproducible host and ESP32 gains in both
 modes, preservation of supported behavior and capacities, independent

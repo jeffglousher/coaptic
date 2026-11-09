@@ -9,7 +9,7 @@ it is not silently treated as finished software work.
 ## Current work
 
 The subsequent libcoap-speed investigation has not qualified another library
-implementation. Eight CPU integrations and the latest exact-H cache32 device
+implementation. Eight CPU integrations and the exact-H cache32 device
 integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio
 and 1.12069 async, but ESP32 latency/C ratios are 1.06576 sync and 1.47413 async;
 both device speed gates fail. All 1,152 device reads, resource/stability checks
@@ -33,13 +33,23 @@ spans include preemption and observer work, not isolated task CPU or clean RTT.
 Keep the [numeric vectors, source commitments and original failures](https://github.com/jeffglousher/coaptic-validation/tree/a50f202ed2ed289e391ec2cc358498954b55f6db/tools/benchmark/evidence/mcu-processing-span-20261109).
 Original workers, startup/resource floors and normal restoration pass.
 
-Next qualify and measure one coherent target code-generation/IRAM placement and
-explicit worker-affinity integration against both contemporaneous C controls.
-The timer-probe prototype remains untimed and on hold: these GET spans do not
-identify it as a material cost. Preserve supported behavior, capacities, original
-workers, failures and restoration. Do not rerun unchanged failed integrations.
-Builds, smaller frames and host throughput alone do not complete the host-and-device
-speed goal.
+The subsequent c015 target code-generation/IRAM and compiled core1 integration
+also fails its speed gate. All 1,152 reads in twelve boots complete. Sync/C is
+0.85375 overall, but three sync-client cells fail; async/C is 1.48337 and async
+latency is 14.25% higher than its own Os/fat control. Original workers and
+capacities remain. RSSI spans -54 to -34 dBm, actual Rust task-core observations
+are missing, and the exact pre-task contiguous-allocation margin is unqualified.
+Keep the [complete vectors, failed decisions and memory tradeoffs](https://github.com/jeffglousher/coaptic-validation/tree/098d86b7106bc6a1ffdf6e610a51b6d578792f54/tools/benchmark/evidence/esp-target-cpu-20261109).
+Both candidates remain unadopted; normal firmware is restored and verified.
+
+Next resolve actual async copy owners and executed paths before selecting another
+integration. The empty-control extraction is a checked, untimed local experiment:
+its dispatch frame shrinks, but the selected root future stays 9,896 bytes and
+selected combined code grows. It is not an accepted speed or peak-memory gain.
+The timer-probe prototype remains untimed and on hold. Preserve supported
+behavior, capacities, original workers and failures; do not rerun unchanged failed
+integrations. Builds, smaller frames and host throughput alone do not complete
+the host-and-device speed goal.
 
 The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
 CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
