@@ -9,16 +9,28 @@ it is not silently treated as finished software work.
 ## Current work
 
 The subsequent libcoap-speed investigation has not qualified another library
-implementation. Eight complete CPU integrations fail at least one frozen
-workload bound; the latest native sync layout has an aggregate C-latency lead
-but two failed cells, and the cache16 async layout regresses. All remain
-unadopted. Keep the [comparison scopes, results and negative evidence](architecture/requirements/LIBCOAP-SPEED-20261109.md).
-The [portable measurements and offline verifier](https://github.com/jeffglousher/coaptic-validation/tree/47ca9e024c365a795eb22259a67d30191bdbac05/tools/benchmark/evidence/esp-libcoap-speed-20261109)
-reproduce the completed comparisons and their failed promotion decisions.
-Continue with a coherent cache32 server-path integration, original-stack
-startup checks and a fresh contemporaneous sync/async device comparison.
-Preserve configured capacities and normal-firmware restoration. Passing builds,
-reviews, static frames or a narrow benchmark do not complete the speed goal.
+implementation. Eight CPU integrations and the latest exact-H cache32 device
+integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio
+and 1.12069 async, but ESP32 latency/C ratios are 1.06576 sync and 1.47413 async;
+both device speed gates fail. All 1,152 device reads, resource/stability checks
+and original-stack startup checks pass; normal firmware is restored and verified.
+Keep the [comparison scopes, results and failures](architecture/requirements/LIBCOAP-SPEED-20261109.md)
+and the [fresh portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/021b691ed34167e488bde6915561613c98ae9455/tools/benchmark/evidence/esp-idle-observe-20261109).
+Earlier cohorts remain in their [separate evidence package](https://github.com/jeffglousher/coaptic-validation/tree/47ca9e024c365a795eb22259a67d30191bdbac05/tools/benchmark/evidence/esp-libcoap-speed-20261109).
+
+The existing ESP driver's task-local wake handling is delivered in companion
+[#258](https://github.com/jeffglousher/coaptic-validation/pull/258), with child
+readiness/deadline probes and the future-deadline regression. Production bytes
+match measured runtime 32f8; 11 network/OSCORE and 12 pairing driver checks pass
+against accepted a85 core. It adds one shared atomic word (four bytes), with no
+isolated complete-App CPU gain claimed. This is separate from rejected H profiles.
+
+Next compare a common MCU socket receive-to-send boundary in Rust and C before
+choosing another implementation or layout. Historical Rust-only traces are
+context, not a matched explanation of the current gap. Preserve capacities,
+original workers, failures and normal-firmware restoration. Do not rerun the
+unchanged failed H integration. Builds, smaller frames and host throughput
+alone do not complete the host-and-device speed goal.
 
 The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
 CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
