@@ -174,6 +174,55 @@ Focused network/OSCORE and pairing driver checks pass 11/11 and 12/12 against
 accepted a85 core. Existing unchanged-production Clippy/Xtensa evidence is reused.
 This delivery claims no isolated complete-App CPU gain for the runtime change.
 
+## Common MCU processing diagnostic, 9 November UTC
+
+The [completed common-boundary package](https://github.com/jeffglousher/coaptic-validation/tree/a50f202ed2ed289e391ec2cc358498954b55f6db/tools/benchmark/evidence/mcu-processing-span-20261109)
+retains 192 verified reads, 256 fully matched packet spans and all four profiles.
+There is one boot per profile and two fixed Windows clients. Each profile has
+16 complete operations per path; each large operation sums its two associated
+Block2 spans before the median is taken. Median receive-return to send-entry
+wall times, in microseconds for identity / seven-byte test / large body, are:
+
+- H sync O3/thin: 570 / 405 / 1,232.5.
+- H async Os/fat: 1,335 / 1,255 / 2,984.
+- C pinned: 481 / 497.5 / 1,419.
+- C floating: 498 / 487.5 / 1,353.
+
+All 256 spans contain zero native select calls. Two async delay calls total
+1,139 us out of 92,358 us of async processing-span wall; all other delay totals
+are zero. Receive-call and send-call wall lie outside this processing boundary.
+The spans include preemption and RX observer work; paced post-send logging can
+perturb later cache/work. Residual wall is not task CPU. Different code-generation
+profiles and task policies prevent isolating language or async overhead. Do not
+subtract these medians from unrelated Wi-Fi latencies to invent a transport cost.
+The ESP32's Wi-Fi, AP and Windows path remain inside the separate complete-read
+measurements. This diagnostic contributes no speed-promotion samples.
+
+These images use exact H core de9230 and runtime 32f8, not the next c015-based
+candidate. Each diagnostic image attests actual 32 KiB I/D caches, eight ways,
+32-byte lines, a 240 MHz CPU and a 1,000 Hz tick. VFS select support is enabled only for H async;
+no select calls were observed inside the consumed-RX spans. Rust's actual worker
+core is unavailable in API output; compiled policy is floating. C pinned and
+floating both report startup core1, with compiled policies core1 and floating
+respectively. Startup observations do not establish continuous task placement.
+
+Original capacities and 96/192/16 KiB worker reservations remain. H async's
+200,704-byte largest internal block before task creation exactly meets the
+inclusive floor of its 196,608-byte worker plus 4,096-byte margin. All running free/largest/regional-low-water
+floors pass. The observer context is 2,512 bytes inside the worker stack, with
+28 global bytes inside static memory; aligned static deltas are 24 bytes for
+sync/C and 32 for async. These nested observations do not establish minimum
+stacks, whole-system peak RAM or permission to reduce the original reservations.
+
+The V1 incomplete publication and original V2 C archive-regeneration refusal
+remain failed. A separate guarded controls inventory supplies the completed V2
+images. Normal firmware is restored and verified. The portable verifier
+reconstructs every operation and twelve medians, with 25 focused counterexamples;
+completed codec, actual-source C++ mock and controller/target checks are reused.
+Full packet/body/firmware/identity/API joins remain private producer attestations,
+not an independent firmware or packet rebuild kit. The H speed gates above still
+fail, and H remains unadopted.
+
 ## Continue from measured costs
 
 Preserve the exact sources, methods, failures and portable measurements. CPU
@@ -185,12 +234,13 @@ credentials, private configuration and raw device API captures are not public
 evidence artifacts.
 
 The combined cache32 placement and idle-Observe integration above is rejected;
-do not repeat it unchanged. Next compare MCU socket receive-return to send-entry
-wall spans at the same boundary in Rust and C, retaining packet identity,
-failures and coverage. Such spans include instrumentation and preemption; they
-are not isolated task CPU. Historical Rust-only traces do not supply the missing
-C comparison. Use the common-boundary result before another ownership or layout
-change, preserving the original workers, capacities and restoration guards.
+do not repeat it unchanged. The common-boundary result supports investigating
+the large async processing cost, which persists for tiny requests. It does not
+support the timer-probe prototype as a material GET optimization; that prototype
+remains untimed and on hold. Next qualify one coherent target code-generation,
+selected IRAM-placement and explicit worker-affinity integration. Preserve the
+original workers, capacities, security and restoration guards; measure the final
+integration against both C controls before adopting a source or layout.
 
 The full objective still requires reproducible host and ESP32 gains in both
 modes, preservation of supported behavior and capacities, independent

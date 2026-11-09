@@ -25,12 +25,21 @@ match measured runtime 32f8; 11 network/OSCORE and 12 pairing driver checks pass
 against accepted a85 core. It adds one shared atomic word (four bytes), with no
 isolated complete-App CPU gain claimed. This is separate from rejected H profiles.
 
-Next compare a common MCU socket receive-to-send boundary in Rust and C before
-choosing another implementation or layout. Historical Rust-only traces are
-context, not a matched explanation of the current gap. Preserve capacities,
-original workers, failures and normal-firmware restoration. Do not rerun the
-unchanged failed H integration. Builds, smaller frames and host throughput
-alone do not complete the host-and-device speed goal.
+The common MCU receive-return to send-entry diagnostic is complete: 192 reads,
+256 matched packet spans and one boot per profile. Tiny-request medians are
+405 us sync, 1,255 us async and 487.5/497.5 us for the two C controls. All spans
+have zero select calls; two async delays total 1,139 us. These instrumented wall
+spans include preemption and observer work, not isolated task CPU or clean RTT.
+Keep the [numeric vectors, source commitments and original failures](https://github.com/jeffglousher/coaptic-validation/tree/a50f202ed2ed289e391ec2cc358498954b55f6db/tools/benchmark/evidence/mcu-processing-span-20261109).
+Original workers, startup/resource floors and normal restoration pass.
+
+Next qualify and measure one coherent target code-generation/IRAM placement and
+explicit worker-affinity integration against both contemporaneous C controls.
+The timer-probe prototype remains untimed and on hold: these GET spans do not
+identify it as a material cost. Preserve supported behavior, capacities, original
+workers, failures and restoration. Do not rerun unchanged failed integrations.
+Builds, smaller frames and host throughput alone do not complete the host-and-device
+speed goal.
 
 The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
 CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
