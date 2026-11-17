@@ -2,9 +2,11 @@
 //!
 //! Run: `cargo run --example application_options`.
 //! This fixture is explicitly unprotected; it is not a network/security example.
-//! App currently emits typed standard options. Custom elective response options
-//! can be consumed through `received_options()` with `full_responses()` enabled.
-//! The wire-level peer below emits that option; App has no custom-option setter.
+//! App emits unknown elective request options through `custom_options()` and
+//! retains them for retransmission and block-wise continuations. Standard options
+//! use typed setters. Custom elective response options can be consumed through
+//! `received_options()` with `full_responses()` enabled. The wire-level peer below
+//! emits the response option; App response intents have no custom-option setter.
 
 use coaptic::app::{AsyncCallError, Error};
 use coaptic::message::{ContentFormat, Message, Opt, OptionNumber, Type, decode, encode};
@@ -18,6 +20,7 @@ use core::task::{Context, Poll, Waker};
 const PEER: Endpoint = Endpoint::v4([192, 0, 2, 1], 5683);
 // A private elective option for this example, not an IANA assignment.
 const RECEIPT: OptionNumber = OptionNumber::new(65000);
+const CUSTOM_OPTIONS: [Opt<'static>; 1] = [Opt::new(RECEIPT, b"operation-1")];
 const PAYLOAD: &[u8] = b"target=21.5";
 
 struct Peer {
@@ -50,8 +53,10 @@ impl DatagramIo for Peer {
             || request.payload() != PAYLOAD
             || request.content_format() != Some(Ok(ContentFormat::TEXT_PLAIN))
             || request.accept() != Some(Ok(ContentFormat::TEXT_PLAIN))
+            || request.options().find(|option| option.number() == RECEIPT)
+                != Some(CUSTOM_OPTIONS[0])
         {
-            return Err("expected PUT with text/plain payload and Accept");
+            return Err("expected PUT with text/plain payload, Accept and custom operation option");
         }
         // Options are in numeric order. Text/plain's integer value is zero,
         // whose canonical CoAP uint encoding is the empty slice.
@@ -110,6 +115,8 @@ fn explain(error: Error<&'static str>) -> String {
     match error {
         Error::Saturated => "local capacity exhausted: collect completed Calls or cancel abandoned ones before admitting work".into(),
         Error::DeadlineElapsed => "request deadline elapsed: inspect current resource state before retrying a write with an uncertain outcome".into(),
+        Error::CustomOptionNotAllowed(number) => format!("custom option {} is reserved or critical: use a typed setter for standard options and an unknown elective number for extensions", number.get()),
+        Error::CustomRequestTooLarge => "custom request identity exceeds 512 bytes: shorten retained path/query/options (and FETCH/Observe payload) while preserving application meaning".into(),
         other => format!("request failed ({other:?}); inspect transport/state before retrying the write"),
     }
 }
@@ -155,6 +162,7 @@ fn run_sync() -> Result<(), String> {
         .payload(PAYLOAD)
         .content_format(ContentFormat::TEXT_PLAIN)
         .accept(ContentFormat::TEXT_PLAIN)
+        .custom_options(&CUSTOM_OPTIONS)
         .deadline(5000)
         .send(0)
         .map_err(explain)?;
@@ -194,10 +202,14 @@ async fn run_async() -> Result<(), String> {
         .payload(PAYLOAD)
         .content_format(ContentFormat::TEXT_PLAIN)
         .accept(ContentFormat::TEXT_PLAIN)
+        .custom_options(&CUSTOM_OPTIONS)
         .deadline(5000)
         .send_async(0, &mut clock, &mut timer)
         .await
-        .map_err(|error| format!("async send: {error:?}; reconcile state before retrying"))?;
+        .map_err(|error| match error {
+            AsyncCallError::Request(error) => explain(error),
+            other => format!("async send: {other:?}; reconcile state before retrying"),
+        })?;
     app.wait_async(0, &mut timer, pending())
         .await
         .map_err(explain)?;

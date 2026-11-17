@@ -25,10 +25,23 @@ The bounded performance assessment qualifies no new candidate. Historical MCU
 wall spans do not isolate current-source task CPU; the retained timer, cache and
 ownership failures remain rejected. Keep #341/#650 open. The runnable
 `application_options` example covers sync/async payload, Accept/Content-Format,
-deadlines, actionable errors and custom response-option consumption. App custom
-outbound options ([#759](https://github.com/jeffglousher/coaptic/issues/759))
-remain a concrete usability gap to fix before declaring the
-requested usability follow-up complete. Continue with that bounded API work;
+deadlines, actionable errors and custom response-option consumption. The
+[#759](https://github.com/jeffglousher/coaptic/issues/759) follow-up adds bounded
+custom elective request options using existing Call identity and upload-control
+storage. It preserves sorted repeat values through retry, classic/Q block
+continuation, FETCH and Observe; known/critical/zero numbers and retention
+overflow refuse explicitly. No App owner or pool capacity grows. The transient
+builder gains a borrowed slice; future and peak-stack changes are unmeasured.
+The integrated source passes 1,705 all-feature tests including 1,242 library
+tests, plus 737 no-default library tests. Both example modes execute; Rust 1.89
+all-feature and no-default checks, strict all-feature lint and rustdoc pass.
+
+Its loss fixture also exposes a separate existing Q-Block2 trailing-loss gap
+([#761](https://github.com/jeffglousher/coaptic/issues/761)): a contiguous prefix
+does not arm recovery for a missing suffix. Observed-hole recovery passes; that
+does not repair trailing loss. Reproduce without custom options, preserve
+classic Size2 advisory behavior and existing exact Q-size validation, and check
+NON/CON timing before selecting a bounded fix. This reliability work is next;
 physical power recovery #333 and credential-touch qualification #365 remain
 unexecuted. No new firmware execution or performance gain is claimed here.
 

@@ -174,6 +174,8 @@ pub use usage::AppUsage;
 pub use wake::AppWake;
 
 #[cfg(test)]
+mod custom_options_tests;
+#[cfg(test)]
 mod lifecycle_soak;
 #[cfg(test)]
 mod tests;
@@ -8386,6 +8388,12 @@ pub enum Error<E> {
     /// FETCH selection identity exceeds 512 encoded bytes. Nothing was sent;
     /// use a smaller selection or retain the request with the advanced Engine.
     FetchRequestTooLarge,
+    /// A custom option has number zero, is critical or is managed by App.
+    /// Nothing was sent. Use a typed setter or an application elective option.
+    CustomOptionNotAllowed(crate::message::OptionNumber),
+    /// Canonical request identity with custom options exceeds 512 encoded bytes.
+    /// Nothing was sent. Reduce the options or FETCH/Observe selection body.
+    CustomRequestTooLarge,
     /// RFC 8132 requires Content-Format on FETCH, even with an empty payload.
     /// Nothing was sent; select the format that describes the selection body.
     FetchContentFormatRequired,
@@ -8464,6 +8472,12 @@ where
             }
             Self::FetchContentFormatRequired => f.write_str("FETCH requires Content-Format"),
             Self::FetchRequestTooLarge => f.write_str("FETCH request identity exceeds 512 bytes"),
+            Self::CustomOptionNotAllowed(number) => write!(
+                f,
+                "custom option {} is reserved, critical or managed by App",
+                number.get()
+            ),
+            Self::CustomRequestTooLarge => f.write_str("custom request identity exceeds 512 bytes"),
             Self::RequestTagRequired => f.write_str("Q-Block1 requires a Request-Tag"),
             Self::RequestTagInUse => f.write_str("Request-Tag already in use at this peer"),
             Self::NoResponseUploadUnsupported => {
@@ -8513,6 +8527,8 @@ where
             | Self::ObserveCancellationAmbiguous
             | Self::FetchContentFormatRequired
             | Self::FetchRequestTooLarge
+            | Self::CustomRequestTooLarge
+            | Self::CustomOptionNotAllowed(_)
             | Self::ObserveRequestTooLarge
             | Self::ObserveSupersessionUnsupported
             | Self::RequestTagRequired

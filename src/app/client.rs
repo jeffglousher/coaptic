@@ -559,8 +559,8 @@ impl RetainedQueries {
     }
 }
 
-/// Exact canonical request identity for Observe cancellation and FETCH follow-ups.
-/// Fixed header/Token; Observe and ETag are omitted. Includes the FETCH body.
+/// Canonical request identity for Observe, FETCH and custom-option follow-ups.
+/// Fixed header/Token; Observe and ETag are omitted. FETCH/Observe retain payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ObserveRequest {
     bytes: [u8; OBSERVE_REQUEST_BYTES],
@@ -1018,6 +1018,7 @@ pub struct Outgoing<
     association_valid: bool,
     path: Result<Path<'static>, PathError>,
     payload: &'a [u8],
+    custom_options: &'a [Opt<'a>],
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
@@ -1141,6 +1142,7 @@ where
             association_valid: true,
             path: path_from_into(path),
             payload: &[],
+            custom_options: &[],
             content_format: None,
             echo: None,
             no_response: None,
@@ -1379,6 +1381,7 @@ where
             association_valid: self.association_valid,
             path: self.path,
             payload: self.payload,
+            custom_options: self.custom_options,
             content_format: self.content_format,
             echo: self.echo,
             no_response: self.no_response,
@@ -1431,6 +1434,28 @@ where
     #[must_use]
     pub const fn payload(mut self, payload: &'a [u8]) -> Self {
         self.payload = payload;
+        self
+    }
+
+    /// Set application-defined elective options, replacing any previous list.
+    ///
+    /// Values are borrowed while preparing the request. Accepted Calls retain
+    /// copies in existing bounded storage for retries, Block1/Block2 and Observe.
+    /// Options are sorted by number; repeated numbers retain their supplied order.
+    /// Number zero, critical options and numbers in [`crate::message::OptionNumber::is_known`]
+    /// are refused with [`Error::CustomOptionNotAllowed`] before I/O. Use the typed
+    /// builders for protocol options. Under OSCORE these unknown options are encrypted
+    /// as Class E; extensions requiring another protection class are unsupported.
+    ///
+    /// The complete initial option list shares the existing 26-option bound.
+    /// Canonical request identity (including the body for FETCH/Observe) must fit
+    /// 512 encoded bytes, otherwise [`Error::CustomRequestTooLarge`] is returned.
+    /// Fragmented uploads share a 512-byte, 12-option retained-control area with
+    /// Observe and initial Block2/Q-Block2 controls. Overflow is an explicit
+    /// [`Error::Block`] refusal, never silent omission.
+    #[must_use]
+    pub const fn custom_options(mut self, options: &'a [Opt<'a>]) -> Self {
+        self.custom_options = options;
         self
     }
 
@@ -1792,6 +1817,17 @@ where
         if self.deadline_ms.is_some_and(|deadline| deadline <= now_ms) {
             return Err(Error::DeadlineElapsed);
         }
+        if self.custom_options.len() > CLIENT_OPTION_SLOTS {
+            return Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::OptionsFull,
+            )));
+        }
+        for option in self.custom_options {
+            let number = option.number();
+            if number.get() == 0 || number.is_known() || number.is_critical() {
+                return Err(Error::CustomOptionNotAllowed(number));
+            }
+        }
         if self.code == Code::FETCH && self.content_format.is_none() {
             return Err(Error::FetchContentFormatRequired);
         }
@@ -1855,6 +1891,7 @@ where
             token: S::Token::EMPTY,
             path: path.segments(),
             payload: self.payload,
+            custom_options: self.custom_options,
             content_format: self.content_format,
             echo: self.echo,
             no_response: self.no_response,
@@ -1869,11 +1906,17 @@ where
             block2: self.block2,
             observe,
         };
-        let request_identity = if observe == OutgoingObserve::Off && self.code != Code::FETCH {
+        let request_identity = if observe == OutgoingObserve::Off
+            && self.code != Code::FETCH
+            && self.custom_options.is_empty()
+        {
             None
         } else {
             Some(
                 request_identity_identity(&spec).map_err(|error| match error {
+                    EncodeError::BufferTooSmall if !self.custom_options.is_empty() => {
+                        Error::CustomRequestTooLarge
+                    }
                     EncodeError::BufferTooSmall if observe == OutgoingObserve::Off => {
                         Error::FetchRequestTooLarge
                     }
@@ -2129,6 +2172,7 @@ struct ClientSend<'a, K: OwnedToken = Token> {
     token: K,
     path: &'a [&'a str],
     payload: &'a [u8],
+    custom_options: &'a [Opt<'a>],
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
     no_response: Option<crate::message::NoResponse>,
@@ -2208,6 +2252,9 @@ fn with_client_options<R>(
         if let Some(tag) = spec.request_tag.as_slice() {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
+        for option in spec.custom_options {
+            push_opt(&mut opts, *option)?;
+        }
         Ok(())
     })();
     filled?;
@@ -2224,7 +2271,13 @@ fn request_identity_identity(
         };
         let message = Message::new(Type::Confirmable, spec.code, MessageId::new(0))
             .with_options(options)
-            .with_payload(spec.payload);
+            .with_payload(
+                if spec.code == Code::FETCH || spec.observe != OutgoingObserve::Off {
+                    spec.payload
+                } else {
+                    &[]
+                },
+            );
         identity.len = crate::message::encode(&message, &mut identity.bytes)?;
         Ok(identity)
     })?
@@ -3559,6 +3612,7 @@ where
         token,
         path,
         payload,
+        custom_options: &[],
         content_format,
         echo,
         no_response,
@@ -4447,9 +4501,8 @@ where
     for (encoded, block) in q2.iter_mut().zip(q_block2) {
         *encoded = block.encode();
     }
-    let fetch = live
+    let retained_request = live
         .as_ref()
-        .filter(|live| live.code == Code::FETCH)
         .and_then(|live| live.request_identity.as_ref())
         .map(|identity| {
             crate::message::decode_with_token::<Mem::Token>(&identity.bytes[..identity.len])
@@ -4506,6 +4559,14 @@ where
         if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
+        if let Some(request) = retained_request.as_ref() {
+            for option in request
+                .options()
+                .filter(|option| !option.number().is_known())
+            {
+                push_opt(&mut opts, option)?;
+            }
+        }
         Ok(())
     })();
     if let Err(e) = filled {
@@ -4516,8 +4577,9 @@ where
         .with_token(token)
         .with_options(opts.as_slice())
         .with_payload(
-            fetch
+            retained_request
                 .as_ref()
+                .filter(|_| code == Code::FETCH)
                 .map(|request| request.payload())
                 .unwrap_or(&[]),
         );
@@ -4558,7 +4620,10 @@ where
                 live.path.segments(),
                 &queries[..count],
                 live.accept,
-                fetch.as_ref().expect("retained FETCH identity").payload(),
+                retained_request
+                    .as_ref()
+                    .expect("retained FETCH identity")
+                    .payload(),
                 live.request_tag,
                 live.content_format,
                 live.echo,
@@ -5327,12 +5392,13 @@ where
     >::new();
     let filled = (|| -> Result<(), EncodeError> {
         for option in controls.iter().filter(|o| {
-            matches!(
-                o.number(),
-                crate::message::OptionNumber::OBSERVE
-                    | crate::message::OptionNumber::BLOCK2
-                    | crate::message::OptionNumber::Q_BLOCK2
-            )
+            !o.number().is_known()
+                || matches!(
+                    o.number(),
+                    crate::message::OptionNumber::OBSERVE
+                        | crate::message::OptionNumber::BLOCK2
+                        | crate::message::OptionNumber::Q_BLOCK2
+                )
         }) {
             push_opt(&mut opts, *option)?;
         }
