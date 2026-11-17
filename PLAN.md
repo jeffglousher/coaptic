@@ -8,6 +8,30 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The November 17 reliability continuation adds a finite same-App blackout and
+reconnect regression in `src/app/lifecycle_soak.rs`, covering sync/async and
+unprotected/OSCORE. It preserves exact retransmission bytes, checks one POST
+effect across a late duplicate, and recovers after explicit Call-capacity
+refusal, cancellation and deadline expiry. This is software datagram-loss
+injection, not installed-device Wi-Fi or physical qualification. Baseline core
+`6d0c1f0` passes 1,235 library and 44 selected recovery integration tests;
+companion `1de100c` passes 91 driver/network/pairing tests with process-local
+Cargo paths selecting this worktree, Rust 1.99.1, and unchanged lockfiles.
+The shared companion junction remains on its original older checkout. The
+integrated test source passes all 1,237 library tests and strict all-target,
+all-feature Clippy; the example executes both client modes successfully.
+
+The bounded performance assessment qualifies no new candidate. Historical MCU
+wall spans do not isolate current-source task CPU; the retained timer, cache and
+ownership failures remain rejected. Keep #341/#650 open. The runnable
+`application_options` example covers sync/async payload, Accept/Content-Format,
+deadlines, actionable errors and custom response-option consumption. App custom
+outbound options ([#759](https://github.com/jeffglousher/coaptic/issues/759))
+remain a concrete usability gap to fix before declaring the
+requested usability follow-up complete. Continue with that bounded API work;
+physical power recovery #333 and credential-touch qualification #365 remain
+unexecuted. No new firmware execution or performance gain is claimed here.
+
 The November 16/17 continuation verified normal ESP firmware without recovery
 flashing. The companion's current `MemoryProfile::ResidentRxScratch` binding
 is repaired: 91 integration checks, target/SDK builds and 48 device reads across
