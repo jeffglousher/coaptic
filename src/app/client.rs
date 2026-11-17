@@ -4045,7 +4045,7 @@ where
         match engine.apply_call_block2_rx(rx, true) {
             Ok(progress) if progress.complete() => {
                 lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
-                let _ = engine.note_q_receive(progress.id(), now_ms);
+                let _ = engine.note_q2_receive(progress.id(), now_ms, parsed.ty());
                 finish_assembled(
                     engine,
                     inbox,
@@ -4078,7 +4078,7 @@ where
                         return Err(Error::Saturated);
                     }
                 }
-                let _ = engine.note_q_receive(progress.id(), now_ms);
+                let _ = engine.note_q2_receive(progress.id(), now_ms, parsed.ty());
                 // CON payloads advance through their individual ACKs (RFC 9177
                 // appendix A.2). A window pull races the sender's next CON train.
                 let outcome = if parsed.ty() != Type::Confirmable
@@ -4324,7 +4324,6 @@ fn needs_q_continue<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) 
     };
     transfer.role() == BlockRole::IncomingQBlock2
         && !transfer.is_complete()
-        && transfer.q_holes().is_none()
         && transfer.window_mask() == 0
         && transfer.window_base() > 0
 }
