@@ -155,6 +155,9 @@ application effects.
 ## Find your way around
 
 - [Examples](examples) and `cargo doc --all-features --open` for the API.
+  Run `cargo run --example application_options` for sync/async payloads,
+  Accept/Content-Format, deadlines and custom response-option collection using
+  an explicitly unprotected in-memory peer.
 - [Project plan](PLAN.md) for priorities and remaining work.
 - [Protocol scope](architecture/IETF-RFC-PLAN.md) for supported CoAP features.
 - [Development](DEVELOPMENT.md) for contributing and checking changes.
