@@ -17,8 +17,11 @@ preserved at `0d31cbc` and rejected: its complete-App four-pair CPU screen impro
 averages about 2.4% in each mode but fails seven of 28 cell preservation limits.
 Its clean Wi-Fi latency/C screens also fail: cache16 1.04366 and cache32 1.24687.
 Keep the [mechanism, measurement scopes and rejected paths](architecture/requirements/ESP-TIMER-LIFETIMES-20261117.md).
-The timer-only repair requires independent source validation; these failed
-experimental measurements must not be relabeled as measurements of that source.
+The first timer-only source `ec9221f` also fails a separate 64-pair CPU
+preservation cohort: sync 1.00037, async 1.01014, four fixed-Service async cell
+failures. Preserve it unadopted. The next small hypothesis moves borrowed timer
+state and its drop guard behind the blocked-send branch; a ready send must not
+query or construct them. Do not relabel earlier measurements as this source.
 
 The subsequent libcoap-speed investigation has not qualified another library
 implementation. Eight CPU integrations and the exact-H cache32 device

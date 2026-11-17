@@ -11,8 +11,11 @@
 /// kqueue, or IOCP. Embedded adapters keep one compare-interrupt registration
 /// in the board time driver. [`Self::schedule`] moves that registration when
 /// the earliest deadline changes and leaves it armed when the value does not.
-/// Dropping a wait removes the waker for that wait. It does not clear a
-/// deadline the next wait still needs.
+/// Dropping [`Self::wait`] releases its per-wait state without clearing the
+/// armed deadline. A reactor registration may stay alive while that deadline
+/// is armed. Drivers that distinguish active waiters must remove the ending
+/// wait's waker from native readiness interests; the next wait can reuse the
+/// armed deadline.
 ///
 /// The timestamp domain must match App's injected millisecond timestamps.
 /// A past deadline completes on the next poll. The wait must not spin or block

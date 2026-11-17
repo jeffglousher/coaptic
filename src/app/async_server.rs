@@ -141,14 +141,7 @@ impl<T: AsyncDatagramIo, Clock: FnMut() -> Result<u64, C>, Timer: AsyncTimer, C>
         // A ready socket must not move the platform timer. A blocked send
         // borrows it only when its deadline is earlier, then puts the previous
         // deadline back. The registration is updated, not dropped.
-        let deadline = self.deadline;
-        let previous = self.timer.armed();
         let accepted = {
-            let mut registration = BorrowedDeadline {
-                timer: self.timer,
-                previous,
-                changed: false,
-            };
             let mut send = pin!(self.io.send(dest, bytes));
             // A ready send does not create a timer wait. A blocked send owns
             // its wait future so completion/cancellation unregisters its waker.
@@ -156,6 +149,15 @@ impl<T: AsyncDatagramIo, Clock: FnMut() -> Result<u64, C>, Timer: AsyncTimer, C>
             match first {
                 Poll::Ready(result) => result.map_err(AsyncIoError::Transport)?,
                 Poll::Pending => {
+                    // Timer ownership starts only after transport blocks. A
+                    // ready send needs neither its state nor its drop guard.
+                    let deadline = self.deadline;
+                    let previous = self.timer.armed();
+                    let mut registration = BorrowedDeadline {
+                        timer: self.timer,
+                        previous,
+                        changed: false,
+                    };
                     if previous.map(|existing| deadline < existing).unwrap_or(true) {
                         registration.timer.schedule(Some(deadline));
                         registration.changed = true;

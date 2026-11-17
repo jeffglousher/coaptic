@@ -1172,6 +1172,7 @@ fn ready_send_does_not_arm_the_platform_timer() {
     struct CountingTimer<'a>(&'a Cell<usize>, Option<u64>);
     impl AsyncTimer for CountingTimer<'_> {
         fn armed(&self) -> Option<u64> {
+            self.0.set(self.0.get() + 1);
             self.1
         }
         fn schedule(&mut self, deadline: Option<u64>) {

@@ -76,6 +76,15 @@ these CPU clocks. Smaller futures or a narrow GET win cannot override refusal.
 
 ## Continuation
 
+The first isolated timer source `ec9221f51a39a1265c52436af51cf3475ba0031e`
+also fails its separate 64-pair CPU preservation cohort: 14,680,064 measured
+operations, sync ratio 1.00037 (upper95 1.00188), async 1.01014 (1.01163).
+Four fixed-Service async cells fail, with point ratios 1.02913 to 1.04057 and
+upper bounds up to 1.05287. Do not promote it as a cost-preserving repair or
+repeat the unchanged source. The follow-up moves the borrowed timer state and
+drop guard into the blocked-send branch, so immediately ready sends do not
+query or construct them. That is a new, unmeasured hypothesis.
+
 Deliver and validate the timer correctness repair independently. Preserve the
 experimental branch, source commitments, raw failures and source-matched peer
 comparisons. The faster-than-libcoap goal remains open. A future optimization
