@@ -525,25 +525,39 @@ struct NotificationSnapshot {
 
 // Ordinary outgoing response bodies do not use a receive/retention timer.
 // Keep their immutable backing in that same role-exclusive owner.
+// Incoming Q2 keeps its first response mode in this discriminant, including
+// between waits, so mode tracking needs no additional per-body field.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum BodyRetention {
     None,
     Wait(QBlockReceiveWait),
+    Q2Non,
+    Q2NonWait(QBlockReceiveWait),
+    Q2Con,
+    Q2ConWait(QBlockReceiveWait),
     Static(&'static [u8]),
 }
 
 impl BodyRetention {
     const fn wait(self) -> Option<QBlockReceiveWait> {
         match self {
-            Self::Wait(wait) => Some(wait),
-            Self::None | Self::Static(_) => None,
+            Self::Wait(wait) | Self::Q2NonWait(wait) | Self::Q2ConWait(wait) => Some(wait),
+            Self::None | Self::Q2Non | Self::Q2Con | Self::Static(_) => None,
         }
     }
 
     fn wait_mut(&mut self) -> Option<&mut QBlockReceiveWait> {
         match self {
-            Self::Wait(wait) => Some(wait),
-            Self::None | Self::Static(_) => None,
+            Self::Wait(wait) | Self::Q2NonWait(wait) | Self::Q2ConWait(wait) => Some(wait),
+            Self::None | Self::Q2Non | Self::Q2Con | Self::Static(_) => None,
+        }
+    }
+
+    fn with_wait(self, wait: Option<QBlockReceiveWait>) -> Self {
+        match self {
+            Self::Q2Non | Self::Q2NonWait(_) => wait.map_or(Self::Q2Non, Self::Q2NonWait),
+            Self::Q2Con | Self::Q2ConWait(_) => wait.map_or(Self::Q2Con, Self::Q2ConWait),
+            _ => wait.map_or(Self::None, Self::Wait),
         }
     }
 }
@@ -553,6 +567,10 @@ impl core::fmt::Debug for BodyRetention {
         match self {
             Self::None => f.write_str("None"),
             Self::Wait(wait) => wait.fmt(f),
+            Self::Q2Non => f.write_str("Q2Non"),
+            Self::Q2Con => f.write_str("Q2Con"),
+            Self::Q2NonWait(wait) => f.debug_tuple("Q2NonWait").field(wait).finish(),
+            Self::Q2ConWait(wait) => f.debug_tuple("Q2ConWait").field(wait).finish(),
             Self::Static(bytes) => f
                 .debug_struct("StaticBody")
                 .field("len", &bytes.len())
@@ -1416,8 +1434,10 @@ impl<T: OwnedToken> BlockTransfer<T> {
     /// incomplete and at least one unset bit sits below the highest received
     /// NUM, or at/before the M=0 NUM. Admitted NON Q1 with an exact Size1 also
     /// identifies missing suffixes and entirely empty next sets. The receive
-    /// timer governs report emission, not this query. Q2 and unknown-size calls
-    /// retain the observed-hole rule. Classic Block and outgoing Q-Block return `None`.
+    /// timer governs report emission, not this query. Q2 with a remembered NON
+    /// receive mode and exact Size2 also identifies suffixes and empty next sets.
+    /// Other Q2 and unknown-size calls retain the observed-hole rule. Classic
+    /// Block and outgoing Q-Block return `None`.
     ///
     /// See `knowledge/rfcs/rfc9177.txt`.
     #[must_use]
@@ -1429,12 +1449,16 @@ impl<T: OwnedToken> BlockTransfer<T> {
             return None;
         };
         let max = BlockTransfer::MAX_PAYLOADS as u32;
-        // RFC 9177 sections 4.6 and 7.2: exact Size1 also identifies an
+        // RFC 9177 sections 4.6 and 7.2: exact size also identifies an
         // entirely missing next set after Continue. No future payload bitmap
         // is retained, and reporting stays bounded to the current ten blocks.
-        let known_end = if matches!(self.role, BlockRole::IncomingQBlock1)
-            && matches!(self.request_binding, Some(binding) if binding.non_confirmable)
-        {
+        let known_end = if (matches!(self.role, BlockRole::IncomingQBlock1)
+            && matches!(self.request_binding, Some(binding) if binding.non_confirmable))
+            || (matches!(self.role, BlockRole::IncomingQBlock2)
+                && matches!(
+                    self.q_receive,
+                    BodyRetention::Q2Non | BodyRetention::Q2NonWait(_)
+                )) {
             match self.expected_len {
                 Some(length) => {
                     let size = 1u32 << (self.szx + 4);
@@ -1481,21 +1505,30 @@ impl<T: OwnedToken> BlockTransfer<T> {
         }
     }
 
+    pub(crate) fn remember_q2_receive_mode(&mut self, non_confirmable: bool) {
+        if self.role == BlockRole::IncomingQBlock2 {
+            self.q_receive = match (self.q_receive, non_confirmable) {
+                (BodyRetention::None, true) => BodyRetention::Q2Non,
+                (BodyRetention::None, false) => BodyRetention::Q2Con,
+                (BodyRetention::Wait(wait), true) => BodyRetention::Q2NonWait(wait),
+                (BodyRetention::Wait(wait), false) => BodyRetention::Q2ConWait(wait),
+                (retained, _) => retained,
+            };
+        }
+    }
+
     /// Arm or clear [`QBlockReceiveWait`] from caller `now_ms`.
     ///
     /// Holes reset the wait to [`QBlockReceiveWait::new`]. Without admitted
-    /// NON Q1 Size1 knowledge, a complete window or contiguous prefix clears it.
-    /// Known-size NON Q1 also waits for missing suffixes or an empty next set.
+    /// NON Q1/Q2 size knowledge, a complete window or contiguous prefix clears it.
+    /// Known-size NON transfers also wait for suffixes or an empty next set.
     /// No-op for classic Block and outgoing Q-Block. Does not send.
     pub fn note_q_receive(&mut self, now_ms: u64) {
         if !self.role.is_incoming() || !self.role.is_q_block() {
             return;
         }
-        if self.q_holes().is_some() {
-            self.q_receive = BodyRetention::Wait(QBlockReceiveWait::new(now_ms));
-        } else {
-            self.q_receive = BodyRetention::None;
-        }
+        let wait = self.q_holes().map(|_| QBlockReceiveWait::new(now_ms));
+        self.q_receive = self.q_receive.with_wait(wait);
     }
 
     /// Record a due recover: doubled wait, or `None` when max retransmit is
@@ -1505,7 +1538,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
             .q_receive
             .wait()
             .and_then(|wait| wait.next_attempt(now_ms))?;
-        self.q_receive = BodyRetention::Wait(next);
+        self.q_receive = self.q_receive.with_wait(Some(next));
         Some(next)
     }
 
@@ -2900,6 +2933,70 @@ mod tests {
             t.accept_q_incoming(szx16(31, false), 16, 1024).unwrap();
             assert_eq!(t.q_holes(), None);
         }
+    }
+
+    #[test]
+    fn incoming_q2_known_suffix_after_contiguous_prefix_needs_recovery() {
+        let mut transfer =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, Some(40))
+                .expect("first of three Q2 blocks");
+        transfer.remember_q2_receive_mode(true);
+        #[cfg(feature = "std")]
+        std::println!(
+            "native BlockTransfer bytes={}",
+            core::mem::size_of_val(&transfer)
+        );
+        assert_eq!(
+            transfer.q_holes(),
+            Some((1, 0b0110)),
+            "exact Q Size2 identifies the two missing suffix blocks"
+        );
+    }
+
+    #[test]
+    fn incoming_q2_suffix_mode_is_first_receive_and_unknown_mode_is_unchanged() {
+        let initial =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, Some(40)).unwrap();
+        assert_eq!(initial.q_holes(), None);
+        let mut con = initial;
+        con.remember_q2_receive_mode(false);
+        con.remember_q2_receive_mode(true);
+        con.note_q_receive(1);
+        assert_eq!(con.q_holes(), None);
+        assert_eq!(con.q_receive(), None);
+        let mut non = initial;
+        non.remember_q2_receive_mode(true);
+        non.remember_q2_receive_mode(false);
+        non.note_q_receive(1);
+        assert_eq!(non.q_holes(), Some((1, 0b0110)));
+        assert_eq!(non.q_receive().unwrap().next_timeout_ms(), 4001);
+    }
+
+    #[test]
+    fn incoming_q2_suffix_work_stays_in_current_ten_payload_window() {
+        let mut transfer =
+            BlockTransfer::incoming_q_block2(key(), szx16(0, true), 16, 4096, Some(512)).unwrap();
+        transfer.remember_q2_receive_mode(true);
+        assert_eq!(transfer.q_holes(), Some((1, 0b11_1111_1110)));
+        for num in 1..30 {
+            transfer
+                .accept_q_incoming(szx16(num, true), 16, 4096)
+                .unwrap();
+        }
+        assert_eq!(transfer.window_base(), 30);
+        assert_eq!(transfer.window_mask(), 0);
+        assert_eq!(transfer.q_holes(), Some((30, 0b0011)));
+        transfer
+            .accept_q_incoming(szx16(30, true), 16, 4096)
+            .unwrap();
+        assert_eq!(transfer.q_holes(), Some((31, 0b0010)));
+        transfer
+            .accept_q_incoming(szx16(31, false), 16, 4096)
+            .unwrap();
+        transfer.note_q_receive(5);
+        assert!(transfer.is_complete());
+        assert_eq!(transfer.q_holes(), None);
+        assert_eq!(transfer.q_receive(), None);
     }
 
     #[test]

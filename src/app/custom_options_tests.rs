@@ -1,7 +1,7 @@
 //! Finite public-App checks for borrowed custom option retention.
 extern crate std;
 use super::*;
-use crate::message::{Opt, OptionNumber, decode};
+use crate::message::{Opt, OptionNumber, Token, decode};
 use crate::storage::{AsyncDatagramIo, BodyTag, DatagramIo, DatagramTransport};
 use core::{
     future::Future,
@@ -288,8 +288,8 @@ fn exchange_with_loss(
         }
         progress(server, asynchronous, tick);
         if drop_response && !dropped && server.transport().output.len() > 1 {
-            // An observed hole exercises the supported Q recovery path. Trailing
-            // loss is retained separately as an unresolved reliability gap.
+            // This case exercises an observed hole. The no-custom tests below
+            // separately cover trailing-loss recovery.
             assert!(server.transport_mut().output.pop_front().is_some());
             dropped = true;
         }
@@ -591,4 +591,259 @@ fn custom_observe_deregistration_requires_exact_option_values() {
             assert_eq!(response.payload(), b"small");
         }
     }
+}
+
+// No custom options: this reproduces the independent trailing-only Q2 loss bug.
+fn bare_download(_: Request<'_>) -> Response<'static> {
+    Response::content(&BODY).etag(b"tail")
+}
+fn bare_small(_: Request<'_>) -> Response<'static> {
+    Response::content(b"fresh")
+}
+fn bare_pair(protected: bool) -> (TestApp, TestApp) {
+    let client = App::profile::<Buffers>()
+        .block_wise::<true>()
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .bind(Io::default())
+        .unwrap();
+    let server = App::profile::<Buffers>()
+        .block_wise::<true>()
+        .deterministic_for_tests()
+        .allow_unprotected()
+        .route("tail", get(bare_download))
+        .route("fresh", get(bare_small))
+        .bind(Io::default())
+        .unwrap();
+    #[cfg(feature = "oscore")]
+    let (mut client, mut server) = (client, server);
+    #[cfg(feature = "oscore")]
+    if protected {
+        client.set_oscore(&mut Some(context(&[1], &[2]))).unwrap();
+        server.set_oscore(&mut Some(context(&[2], &[1]))).unwrap();
+    }
+    let _ = protected;
+    (client, server)
+}
+fn forward(source: &mut TestApp, destination: &mut TestApp) {
+    while let Some(wire) = source.transport_mut().output.pop_front() {
+        destination.transport_mut().input.push_back(wire);
+    }
+}
+fn prefix_only(client: &mut TestApp, server: &mut TestApp, asynchronous: bool) {
+    forward(client, server);
+    progress(server, asynchronous, 0);
+    let prefix = server
+        .transport_mut()
+        .output
+        .pop_front()
+        .expect("NUM0 response");
+    assert!(
+        server.transport_mut().output.pop_front().is_some(),
+        "trailing response lost"
+    );
+    assert!(server.transport().output.is_empty());
+    client.transport_mut().input.push_back(prefix);
+    progress(client, asynchronous, 1);
+    let transfer = (0..client.engine().capacities().rx_body_slots.unwrap())
+        .find_map(|index| client.engine().rx_body_transfer(SlotId::from_index(index)))
+        .expect("partial response remains owned");
+    assert_eq!(transfer.filled(), 1024);
+    assert!(!transfer.is_complete());
+    assert_eq!(transfer.expected_len(), Some(2000));
+}
+fn assert_tail_selector(wire: &[u8], protected: bool, token: Token) {
+    fn inspect(parsed: &ParsedMessage<'_>, token: Token) {
+        assert_eq!(parsed.ty(), Type::NonConfirmable);
+        assert_eq!(parsed.code(), Code::GET);
+        assert_eq!(parsed.token(), token);
+        assert_eq!(
+            parsed.uri_path().map(Result::unwrap).collect::<Vec<_>>(),
+            ["tail"]
+        );
+        let blocks = parsed.q_block2().map(Result::unwrap).collect::<Vec<_>>();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            (blocks[0].num(), blocks[0].more(), blocks[0].szx()),
+            (1, false, 6)
+        );
+        assert!(parsed.etag().next().is_none());
+        assert!(parsed.observe().is_none());
+    }
+    let parsed = decode(wire).unwrap();
+    #[cfg(feature = "oscore")]
+    if protected {
+        let mut inspection = context(&[2], &[1]);
+        let mut bytes = [0; 1280];
+        let (inner, _) = inspection.unprotect_request(&parsed, &mut bytes).unwrap();
+        inspect(&inner, token);
+        return;
+    }
+    assert!(!protected);
+    inspect(&parsed, token);
+}
+fn assert_client_reclaimed(client: &mut TestApp) {
+    assert_eq!(client.engine_mut().tx_occupied(), 0);
+    assert_eq!(client.engine_mut().rx_occupied(), 0);
+    for index in 0..client.engine().capacities().rx_body_slots.unwrap() {
+        assert!(
+            client
+                .engine()
+                .rx_body_transfer(SlotId::from_index(index))
+                .is_none()
+        );
+    }
+}
+fn fresh_completion(client: &mut TestApp, server: &mut TestApp, asynchronous: bool, now: u64) {
+    let call = start!(asynchronous, client.get("fresh").non().to(PEER), now).unwrap();
+    forward(client, server);
+    progress(server, asynchronous, now);
+    forward(server, client);
+    progress(client, asynchronous, now + 1);
+    assert_eq!(
+        client.take_response(call).unwrap().unwrap().payload(),
+        b"fresh"
+    );
+    assert_client_reclaimed(client);
+}
+
+#[test]
+fn no_custom_q2_trailing_loss_recovers_on_receive_timeout() {
+    for asynchronous in [false, true] {
+        for protected in [false, cfg!(feature = "oscore")] {
+            std::println!("no-custom Q2 tail async={asynchronous} protected={protected}");
+            let (mut client, mut server) = bare_pair(protected);
+            let call = start!(
+                asynchronous,
+                client.get("tail").non().q_block2().to(PEER),
+                0
+            )
+            .unwrap();
+            prefix_only(&mut client, &mut server, asynchronous);
+            assert_eq!(client.next_timeout(), Some(4001));
+            progress(&mut client, asynchronous, 4000);
+            assert!(
+                client.transport().output.is_empty(),
+                "no premature recovery"
+            );
+            progress(&mut client, asynchronous, 4001);
+            assert_eq!(client.transport().output.len(), 1);
+            assert_tail_selector(
+                client.transport().output.front().unwrap(),
+                protected,
+                call.token(),
+            );
+            forward(&mut client, &mut server);
+            progress(&mut server, asynchronous, 4002);
+            forward(&mut server, &mut client);
+            progress(&mut client, asynchronous, 4003);
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap().body(),
+                Some(BODY.as_slice())
+            );
+            assert_client_reclaimed(&mut client);
+            fresh_completion(&mut client, &mut server, asynchronous, 4004);
+        }
+    }
+}
+
+#[test]
+fn no_custom_q2_prefix_deadline_cancel_and_retry_exhaustion_reclaim() {
+    for asynchronous in [false, true] {
+        for protected in [false, cfg!(feature = "oscore")] {
+            for termination in 0..3 {
+                let (mut client, mut server) = bare_pair(protected);
+                let request = client.get("tail").non().q_block2().to(PEER);
+                let request = if termination == 0 {
+                    request.deadline(3000)
+                } else {
+                    request
+                };
+                let call = start!(asynchronous, request, 0).unwrap();
+                prefix_only(&mut client, &mut server, asynchronous);
+                let (expected, now) = if termination == 0 {
+                    assert_eq!(client.next_timeout(), Some(3000));
+                    progress(&mut client, asynchronous, 3000);
+                    (CallFailure::DeadlineExceeded, 3000)
+                } else if termination == 1 {
+                    assert!(client.cancel(call));
+                    (CallFailure::Cancelled, 1)
+                } else {
+                    let mut now = 1;
+                    for _ in 0..=crate::message::QBlockTransmission::NON_MAX_RETRANSMIT {
+                        now = client.next_timeout().expect("bounded retry wake");
+                        assert!(now < 145000, "Q retry exhaustion precedes NON lifetime");
+                        progress(&mut client, asynchronous, now);
+                        client.transport_mut().output.clear(); // All recovery requests lost.
+                    }
+                    (CallFailure::TimedOut, now)
+                };
+                assert_eq!(client.take_response(call).unwrap().unwrap_err(), expected);
+                assert_client_reclaimed(&mut client);
+                fresh_completion(&mut client, &mut server, asynchronous, now + 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn no_custom_con_q2_prefix_does_not_gain_non_receive_timeout() {
+    for asynchronous in [false, true] {
+        for protected in [false, cfg!(feature = "oscore")] {
+            let (mut client, _) = bare_pair(protected);
+            // A separate CON response keeps the existing CON receive policy.
+            let call = start!(asynchronous, client.get("tail").q_block2().to(PEER), 0).unwrap();
+            let request = client.transport_mut().output.pop_front().unwrap();
+            client.transport_mut().input.push_back(con_prefix_wire(
+                &request,
+                protected,
+                call.token(),
+            ));
+            progress(&mut client, asynchronous, 1);
+            let ack = client
+                .transport_mut()
+                .output
+                .pop_front()
+                .expect("CON response acknowledged");
+            let ack = decode(&ack).unwrap();
+            assert!(ack.is_empty_ack());
+            assert_eq!(ack.message_id(), MessageId::new(700));
+            assert!(client.transport().output.is_empty());
+            assert!(client.next_timeout().is_none_or(|due| due > 4001));
+            progress(&mut client, asynchronous, 4001);
+            assert!(client.transport().output.is_empty());
+            assert!(client.cancel(call));
+            assert_eq!(
+                client.take_response(call).unwrap().unwrap_err(),
+                CallFailure::Cancelled
+            );
+            assert_client_reclaimed(&mut client);
+        }
+    }
+}
+
+fn con_prefix_wire(request_wire: &[u8], protected: bool, token: Token) -> Vec<u8> {
+    let block = BlockValue::new(0, true, 6).unwrap().encode();
+    let size = crate::message::encode_uint(2000);
+    let options = [Opt::etag(b"tail"), Opt::size2(&size), Opt::q_block2(&block)];
+    let message = Message::new(Type::Confirmable, Code::CONTENT, MessageId::new(700))
+        .with_token(token)
+        .with_options(&options)
+        .with_payload(&BODY[..1024]);
+    let mut wire = [0; 1280];
+    #[cfg(feature = "oscore")]
+    if protected {
+        let mut peer = context(&[2], &[1]);
+        let request = decode(request_wire).unwrap();
+        let mut opened = [0; 1280];
+        let (_, reference) = peer.unprotect_request(&request, &mut opened).unwrap();
+        let n = peer
+            .protect_response_with_piv(&message, reference, &mut wire)
+            .unwrap();
+        return wire[..n].to_vec();
+    }
+    let _ = request_wire;
+    assert!(!protected);
+    let n = crate::message::encode(&message, &mut wire).unwrap();
+    wire[..n].to_vec()
 }

@@ -1489,6 +1489,28 @@ impl<S: Storage + BodySlots> Engine<S> {
         Some(transfer)
     }
 
+    /// Remember the first accepted Q-Block2 response's transport mode and arm
+    /// its receive wait. Known-size NON responses recover missing suffixes;
+    /// CON and unspecified modes retain observed-hole recovery. Later packets
+    /// cannot change the mode. Call only after validating and applying the packet.
+    /// Returns `None` when the transfer is absent, is not incoming Q-Block2,
+    /// or cannot be updated.
+    pub fn note_q2_receive(
+        &mut self,
+        id: SlotId,
+        now_ms: u64,
+        ty: crate::message::Type,
+    ) -> Option<BlockTransfer<S::Token>> {
+        let mut transfer = self.storage.rx_body_transfer(id)?;
+        if transfer.role() != BlockRole::IncomingQBlock2 {
+            return None;
+        }
+        transfer.remember_q2_receive_mode(ty == crate::message::Type::NonConfirmable);
+        transfer.note_q_receive(now_ms);
+        self.storage.set_rx_body_transfer(id, transfer).ok()?;
+        Some(transfer)
+    }
+
     /// Outgoing Block1 / Block2 sidecar on `id`.
     #[inline]
     #[must_use]

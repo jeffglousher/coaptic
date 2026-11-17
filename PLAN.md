@@ -15,10 +15,10 @@ effect across a late duplicate, and recovers after explicit Call-capacity
 refusal, cancellation and deadline expiry. This is software datagram-loss
 injection, not installed-device Wi-Fi or physical qualification. Baseline core
 `6d0c1f0` passes 1,235 library and 44 selected recovery integration tests;
-companion `1de100c` passes 91 driver/network/pairing tests with process-local
-Cargo paths selecting this worktree, Rust 1.99.1, and unchanged lockfiles.
-The shared companion junction remains on its original older checkout. The
-integrated test source passes all 1,237 library tests and strict all-target,
+companion `1de100c` passes 91 driver/network/pairing tests against that production
+tree using process-local Cargo paths, Rust 1.99.1, and unchanged lockfiles.
+The shared companion junction remains on its original older checkout. Core
+`d3f6fcd` adds the test fixture and passes all 1,237 library tests and strict all-target,
 all-feature Clippy; the example executes both client modes successfully.
 
 The bounded performance assessment qualifies no new candidate. Historical MCU
@@ -32,16 +32,30 @@ storage. It preserves sorted repeat values through retry, classic/Q block
 continuation, FETCH and Observe; known/critical/zero numbers and retention
 overflow refuse explicitly. No App owner or pool capacity grows. The transient
 builder gains a borrowed slice; future and peak-stack changes are unmeasured.
-The integrated source passes 1,705 all-feature tests including 1,242 library
+Core `b319ce3` passes 1,705 all-feature tests including 1,242 library
 tests, plus 737 no-default library tests. Both example modes execute; Rust 1.89
 all-feature and no-default checks, strict all-feature lint and rustdoc pass.
 
-Its loss fixture also exposes a separate existing Q-Block2 trailing-loss gap
-([#761](https://github.com/jeffglousher/coaptic/issues/761)): a contiguous prefix
-does not arm recovery for a missing suffix. Observed-hole recovery passes; that
-does not repair trailing loss. Reproduce without custom options, preserve
-classic Size2 advisory behavior and existing exact Q-size validation, and check
-NON/CON timing before selecting a bounded fix. This reliability work is next;
+Its loss fixture exposes Q-Block2 trailing loss
+([#761](https://github.com/jeffglousher/coaptic/issues/761)), reproduced without
+custom options on accepted `b319ce3`. The repair uses exact Size2 and the first
+accepted NON response mode to recover a missing suffix after four seconds,
+bounded to the current ten payloads. Timer state retains the mode across reset
+and backoff. CON/unspecified modes keep their existing observed-hole behavior;
+classic Size2 advisory semantics and exact Q-size checks remain unchanged.
+Immediate window Continue, deadlines, cancellation, retry exhaustion and fresh
+work remain supported. Six focused storage/App regressions pass, including
+sync/async and unprotected/OSCORE App cells. An extra mode field grew the native
+body sidecar from 688 to 696 bytes and failed the existing whole-App ceiling;
+that representation is rejected. Reusing the receive-state discriminant keeps
+the native sidecar at 688 bytes, with original capacities and backing retained.
+Independent general correctness/security review finds no remaining defect.
+The integrated source passes 1,711 all-feature tests (1,248 library), 743
+no-default library tests and strict lint in both configurations. Native
+whole-App ceilings pass. The Xtensa OSCORE library check passes with installed
+Rust 1.97.0-nightly; the target layout example still needs an explicit entropy
+backend for its host-only dev dependency, so it supplies no new target-layout
+evidence. This is software recovery proof;
 physical power recovery #333 and credential-touch qualification #365 remain
 unexecuted. No new firmware execution or performance gain is claimed here.
 
