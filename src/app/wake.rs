@@ -70,13 +70,14 @@ where
         // One platform deadline stays armed across this wait. A packet does not
         // clear it, and the same timestamp is not cancelled and inserted again.
         timer.schedule(deadline);
+        let mut protocol = pin!(timer.wait());
         let mut local = pin!(local);
         let mut receive = pin!(self.engine.recv_from_async(&mut self.io));
         core::future::poll_fn(|cx| {
             if local.as_mut().poll(cx).is_ready() {
                 return Poll::Ready(Ok(AppWake::Local));
             }
-            if deadline.is_some() && timer.poll_wait(cx).is_ready() {
+            if deadline.is_some() && protocol.as_mut().poll(cx).is_ready() {
                 return Poll::Ready(Ok(AppWake::Deadline));
             }
             match receive.as_mut().poll(cx) {

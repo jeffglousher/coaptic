@@ -154,31 +154,28 @@ impl<T: AsyncDatagramIo, Clock: FnMut() -> Result<u64, C>, Timer: AsyncTimer, C>
                 changed: false,
             };
             let mut send = pin!(self.io.send(dest, bytes));
-            let mut waiting = false;
-            let result = core::future::poll_fn(|cx| {
-                if !waiting {
-                    match send.as_mut().poll(cx) {
-                        Poll::Ready(result) => {
-                            return Poll::Ready(result.map_err(AsyncIoError::Transport));
-                        }
-                        Poll::Pending => {
-                            if previous.map(|existing| deadline < existing).unwrap_or(true) {
-                                registration.timer.schedule(Some(deadline));
-                                registration.changed = true;
-                            }
-                            waiting = true;
-                        }
+            // A ready send does not create a timer wait. A blocked send owns
+            // its wait future so completion/cancellation unregisters its waker.
+            let first = core::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+            match first {
+                Poll::Ready(result) => result.map_err(AsyncIoError::Transport)?,
+                Poll::Pending => {
+                    if previous.map(|existing| deadline < existing).unwrap_or(true) {
+                        registration.timer.schedule(Some(deadline));
+                        registration.changed = true;
                     }
+                    let mut timeout = pin!(registration.timer.wait());
+                    core::future::poll_fn(|cx| {
+                        if timeout.as_mut().poll(cx).is_ready() {
+                            return Poll::Ready(Err(AsyncIoError::Deadline));
+                        }
+                        send.as_mut()
+                            .poll(cx)
+                            .map(|result| result.map_err(AsyncIoError::Transport))
+                    })
+                    .await?
                 }
-                if registration.timer.poll_wait(cx).is_ready() {
-                    return Poll::Ready(Err(AsyncIoError::Deadline));
-                }
-                send.as_mut()
-                    .poll(cx)
-                    .map(|result| result.map_err(AsyncIoError::Transport))
-            })
-            .await;
-            result?
+            }
         };
         let completed = (self.clock)().map_err(AsyncIoError::ClockAfterSend)?;
         if completed < now {
@@ -821,7 +818,9 @@ fn plain_path<'a, K: crate::message::OwnedToken, const REQUESTS: usize>(
     parsed: &crate::message::ParsedMessage<'a, K>,
     oscore: &oscore::Field<REQUESTS, K>,
 ) -> Option<super::request::Path<'a>> {
-    if oscore::is_active(oscore) || parsed.is_empty() || !parsed.code().is_request() {
+    // Other methods retain full request-option validation, including FETCH's
+    // mandatory Content-Format check before any application handler runs.
+    if oscore::is_active(oscore) || parsed.is_empty() || parsed.code() != Code::GET {
         return None;
     }
     if !matches!(parsed.ty(), Type::Confirmable | Type::NonConfirmable) {

@@ -47,6 +47,73 @@ fn snapshot() -> Response<'static> {
 const PEER: Endpoint = Endpoint::v4([192, 0, 2, 8], 5683);
 
 #[test]
+fn fetch_without_content_format_is_rejected_before_dispatch_in_both_modes() {
+    struct Capture<'a>(&'a Cell<([u8; 64], usize)>);
+    impl DatagramTransport for Capture<'_> {
+        type Error = ();
+    }
+    impl DatagramIo for Capture<'_> {
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            let mut wire = [0; 64];
+            wire[..bytes.len()].copy_from_slice(bytes);
+            self.0.set((wire, bytes.len()));
+            Ok(bytes.len())
+        }
+    }
+    impl AsyncDatagramIo for Capture<'_> {
+        async fn recv(&mut self, _: &mut [u8]) -> Result<(usize, Endpoint), ()> {
+            pending().await
+        }
+        async fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            DatagramIo::send(self, peer, bytes)
+        }
+    }
+    fn forbidden(_: Request<'_>) -> Response<'static> {
+        panic!("invalid FETCH reached application handler")
+    }
+    for asynchronous in [false, true] {
+        let sent = Cell::new(([0; 64], 0));
+        let mut app = App::profile::<profiles::Constrained>()
+            .deterministic_for_tests()
+            .block_wise::<true>()
+            .allow_unprotected()
+            .route("value", fetch(forbidden))
+            .bind(Capture(&sent))
+            .unwrap();
+        let options = [Opt::uri_path("value")];
+        let request = Message::new(Type::Confirmable, Code::FETCH, MessageId::new(41))
+            .with_token(Token::new(&[1, 2]).unwrap())
+            .with_options(&options);
+        let mut wire = [0; 64];
+        let n = encode(&request, &mut wire).unwrap();
+        let rx = app.engine.acquire_rx().unwrap();
+        app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+        if asynchronous {
+            let mut clock = || Ok::<_, ()>(10);
+            let mut timer = Timer;
+            let mut progress = pin!(app.progress_async(10, &mut clock, &mut timer, 100));
+            assert!(matches!(
+                progress
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Ok(()))
+            ));
+        } else {
+            app.poll(10).unwrap();
+        }
+        let (reply, n) = sent.get();
+        let reply = crate::message::decode(&reply[..n]).unwrap();
+        assert_eq!(reply.code(), Code::BAD_REQUEST);
+        assert_eq!(reply.message_id(), MessageId::new(41));
+        assert_eq!(app.engine.rx_occupied(), 0);
+        assert_eq!(app.engine.tx_occupied(), 0);
+    }
+}
+
+#[test]
 fn cancelled_blocked_send_restores_the_borrowed_platform_deadline() {
     struct Scheduled<'a>(&'a Cell<Option<u64>>);
     impl AsyncTimer for Scheduled<'_> {

@@ -18,6 +18,24 @@ strict library lint. ESP timer checks and the ESP32-S3 target build pass.
 These are implementation checks; fresh device functional and matched speed
 qualification remain pending. Preserve the initial failures and corrections.
 
+The first fresh continuation screen completed 192 verified reads across four
+boots in C/Rust/Rust/C order, with no repeated request sends or unexpected API
+disconnects and RSSI -44 to -42 dBm. Async Rust/C geometric mean latency is
+1.40604; the frozen continuation gate fails. Retain this integration unadopted.
+The subsequent exact-candidate diagnostic closes 48 reads and 64 packet spans.
+For the seven-byte response its median receive-return to send-entry wall is
+2,551 us, including 1,583 us of native select-call wall. This differs from the
+earlier zero-select trace: persistent timer arming now outlives each waiter.
+The follow-up makes wait-future cancellation explicit and excludes armed timers
+without a registered waiter from native readiness probes. Core checks pass
+1,245 cases; ESP integration checks pass 95, including actual App ingress
+cancelling the native timer waiter while preserving its deadline. Independent
+general review found a FETCH validation bypass in the carried shortcut; it is
+fixed by limiting that shortcut to GET, with sync/async rejection regressions.
+The follow-up is not measured yet. Trace residuals include preemption and
+observer work; they are not isolated CPU time. Normal firmware was restored
+and verified after every device boot.
+
 The subsequent libcoap-speed investigation has not qualified another library
 implementation. Eight CPU integrations and the exact-H cache32 device
 integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio
