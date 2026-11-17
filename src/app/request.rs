@@ -157,8 +157,18 @@ impl<'a, T: OwnedToken> Request<'a, T> {
         body: Option<&'a [u8]>,
     ) -> Result<Self, PathError> {
         let path = Path::from_message(&message)?;
+        Ok(Self::from_prepared(message, path, peer, body))
+    }
+
+    /// `path` is already checked. Used when the caller classified options once.
+    pub(crate) fn from_prepared(
+        message: ParsedMessage<'a, T>,
+        path: Path<'a>,
+        peer: Endpoint,
+        body: Option<&'a [u8]>,
+    ) -> Self {
         let method = Method::from_code(message.code());
-        Ok(Self {
+        Self {
             message,
             path,
             peer,
@@ -166,7 +176,7 @@ impl<'a, T: OwnedToken> Request<'a, T> {
             method,
             body,
             retained_if_none_match: false,
-        })
+        }
     }
 
     pub(crate) fn with_retained_if_none_match(mut self, retained: bool) -> Self {
@@ -410,6 +420,16 @@ impl<'a> Path<'a> {
             segs: [""; MAX_PATH_SEGMENTS],
             len: 0,
         }
+    }
+
+    /// Segments already rejected when empty, dotted, or too long.
+    pub(crate) fn from_validated(segments: &[&'a str]) -> Self {
+        let mut path = Self::empty();
+        for (i, segment) in segments.iter().enumerate() {
+            path.segs[i] = *segment;
+        }
+        path.len = segments.len() as u8;
+        path
     }
 
     pub(crate) fn from_segments(segments: &[&'a str]) -> Result<Self, PathError> {

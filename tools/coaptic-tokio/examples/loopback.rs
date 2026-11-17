@@ -35,8 +35,8 @@ async fn exchange() -> io::Result<()> {
         .allow_unprotected()
         .bind(Udp::new(client_socket, [0; 1153])?)
         .map_err(error)?;
-    let mut server_timer = clock;
-    let mut client_timer = clock;
+    let mut server_timer = clock.timer();
+    let mut client_timer = clock.timer();
     let serve = async {
         loop {
             server

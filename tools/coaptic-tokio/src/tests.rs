@@ -134,22 +134,79 @@ fn insufficient_scratch_refuses_before_receiving() {
 }
 
 #[test]
-fn timer_uses_shared_epoch_and_cancellation_leaves_it_reusable() {
+fn one_tokio_sleep_moves_and_fires_without_a_second_insert() {
     run(async {
         let clock = Clock::default();
-        let mut timer = clock;
+        let mut timer = clock.timer();
+        let later = clock.now_ms().unwrap() + 1000;
         {
-            let mut wait = pin!(timer.wait_until(clock.now_ms().unwrap() + 1000));
+            let mut wait = pin!(timer.wait_until(later));
             poll_fn(|cx| {
                 assert!(wait.as_mut().poll(cx).is_pending());
                 Poll::Ready(())
             })
             .await;
         }
+        assert_eq!(timer.inserts(), 1);
+        assert_eq!(timer.armed(), Some(later));
+        timer.schedule(Some(later));
+        assert_eq!(timer.inserts(), 1);
         timer.wait_until(0).await;
-        let deadline = clock.now_ms().unwrap() + 5;
+        assert_eq!(timer.inserts(), 1);
+        let started = std::time::Instant::now();
+        let deadline = clock.now_ms().unwrap() + 25;
         timer.wait_until(deadline).await;
+        let elapsed = started.elapsed();
+        assert_eq!(timer.inserts(), 1);
+        assert!(
+            elapsed >= Duration::from_millis(15) && elapsed < Duration::from_millis(200),
+            "deadline moved onto the existing sleep, elapsed {elapsed:?}"
+        );
         assert!(clock.now_ms().unwrap() >= deadline);
+    });
+}
+
+#[test]
+fn outstanding_exchange_keeps_one_sleep_when_a_packet_arrives() {
+    run(async {
+        let clock = Clock::default();
+        let mut timer = clock.timer();
+        let transport = socket::<1153>();
+        let local = transport.local_endpoint().unwrap();
+        let mut app = App::with_resources(SmallDevice::new())
+            .deterministic_for_tests()
+            .allow_unprotected()
+            .bind(transport)
+            .unwrap();
+        let peer = socket::<64>();
+        let now = clock.now_ms().unwrap();
+        app.get("x")
+            .to(peer.local_endpoint().unwrap())
+            .send_async(now, || clock.now_ms(), &mut timer)
+            .await
+            .unwrap();
+        let now = clock.now_ms().unwrap();
+        {
+            let mut wait = pin!(app.wait_async(now, &mut timer, pending()));
+            poll_fn(|cx| {
+                assert!(wait.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            let mut sender = socket::<64>();
+            sender.send(local, &[0x40, 0x01, 0x00, 0x01]).await.unwrap();
+            assert_eq!(wait.await.unwrap(), coaptic::app::AppWake::Ingress);
+        }
+        assert_eq!(timer.inserts(), 1);
+        let armed = timer.armed();
+        assert!(armed.is_some());
+        let now = clock.now_ms().unwrap();
+        {
+            let mut again = pin!(app.wait_async(now, &mut timer, pending()));
+            let _ = poll_fn(|cx| Poll::Ready(again.as_mut().poll(cx))).await;
+        }
+        assert_eq!(timer.inserts(), 1);
+        assert_eq!(timer.armed(), armed);
     });
 }
 
@@ -175,8 +232,8 @@ fn complete_app_blockwise_exchange_uses_callers_runtime() {
             .allow_unprotected()
             .bind(socket::<1153>())
             .unwrap();
-        let mut server_timer = clock;
-        let mut client_timer = clock;
+        let mut server_timer = clock.timer();
+        let mut client_timer = clock.timer();
         let server_work = async {
             loop {
                 server

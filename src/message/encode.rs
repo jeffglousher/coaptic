@@ -225,6 +225,49 @@ pub(super) fn encode_token_iter<'a>(
     Ok(i)
 }
 
+/// Piggybacked reply with a token and payload and no options.
+///
+/// Same wire result as [`encode`] for that shape. The option walk is not run.
+#[inline]
+pub(crate) fn encode_piggyback(
+    buf: &mut [u8],
+    ty: Type,
+    code: Code,
+    id: MessageId,
+    token: &[u8],
+    payload: &[u8],
+) -> Result<usize, EncodeError> {
+    if code.is_empty() {
+        return Err(EncodeError::EmptyMessageNotEmpty);
+    }
+    let (tkl, extension, extension_len) = super::extended::encode_length(token.len())?;
+    let token_start = 4 + extension_len;
+    let header_end = token_start + token.len();
+    let payload_len = if payload.is_empty() {
+        0
+    } else {
+        payload.len() + 1
+    };
+    let Some(end) = header_end.checked_add(payload_len) else {
+        return Err(EncodeError::BufferTooSmall);
+    };
+    if end > buf.len() {
+        return Err(EncodeError::BufferTooSmall);
+    }
+    buf[0] = (1 << 6) | (ty.to_bits() << 4) | tkl;
+    buf[1] = code.as_raw();
+    let mid = id.get().to_be_bytes();
+    buf[2] = mid[0];
+    buf[3] = mid[1];
+    buf[4..token_start].copy_from_slice(&extension[..extension_len]);
+    buf[token_start..header_end].copy_from_slice(token);
+    if !payload.is_empty() {
+        buf[header_end] = 0xFF;
+        buf[header_end + 1..end].copy_from_slice(payload);
+    }
+    Ok(end)
+}
+
 pub(crate) fn write_option(
     buf: &mut [u8],
     mut i: usize,

@@ -8,6 +8,16 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The November 16 continuation verified the normal ESP32 through its encrypted
+API (expected identity, Wi-Fi signal -38 dBm), without recovery flashing.
+The carried timer API required migration of the ESP driver and qualification
+callers. The core now restores borrowed send deadlines on cancellation and
+retains progress metrics on the quiet synchronous path. The corrected tree
+passes 1,244 all-feature library checks, 740 minimal checks, 11 doctests and
+strict library lint. ESP timer checks and the ESP32-S3 target build pass.
+These are implementation checks; fresh device functional and matched speed
+qualification remain pending. Preserve the initial failures and corrections.
+
 The subsequent libcoap-speed investigation has not qualified another library
 implementation. Eight CPU integrations and the exact-H cache32 device
 integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio
@@ -56,13 +66,50 @@ with production source unchanged.
 
 Copy-owner analysis places the large client and control continuation transfers
 on response/empty-control branches; static sizes do not establish ordinary GET
-costs. Next finish the bounded matched task-priority study using accepted core
-and runtime sources, equal Rust/C policy and explicit loop/timer/API progress
-checks before firmware execution. Existing loops already block at bounded work
-intervals; no missing-yield defect or scheduler cause is established. The timer
-prototype remains untimed and on hold. Preserve capacities, original workers,
-security, failures and restoration guards. Builds, smaller frames and host
-throughput alone do not complete the host-and-device speed goal.
+costs. The ESP32 async gap is processing inside one poll, not the select
+bridge. On the measured runtime, `recvmsg` returns and `sendto` is entered
+without a `select`: all 256 spans have zero select calls. `cooperate()` parks
+the root future before `progress_async`, and `Driver::run` calls
+`coaptic_async_wait` only after that poll returns Pending, so both sit in the
+receive-call wall. Sync `app.poll` and libcoap's handler are direct calls;
+libcoap blocks in `coap_io_process` outside the handler, on a 16 KiB worker.
+The measured a85 send polls `Timer::wait_until` before the socket. On ESP that
+call always takes the future branch — `coaptic_async_now`, a waker clone, then
+Pending — and only then `sendto`. That clock FFI is inside the span and is
+absent from sync and from libcoap; it does not account for the 850 µs
+tiny-request gap. The same async machine is about 1.5× sync on Windows, where
+the cache hides it. The 3.1× device span also compares Os/fat async with
+O3/thin sync. Compiling async as O3/thin IRAM left it 1.48× C and 14.25%
+slower than its Os/fat control, with the image 255,984 bytes larger, so that
+poll does not fit the placement that helps sync. A host thread-cycle screen of the two paths that are not in the measured
+firmware, against f222e73, is one Constrained blockwise unprotected CON GET:
+16,384 operations, 512 warmups, eight alternating rounds, two processes per
+arm, CPU0 affinity, `QueryThreadCycleTime`. It is not the 28-cell gate.
+The measured send polls `wait_until` once per operation (16,384 polls). Both
+unmeasured arms poll it zero times. Timer-borrow medians are 1,798 sync and
+2,708.5 async cycles, against 1,862.5 and 2,801.5; the ranges overlap and the
+async/sync median stays 1.51. The plain-request drive median is 1,887 sync and
+2,080 async cycles, async/sync 1.10. All 16 of its async rounds are below all
+16 measured-send async rounds; one of its two processes spreads from 2,084 to
+2,628. The progress future is 12,328 / 12,320 / 9,536 bytes and the App stays
+32,272. That future shrink is a side effect of leaving the full state machine
+for a quiet unprotected reply. The current same-process screen (8,192 operations, 256 warmups, four rounds,
+CPU 0, `QueryThreadCycleTime`) is sync 524–579 cycles and async 626–635.
+Decode plus encode of the same ACK is 159–169 cycles. Building the progress
+future is about 30 timestamp steps; the future is 9,616 bytes and the async
+poll is about 470–510. Inside that poll the time is the packet decode and
+path read, the handler, and the ACK encode. Scope, the dedup read, the dedup
+write, and the ready send are each about one timestamp step. Sync `poll` and
+async progress share that commit. Sync receives once, then reads the datagram
+and commits: the handler, the dedup record, then the send. A miss continues
+the full machine without a second receive. A ready piggybacked ACK is encoded
+without an option walk and sent from those bytes. One due inline dedup row is
+overwritten in place. This screen is not the 16-round two-process comparison. OSCORE, clients, observe, sockets, the executor
+and the device are outside this cell. No device rerun yet. Memory reductions
+stay a side effect. The packet-lifetime batch is already on main as #746.
+Preserve capacities, original workers, security, failures and restoration
+guards. Builds, smaller frames and host throughput alone do not complete the
+host-and-device speed goal.
 
 The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
 CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.

@@ -6,7 +6,11 @@
 
 use async_io::Async;
 use coaptic::{Endpoint, storage::AsyncDatagramIo};
-use std::{io, net::UdpSocket};
+use core::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+use std::{io, net::UdpSocket, time::Duration};
 
 /// Shared monotonic epoch for App timestamps and absolute async timers.
 #[derive(Clone, Copy)]
@@ -23,18 +27,54 @@ impl Clock {
     pub fn now_ms(self) -> io::Result<u64> {
         u64::try_from(self.0.elapsed().as_millis()).map_err(|_| io::ErrorKind::InvalidData.into())
     }
+
+    /// One async-io timer registration sharing this epoch.
+    ///
+    /// `set_at` moves the existing registration. The same deadline does not call it.
+    pub fn timer(self) -> Timer {
+        Timer {
+            epoch: self.0,
+            armed: None,
+            timer: async_io::Timer::never(),
+            updates: 0,
+        }
+    }
 }
 
-impl coaptic::platform::AsyncTimer for Clock {
-    async fn wait_until(&mut self, deadline_ms: u64) {
-        if let Some(deadline) = self
-            .0
-            .checked_add(std::time::Duration::from_millis(deadline_ms))
-        {
-            async_io::Timer::at(deadline).await;
-        } else {
-            core::future::pending::<()>().await;
+/// The App's single async-io deadline.
+pub struct Timer {
+    epoch: std::time::Instant,
+    armed: Option<u64>,
+    timer: async_io::Timer,
+    updates: u32,
+}
+
+impl Timer {
+    /// Times `set_at` or `clear` changed the reactor registration.
+    pub fn updates(&self) -> u32 {
+        self.updates
+    }
+}
+
+impl coaptic::platform::AsyncTimer for Timer {
+    fn armed(&self) -> Option<u64> {
+        self.armed
+    }
+
+    fn schedule(&mut self, deadline_ms: Option<u64>) {
+        if self.armed == deadline_ms {
+            return;
         }
+        self.armed = deadline_ms;
+        self.updates = self.updates.saturating_add(1);
+        match deadline_ms.and_then(|ms| self.epoch.checked_add(Duration::from_millis(ms))) {
+            Some(deadline) => self.timer.set_at(deadline),
+            None => self.timer.clear(),
+        }
+    }
+
+    fn poll_wait(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        Pin::new(&mut self.timer).poll(cx).map(|_| ())
     }
 }
 

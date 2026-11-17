@@ -67,19 +67,16 @@ where
         if deadline.is_some_and(|deadline| deadline <= now_ms) {
             return Ok(AppWake::Ready);
         }
+        // One platform deadline stays armed across this wait. A packet does not
+        // clear it, and the same timestamp is not cancelled and inserted again.
+        timer.schedule(deadline);
         let mut local = pin!(local);
-        let mut timeout = pin!(async {
-            match deadline {
-                Some(deadline) => timer.wait_until(deadline).await,
-                None => core::future::pending().await,
-            }
-        });
         let mut receive = pin!(self.engine.recv_from_async(&mut self.io));
         core::future::poll_fn(|cx| {
             if local.as_mut().poll(cx).is_ready() {
                 return Poll::Ready(Ok(AppWake::Local));
             }
-            if timeout.as_mut().poll(cx).is_ready() {
+            if deadline.is_some() && timer.poll_wait(cx).is_ready() {
                 return Poll::Ready(Ok(AppWake::Deadline));
             }
             match receive.as_mut().poll(cx) {
@@ -139,20 +136,24 @@ mod tests {
     struct Timer<'a> {
         ready: &'a Cell<bool>,
         due: &'a Cell<Option<u64>>,
-        cancelled: &'a Cell<usize>,
+        schedules: &'a Cell<usize>,
     }
     impl AsyncTimer for Timer<'_> {
-        async fn wait_until(&mut self, due: u64) {
-            self.due.set(Some(due));
-            let _registration = Cancel(self.cancelled);
-            core::future::poll_fn(|_| {
-                if self.ready.get() {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            })
-            .await;
+        fn armed(&self) -> Option<u64> {
+            self.due.get()
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            if self.due.get() != deadline {
+                self.schedules.set(self.schedules.get() + 1);
+                self.due.set(deadline);
+            }
+        }
+        fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            if self.ready.get() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
         }
     }
 
@@ -162,11 +163,11 @@ mod tests {
         let polls = Cell::new(0);
         let cancelled = Cell::new(0);
         let due = Cell::new(None);
-        let timer_cancelled = Cell::new(0);
+        let schedules = Cell::new(0);
         let mut timer = Timer {
             ready: &ready,
             due: &due,
-            cancelled: &timer_cancelled,
+            schedules: &schedules,
         };
         let mut app = App::profile::<crate::profiles::Constrained>()
             .deterministic_for_tests()
@@ -190,7 +191,8 @@ mod tests {
         }
         assert_eq!(cancelled.get(), 1);
         assert_eq!(app.engine.rx_occupied(), 0);
-        assert_eq!(timer_cancelled.get(), 0);
+        assert_eq!(schedules.get(), 0);
+        assert_eq!(due.get(), None);
     }
 
     #[test]
@@ -200,11 +202,11 @@ mod tests {
         let polls = Cell::new(0);
         let cancelled = Cell::new(0);
         let due = Cell::new(None);
-        let timer_cancelled = Cell::new(0);
+        let schedules = Cell::new(0);
         let mut timer = Timer {
             ready: &timer_ready,
             due: &due,
-            cancelled: &timer_cancelled,
+            schedules: &schedules,
         };
         let mut app = App::profile::<crate::profiles::Constrained>()
             .deterministic_for_tests()
@@ -242,8 +244,67 @@ mod tests {
         }
         assert_eq!(polls.get(), 1);
         assert_eq!(cancelled.get(), 1);
-        assert_eq!(timer_cancelled.get(), 1);
+        assert_eq!(schedules.get(), 1);
+        assert_eq!(due.get(), Some(deadline));
         assert_eq!(app.engine.rx_occupied(), 0);
+    }
+
+    #[test]
+    fn ingress_keeps_the_deadline_and_the_next_wait_does_not_rearm_it() {
+        let ready = Cell::new(false);
+        let polls = Cell::new(0);
+        let cancelled = Cell::new(0);
+        let due = Cell::new(None);
+        let schedules = Cell::new(0);
+        let mut timer = Timer {
+            ready: &Cell::new(false),
+            due: &due,
+            schedules: &schedules,
+        };
+        let mut app = App::profile::<crate::profiles::Constrained>()
+            .deterministic_for_tests()
+            .block_wise::<false>()
+            .allow_unprotected()
+            .bind(Io {
+                ready: &ready,
+                polls: &polls,
+                cancelled: &cancelled,
+            })
+            .unwrap();
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let tx = app.engine.acquire_tx().unwrap();
+        app.engine
+            .encode_tx(
+                tx,
+                &Message::new(Type::Confirmable, Code::GET, MessageId::new(4)),
+            )
+            .unwrap();
+        app.engine
+            .record_pending_con(tx, peer, MessageId::new(4), 10, 0)
+            .unwrap();
+        let deadline = app.next_timeout().unwrap();
+        {
+            let mut wait = pin!(app.wait_async(10, &mut timer, pending()));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(wait.as_mut().poll(&mut cx).is_pending());
+            ready.set(true);
+            assert!(matches!(
+                wait.as_mut().poll(&mut cx),
+                Poll::Ready(Ok(AppWake::Ingress))
+            ));
+        }
+        assert_eq!(schedules.get(), 1);
+        assert_eq!(due.get(), Some(deadline));
+        assert_eq!(app.engine.rx_occupied(), 1);
+        {
+            let mut wait = pin!(app.wait_async(10, &mut timer, pending()));
+            assert!(matches!(
+                wait.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Ok(AppWake::Ready))
+            ));
+        }
+        assert_eq!(schedules.get(), 1);
+        assert_eq!(due.get(), Some(deadline));
     }
 
     #[test]
@@ -252,11 +313,11 @@ mod tests {
         let polls = Cell::new(0);
         let cancelled = Cell::new(0);
         let due = Cell::new(None);
-        let timer_cancelled = Cell::new(0);
+        let schedules = Cell::new(0);
         let mut timer = Timer {
             ready: &ready,
             due: &due,
-            cancelled: &timer_cancelled,
+            schedules: &schedules,
         };
         let mut app = App::profile::<crate::profiles::Constrained>()
             .deterministic_for_tests()

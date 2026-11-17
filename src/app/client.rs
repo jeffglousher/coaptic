@@ -796,9 +796,9 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
         }
     }
 
-    fn get(&self, call: Call<K>) -> Option<LiveCall<K>> {
-        self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| {
+    fn get(&self, call: Call<K>) -> Option<&LiveCall<K>> {
+        self.rows.iter().find_map(|row| {
+            row.as_ref().filter(|row| {
                 !row.retired && row.call.token == call.token && row.call.peer == call.peer
             })
         })
@@ -1705,8 +1705,9 @@ where
     /// caller's responsibility. The clock must finish in bounded time and use
     /// the same nondecreasing monotonic domain as `now_ms` and later App polling.
     /// The configured request deadline is checked before transport acceptance,
-    /// races every pending send, and is checked again against completion time.
-    /// The timer uses the same monotonic domain and unregisters on cancellation.
+    /// races a send that is still waiting, and is checked again against completion
+    /// time. A ready send does not move the platform deadline. A blocked send
+    /// moves it only when this deadline is earlier, then restores the previous one.
     pub fn send_async<C: 'a>(
         self,
         now_ms: u64,
@@ -1981,6 +1982,8 @@ where
         let prior = refreshing
             .then(|| self.app.lives.get(Call::new(token, dest)))
             .flatten();
+        let prior_observed = prior.and_then(|live| live.observed);
+        let prior_format = prior.and_then(|live| live.observed_format);
         let deadline_ms = match (self.deadline_ms, prior.and_then(|live| live.deadline_ms)) {
             (Some(new), Some(old)) => Some(new.min(old)),
             (new, old) => new.or(old),
@@ -2047,8 +2050,8 @@ where
             echo: self.echo,
             no_response: self.no_response,
             observe,
-            observed: prior.and_then(|live| live.observed),
-            observed_format: prior.and_then(|live| live.observed_format),
+            observed: prior_observed,
+            observed_format: prior_format,
             request_identity,
             deadline_ms,
             q_pace_ms: 0,
@@ -2484,24 +2487,20 @@ mod async_request_tests {
             waker: &'a core::cell::RefCell<Option<Waker>>,
         }
         impl crate::platform::AsyncTimer for ManualTimer<'_> {
-            async fn wait_until(&mut self, deadline: u64) {
-                struct Registration<'a>(&'a core::cell::RefCell<Option<Waker>>);
-                impl Drop for Registration<'_> {
-                    fn drop(&mut self) {
-                        self.0.borrow_mut().take();
-                    }
+            fn armed(&self) -> Option<u64> {
+                self.due.get()
+            }
+            fn schedule(&mut self, deadline: Option<u64>) {
+                self.due.set(deadline);
+            }
+            fn poll_wait(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+                if self.ready.get() {
+                    self.waker.borrow_mut().take();
+                    Poll::Ready(())
+                } else {
+                    *self.waker.borrow_mut() = Some(cx.waker().clone());
+                    Poll::Pending
                 }
-                let _registration = Registration(self.waker);
-                self.due.set(Some(deadline));
-                core::future::poll_fn(|cx| {
-                    if self.ready.get() {
-                        Poll::Ready(())
-                    } else {
-                        *self.waker.borrow_mut() = Some(cx.waker().clone());
-                        Poll::Pending
-                    }
-                })
-                .await;
             }
         }
         for partial_q in [false, true] {
@@ -2590,8 +2589,10 @@ mod async_request_tests {
         };
         let mut due = DueTimer;
         {
+            // The other call's deadline is already due, so this send yields
+            // before it touches the socket.
             let mut send = pin!(app.get("second").to(PEER).non().send_async(
-                10,
+                50,
                 || Ok::<_, ()>(50),
                 &mut due
             ));
@@ -3291,27 +3292,44 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
                 },
             );
             let mut send = core::pin::pin!(send);
-            match deadline {
-                Some(deadline) => {
-                    let mut timeout = core::pin::pin!(timer.wait_until(deadline));
-                    core::future::poll_fn(|cx| {
-                        if timeout.as_mut().poll(cx).is_ready() {
-                            return core::task::Poll::Ready(Err(
-                                if own_deadline == Some(deadline) {
-                                    AsyncCallError::Request(Error::DeadlineElapsed)
-                                } else {
-                                    AsyncCallError::ProgressRequired { at_ms: deadline }
-                                },
-                            ));
+            let previous = timer.armed();
+            let mut waiting = false;
+            let mut tightened = false;
+            let result = core::future::poll_fn(|cx| {
+                if !waiting {
+                    match send.as_mut().poll(cx) {
+                        core::task::Poll::Ready(result) => {
+                            return core::task::Poll::Ready(result.map_err(AsyncCallError::from));
                         }
-                        send.as_mut()
-                            .poll(cx)
-                            .map(|result| result.map_err(AsyncCallError::from))
-                    })
-                    .await
+                        core::task::Poll::Pending => {
+                            if let Some(deadline) = deadline
+                                && previous.map(|existing| deadline < existing).unwrap_or(true)
+                            {
+                                timer.schedule(Some(deadline));
+                                tightened = true;
+                            }
+                            waiting = true;
+                        }
+                    }
                 }
-                None => send.await.map_err(AsyncCallError::from),
+                if let Some(deadline) = deadline
+                    && timer.poll_wait(cx).is_ready()
+                {
+                    return core::task::Poll::Ready(Err(if own_deadline == Some(deadline) {
+                        AsyncCallError::Request(Error::DeadlineElapsed)
+                    } else {
+                        AsyncCallError::ProgressRequired { at_ms: deadline }
+                    }));
+                }
+                send.as_mut()
+                    .poll(cx)
+                    .map(|result| result.map_err(AsyncCallError::from))
+            })
+            .await;
+            if tightened {
+                timer.schedule(previous);
             }
+            result
         }?;
         let observed_ms = match completed.get() {
             Some(now) => now,
@@ -3492,88 +3510,6 @@ where
             Err(e)
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(send_client_block1_async, bound(crate::app::async_server::ProtocolIo), calls(send_staged_client => send_staged_client_async))]
-fn send_client_block1<Mem, T, const REQUESTS: usize>(
-    engine: &mut Engine<Mem>,
-    io: &mut T,
-    ids: &mut AppIds,
-    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
-    now_ms: u64,
-    dest: Endpoint,
-    ty: Type,
-    code: Code,
-    token: Mem::Token,
-    path: &[&str],
-    queries: &[&str],
-    accept: Option<ContentFormat>,
-    payload: &[u8],
-    request_tag: BodyTag,
-    content_format: Option<ContentFormat>,
-    echo: Option<crate::message::Echo>,
-    no_response: Option<crate::message::NoResponse>,
-    if_match: Option<&[u8]>,
-    etag: Option<&[u8]>,
-    if_none_match: bool,
-    q_block1: bool,
-    tx: SlotId,
-    mid: MessageId,
-    controls: &[Opt<'_>],
-) -> Result<Call<Mem::Token>, Error<T::Error>>
-where
-    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
-    T: DatagramIo,
-{
-    let staged = stage_client_block1(
-        engine,
-        io,
-        ids,
-        oscore,
-        now_ms,
-        dest,
-        ty,
-        code,
-        token,
-        path,
-        queries,
-        accept,
-        payload,
-        request_tag,
-        content_format,
-        echo,
-        no_response,
-        if_match,
-        etag,
-        if_none_match,
-        q_block1,
-        tx,
-        mid,
-        controls,
-    )?;
-    let spec = ClientSend {
-        dest,
-        ty,
-        code,
-        token,
-        path,
-        payload,
-        content_format,
-        echo,
-        no_response,
-        accept,
-        request_tag,
-        etag,
-        if_match,
-        if_none_match,
-        queries,
-        q_block1,
-        q_block2: false,
-        block2: None,
-        observe: OutgoingObserve::Off,
-    };
-    send_staged_client(engine, io, ids, oscore, now_ms, staged, &spec)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4409,7 +4345,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[coaptic_io::dual_io(send_followup_async, bound(crate::app::async_server::ProtocolIo), calls(send_client_block1 => send_client_block1_async, super::finish_send => super::finish_send_async))]
+#[coaptic_io::dual_io(send_followup_async, bound(crate::app::async_server::ProtocolIo), calls(send_staged_client => send_staged_client_async, super::finish_send => super::finish_send_async))]
 fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
@@ -4427,26 +4363,16 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
+    enum Prepared {
+        Datagram {
+            tx: SlotId,
+            pending: Option<(u64, MessageId, u32)>,
+        },
+        Upload(StagedClient),
+    }
     let live = lives.get(Call::new(token, peer));
     let ty = recovery_ty.unwrap_or_else(|| live.map(|live| live.ty).unwrap_or(Type::Confirmable));
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
-    let mut opts = OptionsBuilder::<
-        { CLIENT_OPTION_SLOTS + crate::storage::BlockTransfer::MAX_PAYLOADS as usize - 1 },
-    >::new();
-    let accept = live.and_then(|live| live.accept).map(ContentFormat::encode);
-    let no_response = live
-        .and_then(|live| live.no_response)
-        .map(crate::message::NoResponse::encode);
-    let b2 = block2.map(BlockValue::encode);
-    let mut q2 = [encode_uint(0); crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
-    if q_block2.len() > q2.len() {
-        return Err(Error::Message(SlotMessageError::Encode(
-            EncodeError::OptionsFull,
-        )));
-    }
-    for (encoded, block) in q2.iter_mut().zip(q_block2) {
-        *encoded = block.encode();
-    }
     let fetch = live
         .as_ref()
         .filter(|live| live.code == Code::FETCH)
@@ -4455,82 +4381,171 @@ where
             crate::message::decode_with_token::<Mem::Token>(&identity.bytes[..identity.len])
                 .expect("encoded request identity")
         });
-    let cf = live
-        .and_then(|live| live.content_format)
-        .map(ContentFormat::encode);
-    let filled = (|| -> Result<(), EncodeError> {
-        if let Some(live) = live.as_ref() {
-            if let Some(tag) = live.if_match.as_slice() {
-                push_opt(&mut opts, Opt::if_match(tag))?;
+    let prepared = {
+        let mut opts = OptionsBuilder::<
+            { CLIENT_OPTION_SLOTS + crate::storage::BlockTransfer::MAX_PAYLOADS as usize - 1 },
+        >::new();
+        let accept = live.and_then(|live| live.accept).map(ContentFormat::encode);
+        let no_response = live
+            .and_then(|live| live.no_response)
+            .map(crate::message::NoResponse::encode);
+        let b2 = block2.map(BlockValue::encode);
+        let mut q2 = [encode_uint(0); crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
+        if q_block2.len() > q2.len() {
+            return Err(Error::Message(SlotMessageError::Encode(
+                EncodeError::OptionsFull,
+            )));
+        }
+        for (encoded, block) in q2.iter_mut().zip(q_block2) {
+            *encoded = block.encode();
+        }
+        let cf = live
+            .and_then(|live| live.content_format)
+            .map(ContentFormat::encode);
+        let filled = (|| -> Result<(), EncodeError> {
+            if let Some(live) = live.as_ref() {
+                if let Some(tag) = live.if_match.as_slice() {
+                    push_opt(&mut opts, Opt::if_match(tag))?;
+                }
+                if live.if_none_match {
+                    push_opt(&mut opts, Opt::if_none_match())?;
+                }
+                // Missing GET blocks retrieve bytes, rather than revalidate the
+                // original cached response. Other methods retain their selection.
+                if q_block2.is_empty()
+                    && code != Code::GET
+                    && let Some(tag) = live.etag.as_slice()
+                {
+                    push_opt(&mut opts, Opt::etag(tag))?;
+                }
             }
-            if live.if_none_match {
-                push_opt(&mut opts, Opt::if_none_match())?;
+            if let Some(ref encoded) = cf {
+                push_opt(&mut opts, Opt::content_format(encoded))?;
             }
-            // Missing GET blocks retrieve bytes, rather than revalidate the
-            // original cached response. Other methods retain their selection.
-            if q_block2.is_empty()
-                && code != Code::GET
-                && let Some(tag) = live.etag.as_slice()
+            if let Some(live) = live.as_ref() {
+                for segment in live.path.segments() {
+                    push_opt(&mut opts, Opt::uri_path(segment))?;
+                }
+            }
+            if let Some(live) = live.as_ref() {
+                for query in live.queries.values() {
+                    push_opt(&mut opts, Opt::uri_query(query))?;
+                }
+            }
+            if let Some(ref encoded) = accept {
+                push_opt(&mut opts, Opt::accept(encoded))?;
+            }
+            if let Some(ref encoded) = b2 {
+                push_opt(&mut opts, Opt::block2(encoded))?;
+            }
+            for encoded in &q2[..q_block2.len()] {
+                push_opt(&mut opts, Opt::q_block2(encoded))?;
+            }
+            if let Some(ref value) = no_response {
+                push_opt(&mut opts, Opt::no_response(value))?;
+            }
+            if let Some(echo) = live.as_ref().and_then(|live| live.echo.as_ref()) {
+                push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
+            }
+            if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
+                push_opt(&mut opts, Opt::request_tag(tag))?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = filled {
+            return Err(Error::Message(SlotMessageError::Encode(e)));
+        }
+        let mid = ids.next_for(engine, io, now_ms)?;
+        let msg = Message::new(ty, code, mid)
+            .with_token(token)
+            .with_options(opts.as_slice())
+            .with_payload(
+                fetch
+                    .as_ref()
+                    .map(|request| request.payload())
+                    .unwrap_or(&[]),
+            );
+        let Some(tx) = super::admission::ordinary_tx(engine) else {
+            return Err(Error::Saturated);
+        };
+        match super::oscore::encode_request(oscore, peer, engine, tx, &msg) {
+            Ok(_) => {
+                match engine.record_request(tx, peer) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        let _ = engine.release_tx(tx);
+                        return Err(Error::Saturated);
+                    }
+                    Err(e) => {
+                        let _ = engine.release_tx(tx);
+                        return Err(e.into());
+                    }
+                }
+                let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
+                Prepared::Datagram { tx, pending }
+            }
+            Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
+                if code == Code::FETCH =>
             {
-                push_opt(&mut opts, Opt::etag(tag))?;
+                let Some(live) = live else {
+                    let _ = engine.release_tx(tx);
+                    return Err(Error::Saturated);
+                };
+                let mut queries = [""; MAX_PATH_SEGMENTS];
+                let mut count = 0;
+                for query in live.queries.values() {
+                    queries[count] = query;
+                    count += 1;
+                }
+                // Q response selection uses Q-Block1; same-side classic/Q mixing is
+                // forbidden. The existing request tag remains the operation identity.
+                if !q_block2.is_empty() && live.request_tag.is_absent() {
+                    let _ = engine.release_tx(tx);
+                    return Err(Error::Block(BlockTransferError::MissingIdentity));
+                }
+                Prepared::Upload(stage_client_block1(
+                    engine,
+                    io,
+                    ids,
+                    oscore,
+                    now_ms,
+                    peer,
+                    ty,
+                    code,
+                    token,
+                    live.path.segments(),
+                    &queries[..count],
+                    live.accept,
+                    fetch.as_ref().expect("retained FETCH identity").payload(),
+                    live.request_tag,
+                    live.content_format,
+                    live.echo,
+                    live.no_response,
+                    live.if_match.as_slice(),
+                    if q_block2.is_empty() && code != Code::GET {
+                        live.etag.as_slice()
+                    } else {
+                        None
+                    },
+                    live.if_none_match,
+                    !q_block2.is_empty(),
+                    tx,
+                    mid,
+                    opts.as_slice(),
+                )?)
             }
-        }
-        if let Some(ref encoded) = cf {
-            push_opt(&mut opts, Opt::content_format(encoded))?;
-        }
-        if let Some(live) = live.as_ref() {
-            for segment in live.path.segments() {
-                push_opt(&mut opts, Opt::uri_path(segment))?;
-            }
-        }
-        if let Some(live) = live.as_ref() {
-            for query in live.queries.values() {
-                push_opt(&mut opts, Opt::uri_query(query))?;
-            }
-        }
-        if let Some(ref encoded) = accept {
-            push_opt(&mut opts, Opt::accept(encoded))?;
-        }
-        if let Some(ref encoded) = b2 {
-            push_opt(&mut opts, Opt::block2(encoded))?;
-        }
-        for encoded in &q2[..q_block2.len()] {
-            push_opt(&mut opts, Opt::q_block2(encoded))?;
-        }
-        if let Some(ref value) = no_response {
-            push_opt(&mut opts, Opt::no_response(value))?;
-        }
-        if let Some(echo) = live.as_ref().and_then(|live| live.echo.as_ref()) {
-            push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
-        }
-        if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
-            push_opt(&mut opts, Opt::request_tag(tag))?;
-        }
-        Ok(())
-    })();
-    if let Err(e) = filled {
-        return Err(Error::Message(SlotMessageError::Encode(e)));
-    }
-    let mid = ids.next_for(engine, io, now_ms)?;
-    let msg = Message::new(ty, code, mid)
-        .with_token(token)
-        .with_options(opts.as_slice())
-        .with_payload(
-            fetch
-                .as_ref()
-                .map(|request| request.payload())
-                .unwrap_or(&[]),
-        );
-    let Some(tx) = super::admission::ordinary_tx(engine) else {
-        return Err(Error::Saturated);
-    };
-    match super::oscore::encode_request(oscore, peer, engine, tx, &msg) {
-        Ok(_) => {}
-        Err(Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)))
-            if code == Code::FETCH =>
-        {
-            let Some(live) = live else {
+            Err(error) => {
                 let _ = engine.release_tx(tx);
+                return Err(error);
+            }
+        }
+    };
+    match prepared {
+        // The option builder ended with staging. The send keeps the datagram
+        // slot, or the staged upload, and addresses the call row already stored.
+        Prepared::Datagram { tx, pending } => super::finish_send(engine, io, tx, peer, pending)?,
+        Prepared::Upload(staged) => {
+            let Some(live) = live else {
                 return Err(Error::Saturated);
             };
             let mut queries = [""; MAX_PATH_SEGMENTS];
@@ -4539,62 +4554,34 @@ where
                 queries[count] = query;
                 count += 1;
             }
-            // Q response selection uses Q-Block1; same-side classic/Q mixing is
-            // forbidden. The existing request tag remains the operation identity.
-            if !q_block2.is_empty() && live.request_tag.is_absent() {
-                let _ = engine.release_tx(tx);
-                return Err(Error::Block(BlockTransferError::MissingIdentity));
-            }
-            return send_client_block1(
-                engine,
-                io,
-                ids,
-                oscore,
-                now_ms,
-                peer,
+            let spec = ClientSend {
+                dest: peer,
                 ty,
                 code,
                 token,
-                live.path.segments(),
-                &queries[..count],
-                live.accept,
-                fetch.as_ref().expect("retained FETCH identity").payload(),
-                live.request_tag,
-                live.content_format,
-                live.echo,
-                live.no_response,
-                live.if_match.as_slice(),
-                if q_block2.is_empty() && code != Code::GET {
+                path: live.path.segments(),
+                payload: fetch.as_ref().expect("retained FETCH identity").payload(),
+                content_format: live.content_format,
+                echo: live.echo,
+                no_response: live.no_response,
+                accept: live.accept,
+                request_tag: live.request_tag,
+                etag: if q_block2.is_empty() && code != Code::GET {
                     live.etag.as_slice()
                 } else {
                     None
                 },
-                live.if_none_match,
-                !q_block2.is_empty(),
-                tx,
-                mid,
-                opts.as_slice(),
-            )
-            .map(|_| ());
-        }
-        Err(error) => {
-            let _ = engine.release_tx(tx);
-            return Err(error);
+                if_match: live.if_match.as_slice(),
+                if_none_match: live.if_none_match,
+                queries: &queries[..count],
+                q_block1: !q_block2.is_empty(),
+                q_block2: false,
+                block2: None,
+                observe: OutgoingObserve::Off,
+            };
+            send_staged_client(engine, io, ids, oscore, now_ms, staged, &spec).map(|_| ())?;
         }
     }
-    match engine.record_request(tx, peer) {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            let _ = engine.release_tx(tx);
-            return Err(Error::Saturated);
-        }
-        Err(e) => {
-            let _ = engine.release_tx(tx);
-            return Err(e.into());
-        }
-    }
-    let pending = (ty == Type::Confirmable).then_some((now_ms, mid, ids.jitter()));
-    super::finish_send(engine, io, tx, peer, pending)?;
     Ok(())
 }
 

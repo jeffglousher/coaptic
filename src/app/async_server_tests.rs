@@ -5,7 +5,8 @@ use crate::storage::profiles;
 use core::{
     cell::Cell,
     future::pending,
-    task::{Context, Waker},
+    pin::pin,
+    task::{Context, Poll, Waker},
 };
 
 struct Io<'a> {
@@ -33,8 +34,8 @@ impl AsyncDatagramIo for Io<'_> {
 }
 struct Timer;
 impl AsyncTimer for Timer {
-    async fn wait_until(&mut self, _: u64) {
-        pending().await
+    fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
     }
 }
 fn handler(_: Request<'_>) -> Response<'static> {
@@ -44,6 +45,51 @@ fn snapshot() -> Response<'static> {
     Response::content(b"value")
 }
 const PEER: Endpoint = Endpoint::v4([192, 0, 2, 8], 5683);
+
+#[test]
+fn cancelled_blocked_send_restores_the_borrowed_platform_deadline() {
+    struct Scheduled<'a>(&'a Cell<Option<u64>>);
+    impl AsyncTimer for Scheduled<'_> {
+        fn armed(&self) -> Option<u64> {
+            self.0.get()
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            self.0.set(deadline);
+        }
+        fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Pending
+        }
+    }
+    for previous in [None, Some(100), Some(25)] {
+        let armed = Cell::new(previous);
+        let ready = Cell::new(false);
+        let accepted = Cell::new(0);
+        let mut socket = Io {
+            ready: &ready,
+            accepted: &accepted,
+        };
+        let mut timer = Scheduled(&armed);
+        let mut clock = || Ok::<_, ()>(10);
+        let mut transport = ProtocolTransport {
+            io: &mut socket,
+            clock: &mut clock,
+            timer: &mut timer,
+            deadline: 50,
+            completed: 0,
+        };
+        {
+            let mut send = pin!(transport.send(PEER, b"reply"));
+            assert!(
+                send.as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            assert_eq!(armed.get(), Some(previous.unwrap_or(50).min(50)));
+        }
+        assert_eq!(armed.get(), previous);
+        assert_eq!(accepted.get(), 0);
+    }
+}
 
 #[test]
 fn async_transaction_metadata_has_independent_small_device_ceilings() {
@@ -85,13 +131,235 @@ fn async_transaction_metadata_has_independent_small_device_ceilings() {
         let mut clock = || Ok::<_, ()>(0);
         let mut timer = Timer;
         let progress = app.progress_async(0, &mut clock, &mut timer, 100);
+        let progress_bytes = core::mem::size_of_val(&progress);
+        drop(progress);
+        let deadline = app.async_send_deadline(0, 100);
+        let engine_bytes = {
+            let mut io = ProtocolTransport {
+                io: &mut app.io,
+                clock: &mut clock,
+                timer: &mut timer,
+                deadline,
+                completed: 0,
+            };
+            let engine = super::super::poll_engine_async(
+                &mut app.engine,
+                <profiles::Constrained as crate::app::response::AppAssembled<false>>::provider::<
+                    Memory,
+                >(&mut app.assembled),
+                &mut io,
+                &app.site,
+                &mut app.ids,
+                &mut app.inbox,
+                &mut app.lives,
+                &mut app.oscore,
+                &mut app.oscore_checkpoint,
+                None,
+                app.echo_policy,
+                &mut app.dedup_closed,
+                app.full_responses,
+                &mut app.deferred,
+                app.deferred_lifetime_ms,
+                None,
+                0,
+                None,
+                None,
+            );
+            core::mem::size_of_val(&engine)
+        };
+        let send_bytes = {
+            let mut io = ProtocolTransport {
+                io: &mut app.io,
+                clock: &mut clock,
+                timer: &mut timer,
+                deadline,
+                completed: 0,
+            };
+            let job = finish_plain_job(
+                &mut app.engine,
+                &mut io,
+                SlotId::from_index(0),
+                PlainJob {
+                    tx: SlotId::from_index(0),
+                    dest: PEER,
+                    pin_tx: false,
+                    ready_checked: false,
+                },
+            );
+            core::mem::size_of_val(&job)
+        };
+        let cold_bytes = {
+            let mut io = ProtocolTransport {
+                io: &mut app.io,
+                clock: &mut clock,
+                timer: &mut timer,
+                deadline,
+                completed: 0,
+            };
+            let response = Response::content(b"value");
+            let meta = super::super::SendResponse {
+                dest: PEER,
+                ty: Type::Confirmable,
+                mid: MessageId::new(1),
+                token: Token::EMPTY,
+                no_response: crate::message::NoResponse::DEFAULT,
+                block2: None,
+                q_block2: None,
+                q_request: None,
+                block1: None,
+                oscore: oscore::no_request(),
+                request: Code::GET,
+            };
+            let cold = finish_plain_cold(
+                &mut app.engine,
+                &mut app.ids,
+                &mut app.oscore,
+                &mut app.dedup_closed,
+                &mut io,
+                SlotId::from_index(0),
+                meta,
+                &response,
+                false,
+                0,
+            );
+            core::mem::size_of_val(&cold)
+        };
+        let dispatch_bytes = {
+            let mut io = ProtocolTransport {
+                io: &mut app.io,
+                clock: &mut clock,
+                timer: &mut timer,
+                deadline,
+                completed: 0,
+            };
+            let mut checkpoint = None;
+            let dispatch = dispatch_rx_async(
+                &mut app.engine,
+                <profiles::Constrained as crate::app::response::AppAssembled<false>>::provider::<
+                    Memory,
+                >(&mut app.assembled),
+                &mut io,
+                &app.site,
+                &mut app.inbox,
+                &mut app.lives,
+                &mut app.ids,
+                &mut app.oscore,
+                &mut app.oscore_checkpoint,
+                &mut checkpoint,
+                app.echo_policy,
+                &mut app.dedup_closed,
+                app.full_responses,
+                &mut app.deferred,
+                app.deferred_lifetime_ms,
+                None,
+                0,
+                SlotId::from_index(0),
+            );
+            core::mem::size_of_val(&dispatch)
+        };
         std::println!(
-            "Constrained routes1 blockwise=false progress_async future={} local_rx_scratch={} optional_local_rx_scratch={}; future size only, not peak stack or whole RAM",
-            core::mem::size_of_val(&progress),
+            "Constrained routes1 blockwise=false progress_async future={progress_bytes} plain_send={send_bytes} plain_cold={cold_bytes} dispatch_rx={dispatch_bytes} poll_engine={engine_bytes} local_rx_scratch={} optional_local_rx_scratch={}; future size only, not peak stack or whole RAM",
             core::mem::size_of::<<Memory as DatagramSlots>::RxScratch>(),
             core::mem::size_of::<Option<<Memory as DatagramSlots>::RxScratch>>()
         );
+        assert!(send_bytes <= 1024, "plain send suspends {send_bytes} bytes");
+        assert!(
+            progress_bytes <= 12_000,
+            "progress_async reserves {progress_bytes} bytes"
+        );
     }
+}
+
+#[test]
+fn ready_send_does_not_arm_the_platform_timer() {
+    let ready = Cell::new(true);
+    let accepted = Cell::new(0);
+    let armed = Cell::new(0);
+    struct CountingTimer<'a>(&'a Cell<usize>);
+    impl AsyncTimer for CountingTimer<'_> {
+        fn schedule(&mut self, deadline: Option<u64>) {
+            if deadline.is_some() {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Pending
+        }
+    }
+    let mut io = Io {
+        ready: &ready,
+        accepted: &accepted,
+    };
+    let mut clock = || Ok::<u64, ()>(10);
+    let mut timer = CountingTimer(&armed);
+    let mut transport = ProtocolTransport {
+        io: &mut io,
+        clock: &mut clock,
+        timer: &mut timer,
+        deadline: 10_000,
+        completed: 0,
+    };
+    let mut send = pin!(AsyncDatagramIo::send(&mut transport, PEER, b"hi"));
+    assert!(matches!(
+        send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Ok(2))
+    ));
+    assert_eq!(armed.get(), 0);
+    assert_eq!(accepted.get(), 1);
+}
+
+#[test]
+fn waiting_send_arms_one_platform_deadline() {
+    let ready = Cell::new(false);
+    let accepted = Cell::new(0);
+    let armed = Cell::new(0);
+    let timer_ready = Cell::new(false);
+    struct CountingTimer<'a> {
+        armed: &'a Cell<usize>,
+        ready: &'a Cell<bool>,
+    }
+    impl AsyncTimer for CountingTimer<'_> {
+        fn schedule(&mut self, deadline: Option<u64>) {
+            if deadline.is_some() {
+                self.armed.set(self.armed.get() + 1);
+            }
+        }
+        fn poll_wait(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+            if self.ready.get() {
+                Poll::Ready(())
+            } else {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+    let mut io = Io {
+        ready: &ready,
+        accepted: &accepted,
+    };
+    let mut clock = || Ok::<u64, ()>(10);
+    let mut timer = CountingTimer {
+        armed: &armed,
+        ready: &timer_ready,
+    };
+    let mut transport = ProtocolTransport {
+        io: &mut io,
+        clock: &mut clock,
+        timer: &mut timer,
+        deadline: 10_000,
+        completed: 0,
+    };
+    let mut send = pin!(AsyncDatagramIo::send(&mut transport, PEER, b"hi"));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(send.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(armed.get(), 1);
+    assert_eq!(accepted.get(), 0);
+    timer_ready.set(true);
+    assert!(matches!(
+        send.as_mut().poll(&mut cx),
+        Poll::Ready(Err(AsyncIoError::Deadline))
+    ));
+    assert_eq!(accepted.get(), 0);
 }
 
 #[test]
@@ -1110,4 +1378,313 @@ fn cancelled_client_con_ack_through_progress_retires_call_and_rejects_replay() {
         app.take_response(other),
         Some(Err(CallFailure::Cancelled))
     ));
+}
+
+fn plain_hits() -> &'static core::sync::atomic::AtomicUsize {
+    static HITS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    &HITS
+}
+
+fn plain_handler(_: Request<'_>) -> Response<'static> {
+    plain_hits().fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    Response::content(b"value")
+}
+
+#[test]
+fn plain_server_get_answers_once_and_replays_without_the_handler() {
+    fn hits() -> &'static core::sync::atomic::AtomicUsize {
+        static HITS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+        &HITS
+    }
+    fn handler(_: Request<'_>) -> Response<'static> {
+        hits().fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Response::content(b"value")
+    }
+
+    let ready = Cell::new(true);
+    let accepted = Cell::new(0);
+    let last = Cell::new(([0u8; 64], 0usize));
+    struct RecordingIo<'a> {
+        inner: Io<'a>,
+        last: &'a Cell<([u8; 64], usize)>,
+    }
+    impl DatagramTransport for RecordingIo<'_> {
+        type Error = ();
+    }
+    impl AsyncDatagramIo for RecordingIo<'_> {
+        async fn recv(&mut self, bytes: &mut [u8]) -> Result<(usize, Endpoint), ()> {
+            self.inner.recv(bytes).await
+        }
+        async fn send(&mut self, peer: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            let mut wire = [0u8; 64];
+            let n = bytes.len().min(wire.len());
+            wire[..n].copy_from_slice(&bytes[..n]);
+            self.last.set((wire, bytes.len()));
+            self.inner.send(peer, bytes).await
+        }
+    }
+    hits().store(0, core::sync::atomic::Ordering::Relaxed);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .route("value", get(handler))
+        .bind(RecordingIo {
+            inner: Io {
+                ready: &ready,
+                accepted: &accepted,
+            },
+            last: &last,
+        })
+        .unwrap();
+    let token = Token::new(&[9, 8, 7, 6]).unwrap();
+    let path = [Opt::uri_path("value")];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(41))
+        .with_token(token)
+        .with_options(&path);
+    let mut wire = [0u8; 64];
+    let n = encode(&request, &mut wire).unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+    let mut clock = || Ok::<_, ()>(10);
+    let mut timer = Timer;
+    {
+        let mut progress = pin!(app.progress_async(10, &mut clock, &mut timer, 100));
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert_eq!(hits().load(core::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(accepted.get(), 1);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    let (sent, len) = last.get();
+    let ack = crate::message::decode(&sent[..len]).unwrap();
+    assert_eq!(ack.ty(), Type::Acknowledgement);
+    assert_eq!(ack.message_id(), MessageId::new(41));
+    assert_eq!(ack.token(), token);
+    assert_eq!(ack.payload(), b"value");
+
+    let retry = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(retry, &wire[..n], PEER).unwrap();
+    {
+        let mut progress = pin!(app.progress_async(10, &mut clock, &mut timer, 100));
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert_eq!(
+        hits().load(core::sync::atomic::Ordering::Relaxed),
+        1,
+        "dedup replay must not rerun the handler"
+    );
+    assert_eq!(accepted.get(), 2);
+    let (replay, replay_len) = last.get();
+    assert_eq!(&replay[..replay_len], &sent[..len]);
+}
+
+#[test]
+fn plain_server_sync_poll_answers_once_and_replays_without_the_handler() {
+    fn hits() -> &'static core::sync::atomic::AtomicUsize {
+        static HITS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+        &HITS
+    }
+    fn handler(_: Request<'_>) -> Response<'static> {
+        hits().fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Response::content(b"value")
+    }
+
+    let accepted = Cell::new(0usize);
+    let last = Cell::new(([0u8; 64], 0usize));
+    struct SyncIo<'a> {
+        accepted: &'a Cell<usize>,
+        last: &'a Cell<([u8; 64], usize)>,
+    }
+    impl DatagramTransport for SyncIo<'_> {
+        type Error = ();
+    }
+    impl DatagramIo for SyncIo<'_> {
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            let mut wire = [0u8; 64];
+            let n = bytes.len().min(wire.len());
+            wire[..n].copy_from_slice(&bytes[..n]);
+            self.last.set((wire, bytes.len()));
+            self.accepted.set(self.accepted.get() + 1);
+            Ok(bytes.len())
+        }
+    }
+    hits().store(0, core::sync::atomic::Ordering::Relaxed);
+    let mut app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .route("value", get(handler))
+        .bind(SyncIo {
+            accepted: &accepted,
+            last: &last,
+        })
+        .unwrap();
+    let token = Token::new(&[9, 8, 7, 6]).unwrap();
+    let path = [Opt::uri_path("value")];
+    let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(41))
+        .with_token(token)
+        .with_options(&path);
+    let mut wire = [0u8; 64];
+    let n = encode(&request, &mut wire).unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+    app.poll(10).unwrap();
+    assert_eq!(hits().load(core::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(accepted.get(), 1);
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+    let (sent, len) = last.get();
+    let ack = crate::message::decode(&sent[..len]).unwrap();
+    assert_eq!(ack.ty(), Type::Acknowledgement);
+    assert_eq!(ack.message_id(), MessageId::new(41));
+    assert_eq!(ack.token(), token);
+    assert_eq!(ack.payload(), b"value");
+
+    let retry = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(retry, &wire[..n], PEER).unwrap();
+    app.poll(10).unwrap();
+    assert_eq!(
+        hits().load(core::sync::atomic::Ordering::Relaxed),
+        1,
+        "dedup replay must not rerun the handler"
+    );
+    assert_eq!(accepted.get(), 2);
+    let (replay, replay_len) = last.get();
+    assert_eq!(&replay[..replay_len], &sent[..len]);
+}
+
+#[cfg(feature = "std")]
+#[test]
+#[ignore = "release timing for one plain server GET"]
+fn plain_get_sync_versus_async_cost() {
+    use std::time::Instant;
+    const N: u32 = 4_000;
+    const WARMUP: u32 = 200;
+    let path = [Opt::uri_path("value")];
+    let token = Token::new(&[1, 2, 3, 4]).unwrap();
+    let mut wire = [0u8; 64];
+    let prepare = |seq: u32, wire: &mut [u8]| {
+        let request = Message::new(Type::Confirmable, Code::GET, MessageId::new(seq as u16))
+            .with_token(token)
+            .with_options(&path);
+        encode(&request, wire).unwrap()
+    };
+    // Each sample is a new exchange. 247s steps expire the previous dedup row
+    // so the measurement is a fresh GET, not a replay.
+    let at = |seq: u32| 10 + u64::from(seq) * 300_000;
+
+    struct CaptureIo<'a> {
+        accepted: &'a Cell<usize>,
+    }
+    impl DatagramTransport for CaptureIo<'_> {
+        type Error = ();
+    }
+    impl DatagramIo for CaptureIo<'_> {
+        fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
+            Ok(None)
+        }
+        fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            self.accepted.set(self.accepted.get() + 1);
+            Ok(bytes.len())
+        }
+    }
+    impl AsyncDatagramIo for CaptureIo<'_> {
+        async fn recv(&mut self, _: &mut [u8]) -> Result<(usize, Endpoint), ()> {
+            pending().await
+        }
+        async fn send(&mut self, _: Endpoint, bytes: &[u8]) -> Result<usize, ()> {
+            self.accepted.set(self.accepted.get() + 1);
+            Ok(bytes.len())
+        }
+    }
+
+    let accepted = Cell::new(0);
+    let mut sync = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .route("value", get(plain_handler))
+        .bind(CaptureIo {
+            accepted: &accepted,
+        })
+        .unwrap();
+    let mut async_app = App::profile::<profiles::Constrained>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .route("value", get(plain_handler))
+        .bind(CaptureIo {
+            accepted: &accepted,
+        })
+        .unwrap();
+    let now_ms = Cell::new(10u64);
+    let mut clock = || Ok::<_, ()>(now_ms.get());
+    let mut timer = Timer;
+
+    for seq in 0..WARMUP {
+        let n = prepare(seq, &mut wire);
+        let rx = sync.engine.acquire_rx().unwrap();
+        sync.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+        sync.poll(at(seq)).unwrap();
+    }
+    let start = Instant::now();
+    for seq in 0..N {
+        let n = prepare(WARMUP + seq, &mut wire);
+        let rx = sync.engine.acquire_rx().unwrap();
+        sync.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+        sync.poll(at(WARMUP + seq)).unwrap();
+    }
+    let sync_ns = start.elapsed().as_secs_f64() * 1e9 / f64::from(N);
+
+    for seq in 0..WARMUP {
+        let n = prepare(seq, &mut wire);
+        let rx = async_app.engine.acquire_rx().unwrap();
+        async_app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+        let now = at(seq);
+        now_ms.set(now);
+        let mut progress = pin!(async_app.progress_async(now, &mut clock, &mut timer, now + 1_000));
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    let future = async_app.progress_async(10, &mut clock, &mut timer, 1_000);
+    let future_bytes = core::mem::size_of_val(&future);
+    drop(future);
+    let start = Instant::now();
+    for seq in 0..N {
+        let n = prepare(WARMUP + seq, &mut wire);
+        let rx = async_app.engine.acquire_rx().unwrap();
+        async_app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
+        let now = at(WARMUP + seq);
+        now_ms.set(now);
+        let mut progress = pin!(async_app.progress_async(now, &mut clock, &mut timer, now + 1_000));
+        assert!(matches!(
+            progress
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    let async_ns = start.elapsed().as_secs_f64() * 1e9 / f64::from(N);
+    std::println!(
+        "plain GET Constrained blockwise sync {sync_ns:.1} ns/op async {async_ns:.1} ns/op async/sync {:.3} progress_async future {future_bytes} bytes N={N}",
+        async_ns / sync_ns
+    );
 }

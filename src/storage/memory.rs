@@ -604,6 +604,18 @@ where
         })
     }
 
+    fn overwrite_sole_due_inline(
+        &mut self,
+        now_ms: u64,
+        message_id: crate::message::MessageId,
+        endpoint: Endpoint,
+        due_ms: u64,
+        bytes: &[u8],
+    ) -> bool {
+        self.dedup
+            .overwrite_sole_due(now_ms, message_id, endpoint, due_ms, bytes)
+    }
+
     fn insert_dedup(&mut self, entry: DedupEntry) -> Option<SlotId> {
         self.dedup.insert(entry)
     }

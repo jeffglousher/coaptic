@@ -30,7 +30,7 @@ pub async fn serve(
         .bind(Udp::new(socket))
         .map_err(|_| Failure::Bind)?;
     let clock = Clock;
-    let mut timer = clock;
+    let mut timer = clock.deadline();
     loop {
         let now = clock.now_ms().map_err(|_| Failure::Clock)?;
         if app

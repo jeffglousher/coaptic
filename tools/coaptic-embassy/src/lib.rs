@@ -103,11 +103,45 @@ fn deadline_ticks(ms: u64) -> Option<u64> {
     u64::try_from((u128::from(ms) * u128::from(embassy_time::TICK_HZ)).div_ceil(1000)).ok()
 }
 
-impl coaptic::platform::AsyncTimer for Clock {
-    async fn wait_until(&mut self, deadline_ms: u64) {
-        match deadline_ticks(deadline_ms) {
-            Some(ticks) => embassy_time::Timer::at(embassy_time::Instant::from_ticks(ticks)).await,
-            None => core::future::pending().await,
+impl Clock {
+    /// One Embassy timer registration in this time domain.
+    ///
+    /// The same deadline keeps the same [`embassy_time::Timer`]. A different
+    /// deadline replaces it so the next poll programs the compare interrupt.
+    pub fn deadline(self) -> Deadline {
+        Deadline {
+            armed: None,
+            timer: None,
+        }
+    }
+}
+
+/// The App's single Embassy deadline.
+pub struct Deadline {
+    armed: Option<u64>,
+    timer: Option<embassy_time::Timer>,
+}
+
+impl coaptic::platform::AsyncTimer for Deadline {
+    fn armed(&self) -> Option<u64> {
+        self.armed
+    }
+
+    fn schedule(&mut self, deadline_ms: Option<u64>) {
+        if self.armed == deadline_ms {
+            return;
+        }
+        self.armed = deadline_ms;
+        self.timer = deadline_ms.and_then(|ms| {
+            deadline_ticks(ms)
+                .map(|ticks| embassy_time::Timer::at(embassy_time::Instant::from_ticks(ticks)))
+        });
+    }
+
+    fn poll_wait(&mut self, cx: &mut core::task::Context<'_>) -> core::task::Poll<()> {
+        match self.timer.as_mut() {
+            Some(timer) => core::pin::Pin::new(timer).poll(cx),
+            None => core::task::Poll::Pending,
         }
     }
 }

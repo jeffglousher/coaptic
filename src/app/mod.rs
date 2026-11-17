@@ -2162,6 +2162,40 @@ where
     /// Advanced slots / [`Access`](crate::storage::Access) / remaining RST
     /// policy or BERT codecs: [`Self::engine_mut`].
     pub fn poll(&mut self, now_ms: u64) -> Result<(), Error<T::Error>> {
+        // One receive, then the quiet commit. A miss continues below and does
+        // not read the socket again. OSCORE, Echo, and a required checkpoint
+        // stay on the full machine, which still receives exactly once.
+        if self.echo_policy.is_none()
+            && !self.oscore_checkpoint.required()
+            && !oscore::is_active(&self.oscore)
+        {
+            match self.take_quiet_poll(now_ms) {
+                async_server::QuietPoll::Done(result) => return result,
+                async_server::QuietPoll::Miss(recv) => {
+                    return poll_engine(
+                        &mut self.engine,
+                        P::provider::<S>(&mut self.assembled),
+                        &mut self.io,
+                        &self.site,
+                        &mut self.ids,
+                        &mut self.inbox,
+                        &mut self.lives,
+                        &mut self.oscore,
+                        &mut self.oscore_checkpoint,
+                        None,
+                        self.echo_policy,
+                        &mut self.dedup_closed,
+                        self.full_responses,
+                        &mut self.deferred,
+                        self.deferred_lifetime_ms,
+                        None,
+                        now_ms,
+                        None,
+                        Some(recv),
+                    );
+                }
+            }
+        }
         poll_engine(
             &mut self.engine,
             P::provider::<S>(&mut self.assembled),
@@ -2180,6 +2214,7 @@ where
             self.deferred_lifetime_ms,
             None,
             now_ms,
+            None,
             None,
         )
     }
@@ -2224,6 +2259,7 @@ where
             self.deferred_lifetime_ms,
             Some(&mut dispatch),
             now_ms,
+            None,
             None,
         )
     }
@@ -2289,6 +2325,7 @@ where
             None,
             now_ms,
             None,
+            None,
         )
     }
 
@@ -2328,6 +2365,7 @@ where
             Some(&mut dispatch),
             now_ms,
             None,
+            None,
         )
     }
 
@@ -2365,6 +2403,7 @@ where
             self.deferred_lifetime_ms,
             Some(&mut dispatch),
             now_ms,
+            None,
             None,
         )
     }
@@ -2404,6 +2443,7 @@ where
             Some(&mut dispatch),
             now_ms,
             Some(&mut ingress),
+            None,
         )
     }
 
@@ -2723,6 +2763,7 @@ fn poll_engine<
     mut dispatch: Option<&mut AppDispatch<'_, Mem::Token>>,
     now_ms: u64,
     mut ingress: Option<&mut AppIngress<'_>>,
+    prior_recv: Option<Result<Option<SlotId>, crate::storage::DatagramIoError<T::Error>>>,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots + Exchanges + DedupSlots,
@@ -2754,9 +2795,13 @@ where
     }
     expire_request_dedup(engine, dedup_closed, now_ms);
     client::expire_client_exchanges(engine, inbox, lives, oscore, now_ms);
-    let (received, recv_error) = match engine.recv_from(io) {
-        Ok(id) => (id, None),
-        Err(e) => (None, Some(e)),
+    let (received, recv_error) = match prior_recv {
+        Some(Ok(id)) => (id, None),
+        Some(Err(error)) => (None, Some(error)),
+        None => match engine.recv_from(io) {
+            Ok(id) => (id, None),
+            Err(e) => (None, Some(e)),
+        },
     };
     let progress = engine.progress_before_dispatch(now_ms, |rx| !inbox.holds_datagram(rx));
     let mut replacement_error = None;

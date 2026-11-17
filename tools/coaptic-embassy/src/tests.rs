@@ -221,8 +221,8 @@ fn full_app_blockwise_exchange_and_fresh_recovery() {
         .bind(Udp::new(cs))
         .unwrap();
     let clock = Clock;
-    let mut server_timer = clock;
-    let mut client_timer = clock;
+    let mut server_timer = clock.deadline();
+    let mut client_timer = clock.deadline();
     let completed = RefCell::new(0);
     {
         let serve = async {

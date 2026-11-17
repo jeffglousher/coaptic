@@ -99,6 +99,32 @@ impl DedupEntry {
         self
     }
 
+    /// Replace this row's identity and inline replay.
+    ///
+    /// The tail past the new reply is cleared only where a previous reply was
+    /// longer, so a same-sized ACK does not rewrite the whole cache.
+    pub(crate) fn overwrite_inline(
+        &mut self,
+        message_id: MessageId,
+        endpoint: Endpoint,
+        due_ms: u64,
+        bytes: &[u8],
+    ) -> bool {
+        if bytes.is_empty() || bytes.len() > Self::REPLAY_MAX {
+            return false;
+        }
+        let old_len = usize::from(self.replay_len);
+        self.key = DedupKey::new(message_id, endpoint);
+        self.due_ms = due_ms;
+        self.tx_pin = None;
+        self.replay[..bytes.len()].copy_from_slice(bytes);
+        if bytes.len() < old_len {
+            self.replay[bytes.len()..old_len].fill(0);
+        }
+        self.replay_len = bytes.len() as u16;
+        true
+    }
+
     /// Hold occupied TX `id` so App can resend the same ACK bytes.
     ///
     /// Clears inline replay. The caller must not release that TX slot
@@ -182,6 +208,22 @@ pub(crate) trait DedupStore {
     fn lookup(&self, key: DedupKey) -> Option<SlotId>;
     fn remove(&mut self, key: DedupKey) -> bool;
     fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry>;
+
+    /// Reuse the only occupied row when it is due and holds no TX pin.
+    ///
+    /// `false` leaves the table unchanged. Callers then use the generic expire
+    /// and insert path. One same-sized reply does not allocate a fresh
+    /// 256-byte replay row.
+    fn overwrite_sole_due(
+        &mut self,
+        _now_ms: u64,
+        _message_id: MessageId,
+        _endpoint: Endpoint,
+        _due_ms: u64,
+        _bytes: &[u8],
+    ) -> bool {
+        false
+    }
 }
 
 /// Lookup identity for one Observe Interest Table row.
@@ -1097,6 +1139,37 @@ impl<const ENTRIES: usize> DedupStore for DedupTable<ENTRIES> {
 
     fn entry_ref(&self, id: SlotId) -> Option<&DedupEntry> {
         DedupTable::entry_ref(self, id)
+    }
+
+    fn overwrite_sole_due(
+        &mut self,
+        now_ms: u64,
+        message_id: MessageId,
+        endpoint: Endpoint,
+        due_ms: u64,
+        bytes: &[u8],
+    ) -> bool {
+        let mut sole = None;
+        for index in 0..ENTRIES {
+            let id = SlotId::from_index(index);
+            if self.entry_ref(id).is_none() {
+                continue;
+            }
+            if sole.is_some() {
+                return false;
+            }
+            sole = Some(id);
+        }
+        let Some(id) = sole else {
+            return false;
+        };
+        let Some(entry) = self.entries.get_mut(id.index()).and_then(Option::as_mut) else {
+            return false;
+        };
+        if entry.due_ms() == 0 || now_ms < entry.due_ms() || entry.tx_pin().is_some() {
+            return false;
+        }
+        entry.overwrite_inline(message_id, endpoint, due_ms, bytes)
     }
 }
 

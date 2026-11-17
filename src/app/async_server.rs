@@ -2,8 +2,12 @@
 
 use super::*;
 use crate::platform::AsyncTimer;
-use crate::storage::{AsyncDatagramIo, DatagramTransport, Endpoint};
-use core::{future::Future, pin::pin, task::Poll};
+use crate::storage::{AsyncDatagramIo, DatagramIo, DatagramTransport, Endpoint};
+use core::{
+    future::Future,
+    pin::pin,
+    task::{Context, Poll, Waker},
+};
 
 #[cfg(test)]
 #[path = "async_server_tests.rs"]
@@ -95,6 +99,22 @@ pub(crate) struct ProtocolTransport<'a, T, Clock, Timer> {
     pub(crate) completed: u64,
 }
 
+// A blocked send borrows the platform deadline. Restore it on cancellation as
+// well as completion, before another operation reuses the timer.
+struct BorrowedDeadline<'a, T: AsyncTimer> {
+    timer: &'a mut T,
+    previous: Option<u64>,
+    changed: bool,
+}
+
+impl<T: AsyncTimer> Drop for BorrowedDeadline<'_, T> {
+    fn drop(&mut self) {
+        if self.changed {
+            self.timer.schedule(self.previous);
+        }
+    }
+}
+
 impl<T: DatagramTransport, Clock: FnMut() -> Result<u64, C>, Timer, C> DatagramTransport
     for ProtocolTransport<'_, T, Clock, Timer>
 {
@@ -122,18 +142,43 @@ impl<T: AsyncDatagramIo, Clock: FnMut() -> Result<u64, C>, Timer: AsyncTimer, C>
         if now >= self.deadline {
             return Err(AsyncIoError::Deadline);
         }
+        // A ready socket must not move the platform timer. A blocked send
+        // borrows it only when its deadline is earlier, then puts the previous
+        // deadline back. The registration is updated, not dropped.
+        let deadline = self.deadline;
+        let previous = self.timer.armed();
         let accepted = {
-            let mut timeout = pin!(self.timer.wait_until(self.deadline));
+            let mut registration = BorrowedDeadline {
+                timer: self.timer,
+                previous,
+                changed: false,
+            };
             let mut send = pin!(self.io.send(dest, bytes));
-            core::future::poll_fn(|cx| {
-                if timeout.as_mut().poll(cx).is_ready() {
+            let mut waiting = false;
+            let result = core::future::poll_fn(|cx| {
+                if !waiting {
+                    match send.as_mut().poll(cx) {
+                        Poll::Ready(result) => {
+                            return Poll::Ready(result.map_err(AsyncIoError::Transport));
+                        }
+                        Poll::Pending => {
+                            if previous.map(|existing| deadline < existing).unwrap_or(true) {
+                                registration.timer.schedule(Some(deadline));
+                                registration.changed = true;
+                            }
+                            waiting = true;
+                        }
+                    }
+                }
+                if registration.timer.poll_wait(cx).is_ready() {
                     return Poll::Ready(Err(AsyncIoError::Deadline));
                 }
                 send.as_mut()
                     .poll(cx)
                     .map(|result| result.map_err(AsyncIoError::Transport))
             })
-            .await?
+            .await;
+            result?
         };
         let completed = (self.clock)().map_err(AsyncIoError::ClockAfterSend)?;
         if completed < now {
@@ -652,6 +697,67 @@ where
         dispatch: Option<&mut AppDispatch<'_, S::Token>>,
         ingress: Option<&mut AppIngress<'_>>,
     ) -> Result<(), Error<AsyncIoError<T::Error, C>>> {
+        // A quiet unprotected server reply must not resume the full protocol
+        // state machine or scan its timers. Those timers are empty on this
+        // path, and a ready socket never waits on the shortened deadline.
+        let plain_server = checkpoint.is_none()
+            && dispatch.is_none()
+            && ingress.is_none()
+            && self.echo_policy.is_none()
+            && !self.oscore_checkpoint.required()
+            && !oscore::is_active(&self.oscore);
+        if plain_server {
+            let mut io = ProtocolTransport {
+                io: &mut self.io,
+                clock,
+                timer,
+                deadline: deadline_ms,
+                completed: now_ms,
+            };
+            // Read the datagram before any await. The commit below is the only
+            // write: one handler call, one dedup record, then the send.
+            let mut catalog = [];
+            match try_plain_server(
+                &mut self.engine,
+                &self.site,
+                &mut self.ids,
+                &mut self.inbox,
+                &mut self.lives,
+                &mut self.oscore,
+                &mut self.dedup_closed,
+                &mut self.deferred,
+                &mut io,
+                &mut catalog,
+                now_ms,
+                probe_plain_bytes,
+            ) {
+                PlainAttempt::Miss => {}
+                PlainAttempt::Done(result) => return result,
+                PlainAttempt::Parked(rx, job) => {
+                    return finish_plain_job(&mut self.engine, &mut io, rx, job).await;
+                }
+                PlainAttempt::Cold {
+                    rx,
+                    meta,
+                    response,
+                    separate,
+                } => {
+                    return finish_plain_cold(
+                        &mut self.engine,
+                        &mut self.ids,
+                        &mut self.oscore,
+                        &mut self.dedup_closed,
+                        &mut io,
+                        rx,
+                        meta,
+                        &response,
+                        separate,
+                        now_ms,
+                    )
+                    .await;
+                }
+            }
+        }
         let deadline_ms = self.async_send_deadline(now_ms, deadline_ms);
         let mut io = ProtocolTransport {
             io: &mut self.io,
@@ -679,9 +785,817 @@ where
             dispatch,
             now_ms,
             ingress,
+            None,
         )
         .await
     }
+}
+
+enum PlainOnce {
+    Accepted,
+    Pending,
+}
+
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Cold fallback owns a bounded response inline; boxing would allocate on the constrained path"
+)]
+enum PlainAttempt<'a, K: crate::message::OwnedToken, E> {
+    Miss,
+    Done(Result<(), Error<E>>),
+    Parked(SlotId, PlainJob),
+    Cold {
+        rx: SlotId,
+        meta: super::SendResponse<'a, K>,
+        response: Response<'a, K>,
+        separate: bool,
+    },
+}
+
+/// Quiet unprotected request with only a path and query.
+///
+/// Any other option, a discovery path, or a path this walker will not own
+/// returns `None` before dedup or the handler. The full progress machine then
+/// makes that decision, including its 4.00 / 4.02 / 4.04 replies.
+fn plain_path<'a, K: crate::message::OwnedToken, const REQUESTS: usize>(
+    parsed: &crate::message::ParsedMessage<'a, K>,
+    oscore: &oscore::Field<REQUESTS, K>,
+) -> Option<super::request::Path<'a>> {
+    if oscore::is_active(oscore) || parsed.is_empty() || !parsed.code().is_request() {
+        return None;
+    }
+    if !matches!(parsed.ty(), Type::Confirmable | Type::NonConfirmable) {
+        return None;
+    }
+    let mut segs = [""; super::MAX_PATH_SEGMENTS];
+    let mut len = 0usize;
+    for option in parsed.options() {
+        match option.number() {
+            crate::message::OptionNumber::URI_PATH => {
+                let segment = core::str::from_utf8(option.value()).ok()?;
+                if segment.is_empty()
+                    || segment == "."
+                    || segment == ".."
+                    || segment == ".well-known"
+                    || len >= super::MAX_PATH_SEGMENTS
+                {
+                    return None;
+                }
+                segs[len] = segment;
+                len += 1;
+            }
+            crate::message::OptionNumber::URI_QUERY => {}
+            crate::message::OptionNumber::NO_RESPONSE => {
+                if crate::message::NoResponse::from_option(Some(option.value()))
+                    != Some(crate::message::NoResponse::DEFAULT)
+                {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(super::request::Path::from_validated(&segs[..len]))
+}
+
+/// Engine state that is not this one datagram. Independent of the packet bytes.
+fn plain_scope<S, const DEFERRED: usize, const CALLS: usize>(
+    engine: &mut Engine<S>,
+    inbox: &client::ClientInbox<CALLS, S::Token>,
+    lives: &client::ClientLives<CALLS, S::Token>,
+    deferred: &DeferredTable<DEFERRED, S::Token>,
+) -> Option<SlotId>
+where
+    S: AppStorage,
+{
+    if lives.usage().0 != 0 || deferred.rows.iter().any(|row| row.is_some()) {
+        return None;
+    }
+    let rx = sole_plain_rx(engine)?;
+    if inbox.holds_datagram(rx) {
+        return None;
+    }
+    // One occupied RX and an empty TX already meet headroom when both pools
+    // are larger than the reserve. A one-slot pool still belongs to the full
+    // machine, which can refuse instead of running the handler.
+    let caps = engine.capacities();
+    if caps.tx_datagram_slots <= super::admission::TX_HEADROOM
+        || caps.rx_datagram_slots <= super::admission::RX_HEADROOM
+    {
+        return None;
+    }
+    Some(rx)
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn try_plain_server<
+    'cat,
+    IO,
+    E,
+    S,
+    Send,
+    const N: usize,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+>(
+    engine: &mut Engine<S>,
+    site: &Site<N, S::Token>,
+    ids: &mut AppIds,
+    inbox: &mut client::ClientInbox<CALLS, S::Token>,
+    lives: &mut client::ClientLives<CALLS, S::Token>,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
+    dedup_closed: &mut Option<DedupClosed>,
+    deferred: &mut DeferredTable<DEFERRED, S::Token>,
+    io: &mut IO,
+    catalog: &'cat mut [u8],
+    now_ms: u64,
+    mut send: Send,
+) -> PlainAttempt<'cat, S::Token, E>
+where
+    IO: DatagramTransport,
+    S: AppStorage,
+    Send: FnMut(&mut Engine<S>, &mut IO, Endpoint, &[u8]) -> Result<PlainOnce, Error<E>>,
+{
+    // --- Read. Nothing here expires, stores, or sends. ---
+    // Scope does not depend on the bytes. The message id depends on the
+    // bytes. The dedup read depends on that id. That is the only order.
+    let Some(rx) = plain_scope(engine, inbox, lives, deferred) else {
+        return PlainAttempt::Miss;
+    };
+    let peer = match engine.rx_endpoint(rx) {
+        Some(endpoint) => endpoint.physical(),
+        None => return PlainAttempt::Miss,
+    };
+    let mut prefix = [0u8; 128];
+    let prefix_len = {
+        let Some(bytes) = engine.storage().rx_payload(rx) else {
+            return PlainAttempt::Miss;
+        };
+        if bytes.len() > prefix.len() {
+            return PlainAttempt::Miss;
+        }
+        prefix[..bytes.len()].copy_from_slice(bytes);
+        bytes.len()
+    };
+    let Ok(parsed) = crate::message::decode_with_token::<S::Token>(&prefix[..prefix_len]) else {
+        return PlainAttempt::Miss;
+    };
+    let Some(path) = plain_path(&parsed, oscore) else {
+        return PlainAttempt::Miss;
+    };
+    let request_ty = parsed.ty();
+    let mut mid = parsed.message_id();
+    let token = parsed.token();
+    let request_code = parsed.code();
+    let dedup_key = crate::storage::DedupKey::new(mid, peer);
+    // A live row, or a fail-closed record from an insert that could not store
+    // the reply, is the full machine's replay. It ACKs without the handler.
+    if request_ty == Type::Confirmable
+        && let Some(closed) = *dedup_closed
+        && closed.key == dedup_key
+        && (closed.due_ms == 0 || now_ms < closed.due_ms)
+    {
+        return PlainAttempt::Miss;
+    }
+    if engine.lookup_dedup(dedup_key).is_some_and(|id| {
+        engine
+            .dedup_entry_ref(id)
+            .is_some_and(|entry| entry.due_ms() == 0 || now_ms < entry.due_ms())
+    }) {
+        return PlainAttempt::Miss;
+    }
+
+    // --- Commit. Handler once, then the reply bytes, then the socket. ---
+    let mut response = site.dispatch(
+        super::request::Request::from_prepared(parsed, path, peer, None),
+        catalog,
+    );
+    if response.observe_seq().is_some()
+        && let Err(error) = super::apply_observe(
+            engine,
+            now_ms,
+            peer,
+            &mut response,
+            super::ObservePlan::idle(),
+            None,
+            oscore::no_request(),
+        )
+    {
+        let _ = engine.release_rx(rx);
+        return PlainAttempt::Done(Err(error.into()));
+    }
+    if request_ty == Type::NonConfirmable {
+        match ids.next_for::<E, _, _>(engine, io, now_ms) {
+            Ok(issued) => mid = issued,
+            Err(error) => {
+                let _ = engine.release_rx(rx);
+                return PlainAttempt::Done(Err(error));
+            }
+        }
+    }
+    let handoff = response.is_deferred()
+        || response.is_separate()
+        || response.payload().len().saturating_add(64) > S::TX_DATAGRAM_BYTES
+        || !response.has_only_etag_and_format()
+        || response.etag_bytes().is_some()
+        || response.format().is_some()
+        || response.fresh_piv();
+    if handoff {
+        let separate = response.is_separate() && !response.is_deferred();
+        let response = if response.is_deferred() {
+            Response::new(Code::SERVICE_UNAVAILABLE)
+        } else {
+            response
+        };
+        return PlainAttempt::Cold {
+            rx,
+            meta: plain_meta(peer, request_ty, mid, token, request_code),
+            response,
+            separate,
+        };
+    }
+    if let Err(error) = response.validate() {
+        let _ = engine.release_rx(rx);
+        return PlainAttempt::Done(Err(Error::Response(error)));
+    }
+    let wire_ty = match request_ty {
+        Type::Confirmable => Type::Acknowledgement,
+        Type::NonConfirmable => Type::NonConfirmable,
+        Type::Acknowledgement | Type::Reset => {
+            let _ = engine.release_rx(rx);
+            return PlainAttempt::Done(Err(Error::Saturated));
+        }
+    };
+    // One buffer is the record and the datagram. Dedup stores it before the
+    // socket accepts, so a retransmit cannot run the handler again.
+    let mut wire = [0u8; 64];
+    let encoded = crate::message::encode_piggyback(
+        &mut wire,
+        wire_ty,
+        response.code(),
+        mid,
+        token.as_bytes(),
+        response.payload(),
+    );
+    let n = match encoded {
+        Ok(n) => n,
+        Err(EncodeError::BufferTooSmall) => {
+            return PlainAttempt::Cold {
+                rx,
+                meta: plain_meta(peer, request_ty, mid, token, request_code),
+                response,
+                separate: false,
+            };
+        }
+        Err(error) => {
+            let _ = engine.release_rx(rx);
+            return PlainAttempt::Done(Err(Error::Message(SlotMessageError::Encode(error))));
+        }
+    };
+    remember_inline_reply(
+        engine,
+        peer,
+        mid,
+        request_ty,
+        now_ms,
+        request_code,
+        dedup_closed,
+        &wire[..n],
+    );
+    match send(engine, io, peer, &wire[..n]) {
+        Ok(PlainOnce::Accepted) => {
+            let _ = engine.release_rx(rx);
+            PlainAttempt::Done(Ok(()))
+        }
+        Ok(PlainOnce::Pending) => match super::acquire_tx_or_evict(engine) {
+            Some(tx) => match engine.write_tx(tx, &wire[..n], peer) {
+                Ok(_) => PlainAttempt::Parked(
+                    rx,
+                    PlainJob {
+                        tx,
+                        dest: peer,
+                        pin_tx: false,
+                        ready_checked: true,
+                    },
+                ),
+                Err(error) => {
+                    let _ = engine.release_tx(tx);
+                    let _ = engine.release_rx(rx);
+                    PlainAttempt::Done(Err(error.into()))
+                }
+            },
+            None => {
+                let _ = engine.release_rx(rx);
+                PlainAttempt::Done(Err(Error::Saturated))
+            }
+        },
+        Err(error) => {
+            let _ = engine.release_rx(rx);
+            PlainAttempt::Done(Err(error))
+        }
+    }
+}
+
+/// One synchronous receive, then the quiet commit. `Miss` keeps that receive
+/// so the full machine does not read the socket again.
+pub(super) enum QuietPoll<E> {
+    Miss(Result<Option<SlotId>, crate::storage::DatagramIoError<E>>),
+    Done(Result<(), Error<E>>),
+}
+
+impl<
+    P,
+    T: DatagramIo,
+    const N: usize,
+    const BLOCK_WISE: bool,
+    S: AppStorage<Token = P::Token>,
+    const DEFERRED: usize,
+    const CALLS: usize,
+    const REQUESTS: usize,
+    const ASSOCIATIONS: usize,
+> App<P, T, N, BLOCK_WISE, S, DEFERRED, CALLS, REQUESTS, ASSOCIATIONS>
+where
+    P: MemoryLayout<BLOCK_WISE> + AppAssembled<BLOCK_WISE>,
+{
+    pub(super) fn take_quiet_poll(&mut self, now_ms: u64) -> QuietPoll<T::Error> {
+        let recv = self.engine.recv_from(&mut self.io);
+        let mut catalog = [];
+        let attempt = try_plain_server(
+            &mut self.engine,
+            &self.site,
+            &mut self.ids,
+            &mut self.inbox,
+            &mut self.lives,
+            &mut self.oscore,
+            &mut self.dedup_closed,
+            &mut self.deferred,
+            &mut self.io,
+            &mut catalog,
+            now_ms,
+            send_plain_sync,
+        );
+        match attempt {
+            PlainAttempt::Miss => QuietPoll::Miss(recv),
+            PlainAttempt::Done(result) => {
+                if result.is_ok() {
+                    crate::storage::Metrics::inc(&mut self.engine.metrics_mut().progress);
+                    #[cfg(feature = "diagnostics")]
+                    crate::storage::WorkMetrics::add(&mut self.engine.work_metrics_mut().polls, 1);
+                }
+                QuietPoll::Done(quiet_result(result, recv))
+            }
+            PlainAttempt::Parked(rx, job) => {
+                let _ = self.engine.release_tx(job.tx);
+                let _ = self.engine.release_rx(rx);
+                QuietPoll::Done(Err(Error::Saturated))
+            }
+            PlainAttempt::Cold {
+                rx,
+                meta,
+                response,
+                separate,
+            } => {
+                let sent = if separate {
+                    super::send_separate(
+                        &mut self.engine,
+                        &mut self.io,
+                        &mut self.ids,
+                        now_ms,
+                        meta,
+                        &response,
+                        &mut self.oscore,
+                        &mut self.dedup_closed,
+                        false,
+                    )
+                } else {
+                    super::send_response(
+                        &mut self.engine,
+                        &mut self.io,
+                        &mut self.ids,
+                        meta,
+                        &response,
+                        now_ms,
+                        &mut self.oscore,
+                        &mut self.dedup_closed,
+                    )
+                };
+                let _ = self.engine.release_rx(rx);
+                if sent.is_ok() {
+                    crate::storage::Metrics::inc(&mut self.engine.metrics_mut().progress);
+                    #[cfg(feature = "diagnostics")]
+                    crate::storage::WorkMetrics::add(&mut self.engine.work_metrics_mut().polls, 1);
+                }
+                QuietPoll::Done(quiet_result(sent, recv))
+            }
+        }
+    }
+}
+
+fn quiet_result<E>(
+    result: Result<(), Error<E>>,
+    recv: Result<Option<SlotId>, crate::storage::DatagramIoError<E>>,
+) -> Result<(), Error<E>> {
+    match result {
+        Err(error) => Err(error),
+        Ok(()) => match recv {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.into()),
+        },
+    }
+}
+
+fn send_plain_sync<S, T>(
+    engine: &mut Engine<S>,
+    io: &mut T,
+    dest: Endpoint,
+    bytes: &[u8],
+) -> Result<PlainOnce, Error<T::Error>>
+where
+    S: Storage,
+    T: DatagramIo,
+{
+    match io.send(dest, bytes) {
+        Ok(actual) if actual == bytes.len() => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_ok);
+            #[cfg(feature = "diagnostics")]
+            crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().tx_wire_bytes, actual);
+            Ok(PlainOnce::Accepted)
+        }
+        Ok(actual) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            Err(Error::from(crate::storage::DatagramIoError::SendLength {
+                expected: bytes.len(),
+                actual,
+            }))
+        }
+        Err(error) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            Err(Error::from(crate::storage::DatagramIoError::Io(error)))
+        }
+    }
+}
+
+fn plain_meta<K: crate::message::OwnedToken>(
+    peer: Endpoint,
+    request_ty: Type,
+    mid: MessageId,
+    token: K,
+    request_code: Code,
+) -> super::SendResponse<'static, K> {
+    super::SendResponse {
+        dest: peer,
+        ty: request_ty,
+        mid,
+        token,
+        no_response: crate::message::NoResponse::DEFAULT,
+        block2: None,
+        q_block2: None,
+        q_request: None,
+        block1: None,
+        oscore: oscore::no_request(),
+        request: request_code,
+    }
+}
+
+/// Record a confirmable reply before its send.
+///
+/// Reuses one due inline row when that is the whole table. Otherwise expires
+/// due rows and inserts. Either way this is the only dedup write for the reply.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Borrows the existing protocol owners without additional retained storage"
+)]
+fn remember_inline_reply<S>(
+    engine: &mut Engine<S>,
+    dest: Endpoint,
+    mid: MessageId,
+    request_ty: Type,
+    now_ms: u64,
+    request: Code,
+    dedup_closed: &mut Option<DedupClosed>,
+    bytes: &[u8],
+) where
+    S: Storage + DedupSlots,
+{
+    if request_ty != Type::Confirmable || bytes.len() > crate::storage::DedupEntry::REPLAY_MAX {
+        return;
+    }
+    if let Some(closed) = *dedup_closed
+        && closed.due_ms != 0
+        && now_ms >= closed.due_ms
+    {
+        *dedup_closed = None;
+    }
+    let due = super::dedup_due_ms(now_ms);
+    if engine
+        .storage_mut()
+        .overwrite_sole_due_inline(now_ms, mid, dest, due, bytes)
+    {
+        return;
+    }
+    super::expire_request_dedup(engine, dedup_closed, now_ms);
+    let entry = crate::storage::DedupEntry::new(mid, dest)
+        .with_due_ms(due)
+        .with_replay(bytes);
+    let _ = super::note_dedup_store(engine, entry, request, dedup_closed);
+}
+
+/// One readiness probe of an already-encoded reply. `Pending` sent nothing.
+fn probe_plain_bytes<S, T, Clock, Timer, C>(
+    engine: &mut Engine<S>,
+    io: &mut ProtocolTransport<'_, T, Clock, Timer>,
+    dest: Endpoint,
+    bytes: &[u8],
+) -> Result<PlainOnce, Error<AsyncIoError<T::Error, C>>>
+where
+    S: Storage,
+    T: AsyncDatagramIo,
+    Clock: FnMut() -> Result<u64, C>,
+    Timer: AsyncTimer,
+{
+    let now = match (io.clock)() {
+        Ok(now) => now,
+        Err(error) => return Err(plain_io(AsyncIoError::ClockBeforeSend(error))),
+    };
+    if now < io.completed {
+        return Err(plain_io(AsyncIoError::ClockRegressedBeforeSend {
+            previous_ms: io.completed,
+            observed_ms: now,
+        }));
+    }
+    if now >= io.deadline {
+        return Err(plain_io(AsyncIoError::Deadline));
+    }
+    let mut send = pin!(io.io.send(dest, bytes));
+    let accepted = match send.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Pending => return Ok(PlainOnce::Pending),
+        Poll::Ready(Ok(actual)) if actual == bytes.len() => actual,
+        Poll::Ready(Ok(actual)) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            return Err(Error::from(crate::storage::DatagramIoError::SendLength {
+                expected: bytes.len(),
+                actual,
+            }));
+        }
+        Poll::Ready(Err(error)) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            return Err(Error::from(crate::storage::DatagramIoError::Io(
+                AsyncIoError::Transport(error),
+            )));
+        }
+    };
+    let completed = match (io.clock)() {
+        Ok(completed) => completed,
+        Err(error) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            return Err(plain_io(AsyncIoError::ClockAfterSend(error)));
+        }
+    };
+    if completed < now {
+        crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+        return Err(plain_io(AsyncIoError::ClockRegressedAfterSend {
+            previous_ms: now,
+            observed_ms: completed,
+        }));
+    }
+    io.completed = completed;
+    crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_ok);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().tx_wire_bytes, accepted);
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = accepted;
+    Ok(PlainOnce::Accepted)
+}
+
+async fn finish_plain_job<S, T, Clock, Timer, C>(
+    engine: &mut Engine<S>,
+    io: &mut ProtocolTransport<'_, T, Clock, Timer>,
+    rx: SlotId,
+    job: PlainJob,
+) -> Result<(), Error<AsyncIoError<T::Error, C>>>
+where
+    S: AppStorage,
+    T: AsyncDatagramIo,
+    Clock: FnMut() -> Result<u64, C>,
+    Timer: AsyncTimer,
+{
+    let mut owner = RxOwner {
+        engine,
+        rx,
+        armed: true,
+    };
+    let sent = if job.pin_tx {
+        super::send_pinned_tx_async(owner.engine, io, job.tx, job.dest).await
+    } else if !job.ready_checked
+        && let Some(result) = ready_plain_ack(owner.engine, io, job.tx, job.dest)
+    {
+        result
+    } else {
+        super::send::finish_protocol(owner.engine, io, job.tx, job.dest, None).await
+    };
+    let _ = owner.engine.release_rx(rx);
+    owner.disarm();
+    sent
+}
+
+/// Send an already-encoded plain reply when the socket accepts it immediately.
+/// `None` means the socket would block; the caller keeps the TX slot and uses
+/// the normal send future. A `Some` result has already released that slot.
+type PlainSendResult<E, C> = Option<Result<(), Error<AsyncIoError<E, C>>>>;
+
+fn ready_plain_ack<S, T, Clock, Timer, C>(
+    engine: &mut Engine<S>,
+    io: &mut ProtocolTransport<'_, T, Clock, Timer>,
+    tx: SlotId,
+    dest: Endpoint,
+) -> PlainSendResult<T::Error, C>
+where
+    S: AppStorage,
+    T: AsyncDatagramIo,
+    Clock: FnMut() -> Result<u64, C>,
+    Timer: AsyncTimer,
+{
+    if engine.pending_con(tx).is_some() {
+        return None;
+    }
+    let now = match (io.clock)() {
+        Ok(now) => now,
+        Err(error) => {
+            let _ = engine.release_tx(tx);
+            return Some(Err(plain_io(AsyncIoError::ClockBeforeSend(error))));
+        }
+    };
+    if now < io.completed {
+        let _ = engine.release_tx(tx);
+        return Some(Err(plain_io(AsyncIoError::ClockRegressedBeforeSend {
+            previous_ms: io.completed,
+            observed_ms: now,
+        })));
+    }
+    if now >= io.deadline {
+        let _ = engine.release_tx(tx);
+        return Some(Err(plain_io(AsyncIoError::Deadline)));
+    }
+    if let Err(error) = engine.set_tx_endpoint(tx, dest) {
+        let _ = engine.release_tx(tx);
+        return Some(Err(Error::Slot(error)));
+    }
+    let mut context = Context::from_waker(Waker::noop());
+    let polled = engine.poll_send_tx_once(io.io, tx, &mut context);
+    let result = match polled {
+        Poll::Pending => return None,
+        Poll::Ready(result) => result,
+    };
+    let _ = engine.release_tx(tx);
+    let accepted = match result {
+        Ok(len) => len,
+        Err(error) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            let error = match error {
+                crate::storage::DatagramIoError::Io(error) => {
+                    crate::storage::DatagramIoError::Io(AsyncIoError::Transport(error))
+                }
+                crate::storage::DatagramIoError::Slot(error) => {
+                    crate::storage::DatagramIoError::Slot(error)
+                }
+                crate::storage::DatagramIoError::Saturated => {
+                    crate::storage::DatagramIoError::Saturated
+                }
+                crate::storage::DatagramIoError::SendLength { expected, actual } => {
+                    crate::storage::DatagramIoError::SendLength { expected, actual }
+                }
+            };
+            return Some(Err(Error::from(error)));
+        }
+    };
+    let completed = match (io.clock)() {
+        Ok(completed) => completed,
+        Err(error) => {
+            crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+            return Some(Err(plain_io(AsyncIoError::ClockAfterSend(error))));
+        }
+    };
+    if completed < now {
+        crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_fail);
+        return Some(Err(plain_io(AsyncIoError::ClockRegressedAfterSend {
+            previous_ms: now,
+            observed_ms: completed,
+        })));
+    }
+    io.completed = completed;
+    crate::storage::Metrics::inc(&mut engine.metrics_mut().tx_ok);
+    #[cfg(feature = "diagnostics")]
+    crate::storage::WorkMetrics::add(&mut engine.work_metrics_mut().tx_wire_bytes, accepted);
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = accepted;
+    Some(Ok(()))
+}
+
+fn plain_io<E, C>(error: AsyncIoError<E, C>) -> Error<AsyncIoError<E, C>> {
+    Error::Io(crate::storage::DatagramIoError::Io(error))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Cold dispatch borrows the existing protocol owners and transport"
+)]
+async fn finish_plain_cold<S, T, Clock, Timer, C, const REQUESTS: usize>(
+    engine: &mut Engine<S>,
+    ids: &mut AppIds,
+    oscore: &mut oscore::Field<REQUESTS, S::Token>,
+    dedup_closed: &mut Option<DedupClosed>,
+    io: &mut ProtocolTransport<'_, T, Clock, Timer>,
+    rx: SlotId,
+    meta: super::SendResponse<'_, S::Token>,
+    response: &Response<'_, S::Token>,
+    separate: bool,
+    now_ms: u64,
+) -> Result<(), Error<AsyncIoError<T::Error, C>>>
+where
+    S: AppStorage,
+    T: AsyncDatagramIo,
+    Clock: FnMut() -> Result<u64, C>,
+    Timer: AsyncTimer,
+{
+    let mut owner = RxOwner {
+        engine,
+        rx,
+        armed: true,
+    };
+    let sent = if separate {
+        super::send_separate_async(
+            owner.engine,
+            io,
+            ids,
+            now_ms,
+            meta,
+            response,
+            oscore,
+            dedup_closed,
+            false,
+        )
+        .await
+    } else {
+        super::send_response_async(
+            owner.engine,
+            io,
+            ids,
+            meta,
+            response,
+            now_ms,
+            oscore,
+            dedup_closed,
+        )
+        .await
+    };
+    let _ = owner.engine.release_rx(rx);
+    owner.disarm();
+    sent
+}
+
+struct PlainJob {
+    tx: SlotId,
+    dest: Endpoint,
+    pin_tx: bool,
+    /// `ready_plain_ack` already returned `None` for this slot.
+    ready_checked: bool,
+}
+
+fn sole_plain_rx<S>(engine: &mut Engine<S>) -> Option<SlotId>
+where
+    S: Storage + DatagramSlots + ObserveSlots + BodySlots,
+{
+    if engine.rx_occupied() != 1 || engine.tx_occupied() != 0 {
+        return None;
+    }
+    if !engine.storage_mut().observe().is_empty()
+        || engine
+            .storage_mut()
+            .tx_body()
+            .is_some_and(|pool| !pool.is_empty())
+        || engine
+            .storage_mut()
+            .rx_body()
+            .is_some_and(|pool| !pool.is_empty())
+    {
+        return None;
+    }
+    let slots = engine.capacities().rx_datagram_slots;
+    let mut found = None;
+    for index in 0..slots {
+        let id = SlotId::from_index(index);
+        let pool = engine.storage_mut().rx_datagram();
+        if !pool.is_occupied(id) {
+            continue;
+        }
+        if pool.is_pinned(id) {
+            return None;
+        }
+        found = Some(id);
+    }
+    found
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -298,6 +298,20 @@ pub trait DedupSlots {
         false
     }
 
+    /// Reuse one due inline row for a new piggybacked ACK.
+    ///
+    /// `false` must not change rows or pins. App then expires and inserts.
+    fn overwrite_sole_due_inline(
+        &mut self,
+        _now_ms: u64,
+        _message_id: crate::message::MessageId,
+        _endpoint: Endpoint,
+        _due_ms: u64,
+        _bytes: &[u8],
+    ) -> bool {
+        false
+    }
+
     /// Decide whether App must walk the table for expiry.
     ///
     /// `Skip` guarantees no occupied payload is due. Backends that retain a

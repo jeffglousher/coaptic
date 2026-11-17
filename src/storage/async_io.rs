@@ -4,6 +4,8 @@ use super::{
     DatagramIoError, DatagramSlots, Endpoint, Engine, Metrics, PendingCon, PendingCons, SlotError,
     SlotId, Storage,
 };
+use core::pin::pin;
+use core::task::Poll;
 
 /// Executor-neutral transport for complete datagrams, without `std` or allocation.
 ///
@@ -237,6 +239,46 @@ impl<S: Storage + DatagramSlots> Engine<S> {
                 Err(error)
             }
         }
+    }
+
+    /// Poll one occupied TX send at most once. `Pending` sends nothing and
+    /// leaves the slot unchanged. Completion updates the same counters as
+    /// [`Self::send_tx_async`].
+    pub(crate) fn poll_send_tx_once<T: AsyncDatagramIo>(
+        &mut self,
+        io: &mut T,
+        id: SlotId,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<Result<usize, DatagramIoError<T::Error>>> {
+        let polled = match self.tx_endpoint(id) {
+            None => {
+                return Poll::Ready(Err(DatagramIoError::Slot(SlotError::NotOccupied)));
+            }
+            Some(dest) => match self.access_tx(id) {
+                Err(error) => {
+                    return Poll::Ready(Err(DatagramIoError::Slot(error)));
+                }
+                Ok(access) => {
+                    let bytes = access.as_bytes();
+                    let expected = bytes.len();
+                    let mut send = pin!(io.send(dest.physical(), bytes));
+                    match send.as_mut().poll(cx) {
+                        Poll::Pending => None,
+                        Poll::Ready(result) => Some((expected, result)),
+                    }
+                }
+            },
+        };
+        let Some((expected, result)) = polled else {
+            return Poll::Pending;
+        };
+        Poll::Ready(result.map_err(DatagramIoError::Io).and_then(|actual| {
+            if actual == expected {
+                Ok(actual)
+            } else {
+                Err(DatagramIoError::SendLength { expected, actual })
+            }
+        }))
     }
 }
 

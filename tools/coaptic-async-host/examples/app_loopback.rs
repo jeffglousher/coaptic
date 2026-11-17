@@ -42,8 +42,8 @@ fn main() {
             core::mem::size_of_val(&server),
             core::mem::size_of_val(&client)
         );
-        let mut server_timer = clock;
-        let mut client_timer = clock;
+        let mut server_timer = clock.timer();
+        let mut client_timer = clock.timer();
         let serving = async {
             loop {
                 server
