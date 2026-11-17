@@ -9,8 +9,9 @@ it is not silently treated as finished software work.
 ## Current work
 
 The November 16/17 continuation verified normal ESP firmware without recovery
-flashing. Repair the companion's current `MemoryProfile::ResidentRxScratch`
-binding and validate accepted core main on the device. Keep the accepted timer
+flashing. The companion's current `MemoryProfile::ResidentRxScratch` binding
+is repaired: 91 integration checks, target/SDK builds and 48 device reads across
+both client modes pass; normal firmware is restored and verified. Keep the accepted timer
 API/runtime: the experimental dispatch and scheduled-timer integrations all
 fail their CPU preservation gates and remain unadopted. Fresh host comparisons
 close 84,000 reads with zero failures, but their speed wins do not override the

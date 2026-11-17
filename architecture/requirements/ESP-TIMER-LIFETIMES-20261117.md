@@ -98,3 +98,32 @@ experimental branch, source commitments, raw failures and source-matched peer
 comparisons. The faster-than-libcoap goal remains open. A future optimization
 needs a distinct mechanism and evidence across supported workloads; avoid another
 cache-size rerun or the unchanged rejected quiet-path integration.
+
+## Completed host comparison and selected compatibility fix
+
+Five fresh independently spaced loopback windows close 84,000 measured reads
+without request or warmup failures. Across 18 unprotected CON/NON workloads
+(64/1,024/65,536 bytes and concurrency 1/4/16), geometric mean completion-rate/C
+ratios are 1.55635 Coaptic sync/spin, 1.30014 Coaptic Mio, 1.20454 Coaptic async,
+1.34698 coap-lite codec fixture, 0.81251 coap-rs and 0.09741 aiocoap. The C
+reference is 1.0. The codec fixture has narrower behavior. These are closed-loop
+workload comparisons, not throughput ceilings or full service-capability parity.
+They measure rejected core `0d31cbc` with fixture `130683f` and Rust 1.99.0,
+separate from the Rust 1.99.1 CPU cohorts. Do not relabel them as selected-source
+results or infer ESP32 behavior from Windows loopback.
+
+The selected companion repair is one missing associated-type binding in its
+`LoopbackConstrained` profile: inherit `ResidentRxScratch` from Constrained,
+as it already does for the other scratch and pool types. Accepted production
+core and runtime source remain unchanged. Companion `12fdc73` against core
+`3b62f05` passes 91 network/pairing/security-state checks and the ESP32-S3 target
+archive/SDK build. That exact async server image completes 48 verified reads
+across synchronous and asynchronous Windows clients. Normal firmware is restored
+and its encrypted API identity verified afterward. This is functional evidence,
+not a new peer-speed qualification or long-term Wi-Fi stability claim.
+
+The [portable vectors and verifier](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/esp-timer-lifetime-20261117)
+retain all failed CPU cohorts and Wi-Fi screens, host request vectors and exact
+source/image hashes. Private firmware/configuration and encrypted API captures
+remain with their owner. The verifier recomputes points and failed guards from
+the complete retained numeric vectors without rerunning an unchanged hypothesis.
