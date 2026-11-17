@@ -65,18 +65,21 @@ impl Reason {
             Error::Identity(_) => Self::Identity,
             Error::DeadlineElapsed => Self::Deadline,
             Error::Backoff { .. } => Self::Backoff,
-            Error::Saturated | Error::ObserveRequestTooLarge | Error::FetchRequestTooLarge => {
-                Self::Capacity
-            }
+            Error::Saturated
+            | Error::ObserveRequestTooLarge
+            | Error::FetchRequestTooLarge
+            | Error::CustomRequestTooLarge => Self::Capacity,
             Error::Io(DatagramIoError::Saturated) => Self::Capacity,
             Error::Io(DatagramIoError::Slot(_)) | Error::Slot(_) => Self::LocalState,
             Error::Io(_) => Self::Transport,
             Error::Message(SlotMessageError::TokenCapacity(_))
+            | Error::Message(SlotMessageError::Encode(EncodeError::OptionsFull))
             | Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall)) => {
                 Self::Capacity
             }
             Error::Message(SlotMessageError::Slot(_)) => Self::LocalState,
             Error::Message(_) => Self::Protocol,
+            Error::CustomOptionNotAllowed(_) => Self::Unsupported,
             Error::Block(error) => Self::from_block(error),
             Error::Response(
                 super::ResponseError::PayloadTruncated

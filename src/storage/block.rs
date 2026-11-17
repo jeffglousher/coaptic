@@ -743,10 +743,9 @@ impl<T: OwnedToken> BlockTransfer<T> {
             return Err(BlockTransferError::IdentityMismatch);
         }
         let mut selected = OptionsBuilder::<{ BlockTransfer::MAX_PAYLOADS as usize + 2 }>::new();
-        for option in options
-            .iter()
-            .filter(|o| matches!(o.number(), N::OBSERVE | N::BLOCK2 | N::Q_BLOCK2))
-        {
+        for option in options.iter().filter(|o| {
+            !o.number().is_known() || matches!(o.number(), N::OBSERVE | N::BLOCK2 | N::Q_BLOCK2)
+        }) {
             selected
                 .push(*option)
                 .map_err(|_| BlockTransferError::Overflow)?;
