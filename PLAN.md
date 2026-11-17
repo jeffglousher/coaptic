@@ -8,6 +8,17 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The November 16/17 continuation verified normal ESP firmware without recovery
+flashing. Repair the companion's current `MemoryProfile::ResidentRxScratch`
+binding and validate accepted core main on the device. Keep the accepted timer
+API/runtime: the experimental dispatch and scheduled-timer integrations all
+fail their CPU preservation gates and remain unadopted. Fresh host comparisons
+close 84,000 reads with zero failures, but their speed wins do not override the
+CPU failures or the ESP Wi-Fi speed gap. Preserve the
+[source commitments, mechanisms and failed decisions](architecture/requirements/ESP-TIMER-LIFETIMES-20261117.md)
+and raw evidence; do not rerun unchanged failed sources or claim the broader
+faster-than-libcoap goal complete.
+
 The subsequent libcoap-speed investigation has not qualified another library
 implementation. Eight CPU integrations and the exact-H cache32 device
 integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio
