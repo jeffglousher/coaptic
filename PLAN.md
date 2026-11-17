@@ -32,9 +32,25 @@ without a registered waiter from native readiness probes. Core checks pass
 cancelling the native timer waiter while preserving its deadline. Independent
 general review found a FETCH validation bypass in the carried shortcut; it is
 fixed by limiting that shortcut to GET, with sync/async rejection regressions.
-The follow-up is not measured yet. Trace residuals include preemption and
-observer work; they are not isolated CPU time. Normal firmware was restored
-and verified after every device boot.
+The follow-up diagnostic closes 64 spans with no native select calls. Two
+fairness delays remain; the seven-byte median wall span falls from 2,551 to
+844 us. Trace residuals include preemption and observer work; these are not
+isolated CPU measurements. Its fresh clean cache16 screen completes 192 reads
+in Rust/C/C/Rust order, with no repeated sends or unexpected disconnects and
+RSSI -46 to -45 dBm. Rust/C latency is 1.04366 overall, so the unchanged speed
+gate still fails. A separate cache32 C/Rust/Rust/C screen completes another
+192 reads with no repeated sends or unexpected disconnects, RSSI -45 to -44
+dBm, but a 1.24687 ratio. Reject the extra cache reservation for this candidate;
+preserve both failed cohorts and do not pool them or claim an isolated RTT gain.
+Normal firmware was restored and verified after every device boot.
+
+The scheduled-timer primitives are now required: a legacy `wait_until`-only
+adapter must fail at compile time instead of silently losing App deadlines.
+Production adapters already implement the primitives; migrate test clocks
+explicitly and retain cancellation/deadline regression checks. This contract
+guard does not itself claim a new runtime improvement. The quiet request
+implementation remains unqualified for adoption until the integrated CPU
+and host/device preservation gates are satisfied.
 
 The subsequent libcoap-speed investigation has not qualified another library
 implementation. Eight CPU integrations and the exact-H cache32 device

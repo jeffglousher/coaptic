@@ -19,25 +19,29 @@
 /// the executor. Registration storage belongs to the platform resource budget.
 /// A new board supplies this trait and [`crate::storage::AsyncDatagramIo`];
 /// it does not add a second scheduler inside App.
+///
+/// Implement all three scheduling primitives. Overriding only `wait_until`
+/// cannot serve App's separate schedule-and-wait operations.
+///
+/// ```compile_fail
+/// use coaptic::platform::AsyncTimer;
+/// struct LegacyTimer;
+/// impl AsyncTimer for LegacyTimer {
+///     async fn wait_until(&mut self, _: u64) {}
+/// }
+/// ```
 #[allow(async_fn_in_trait)]
 pub trait AsyncTimer {
     /// Deadline currently armed, if any.
-    fn armed(&self) -> Option<u64> {
-        None
-    }
+    fn armed(&self) -> Option<u64>;
 
     /// Arm `deadline_ms`, move the armed deadline, or disarm when `None`.
     ///
     /// The same value is not removed and inserted again.
-    fn schedule(&mut self, deadline_ms: Option<u64>) {
-        let _ = deadline_ms;
-    }
+    fn schedule(&mut self, deadline_ms: Option<u64>);
 
     /// Poll the armed deadline without changing it.
-    fn poll_wait(&mut self, cx: &mut core::task::Context<'_>) -> core::task::Poll<()> {
-        let _ = cx;
-        core::task::Poll::Pending
-    }
+    fn poll_wait(&mut self, cx: &mut core::task::Context<'_>) -> core::task::Poll<()>;
 
     /// Suspend until the armed deadline, without allocating in the Coaptic core.
     async fn wait(&mut self) {

@@ -139,7 +139,8 @@ impl coaptic::storage::AsyncDatagramIo for Io {
         DatagramIo::send(self, peer, bytes)
     }
 }
-struct Timer;
+#[derive(Default)]
+struct Timer(Option<u64>);
 
 #[test]
 fn cancelled_q_first_content_binds_only_after_a_packet_commits() {
@@ -165,7 +166,7 @@ fn cancelled_q_first_content_binds_only_after_a_packet_commits() {
                 .unwrap();
             assert!(s.transport_mut().take().is_some());
             let mut clock = || Ok::<u64, ()>(5000);
-            let mut timer = Timer;
+            let mut timer = Timer::default();
             SEND_BUDGET.with(|budget| budget.set(Some(accepted)));
             {
                 let mut notify = core::pin::pin!(s.notify_async(
@@ -220,8 +221,15 @@ fn cancelled_q_first_content_binds_only_after_a_packet_commits() {
 }
 
 impl coaptic::platform::AsyncTimer for Timer {
-    async fn wait_until(&mut self, _: u64) {
-        core::future::pending::<()>().await;
+    fn armed(&self) -> Option<u64> {
+        self.0
+    }
+    fn schedule(&mut self, deadline: Option<u64>) {
+        self.0 = deadline;
+    }
+    fn poll_wait(&mut self, _: &mut core::task::Context<'_>) -> core::task::Poll<()> {
+        // This manually driven fixture never advances the timer.
+        core::task::Poll::Pending
     }
 }
 
@@ -346,7 +354,7 @@ fn admission_async_cancelled_refusal_releases_control_slot() {
             .write_rx(rx, &frame.bytes[..frame.len], frame.peer)
             .unwrap();
         let mut clock = || Ok::<u64, ()>(0);
-        let mut timer = Timer;
+        let mut timer = Timer::default();
         BLOCK_SEND.with(|value| value.set(true));
         {
             let mut work = core::pin::pin!(server.progress_async(0, &mut clock, &mut timer, 1000));
@@ -380,7 +388,7 @@ fn con_q_observe_cancelled_continuation_retries_same_block_without_skipping() {
             .write_rx(rx, &ack.bytes[..ack.len], ack.peer)
             .unwrap();
         let mut clock = || Ok::<u64, ()>(5100);
-        let mut timer = Timer;
+        let mut timer = Timer::default();
         BLOCK_SEND.with(|b| b.set(true));
         {
             let mut progress =

@@ -61,18 +61,24 @@ impl AsyncDatagramIo for CaptureIo<'_> {
 
 struct ProbeTimer<'a> {
     now_ms: &'a Cell<u64>,
+    deadline: Option<u64>,
 }
 impl AsyncTimer for ProbeTimer<'_> {
-    async fn wait_until(&mut self, deadline_ms: u64) {
-        let now_ms = self.now_ms;
-        core::future::poll_fn(|_| {
-            if now_ms.get() >= deadline_ms {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await
+    fn armed(&self) -> Option<u64> {
+        self.deadline
+    }
+    fn schedule(&mut self, deadline: Option<u64>) {
+        self.deadline = deadline;
+    }
+    fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+        if self
+            .deadline
+            .is_some_and(|deadline| self.now_ms.get() >= deadline)
+        {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -132,7 +138,7 @@ fn run_sync(seq: &mut u32) -> u64 {
         let n = prepare(*seq, &mut wire);
         let rx = sync.engine_mut().acquire_rx().unwrap();
         sync.engine_mut().write_rx(rx, &wire[..n], PEER).unwrap();
-        black_box(sync.poll(at(*seq)).unwrap());
+        sync.poll(at(*seq)).unwrap();
         *seq += 1;
     }
     assert_eq!(sends.get() - before, u64::from(N));
@@ -143,7 +149,10 @@ fn run_async(seq: &mut u32) -> (u64, usize) {
     let sends = Cell::new(0u64);
     let now_ms = Cell::new(0u64);
     let mut async_app = app(&sends);
-    let mut timer = ProbeTimer { now_ms: &now_ms };
+    let mut timer = ProbeTimer {
+        now_ms: &now_ms,
+        deadline: None,
+    };
     let mut clock = || Ok::<u64, ()>(now_ms.get());
     let mut wire = [0u8; 64];
     for _ in 0..WARMUP {
