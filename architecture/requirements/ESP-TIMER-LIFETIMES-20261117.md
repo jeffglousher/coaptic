@@ -1,29 +1,30 @@
-# ESP timer repair and rejected dispatch integration
+# ESP validation and rejected timer/dispatch integrations
 
-The timer repair is separate from the experimental quiet-request dispatch
-integration. The latter is preserved at `0d31cbcfaef2ac87515f7c7801a4a119ae5d67e4`
-and is not selected for adoption. Faster average CPU work did not compensate
-for regressions in supported workloads.
+The current-profile ESP compatibility repair is separate from the experimental
+timer and quiet-request dispatch integrations. All experimental runtime changes
+below remain unadopted. Faster average work did not compensate for regressions
+in supported workloads. The accepted timer API and runtime remain in use.
 
 ## Timer ownership
 
-One deadline may stay armed between App waits. Its waiter must end when ingress,
+In the proposed scheduled-timer design, one deadline may stay armed between App waits. Its waiter must end when ingress,
 local work, completion or cancellation ends that wait. The ESP driver previously
 treated every armed deadline as an active waiter. The experimental integration
 also polled timers without owning their cancellable wait futures. Together these
 could add a native `select` between receiving a request and sending its response.
 
-App now owns the timer wait future when racing ingress. A ready send does not
+The experimental App owns the timer wait future when racing ingress. A ready send does not
 arm a timer. A blocked send borrows the earlier of its own and the existing
 deadline, owns its wait future, and restores the previous deadline on every exit.
 The wait future drops before the borrowed-deadline guard restores registration.
 The ESP driver probes only deadlines with a registered waiter. Protocol capacity,
 authentication, persistent state and fairness delays retain their existing rules.
 
-`AsyncTimer::armed`, `schedule` and `poll_wait` are required methods. An adapter
+The proposal makes `AsyncTimer::armed`, `schedule` and `poll_wait` required methods. An adapter
 implementing only the old `wait_until` API fails to compile. No-op defaults would
 otherwise silently lose timeouts under App's separate schedule/wait operations.
-Core host adapters and companion qualification callers migrate together.
+Core host adapters and companion qualification callers were migrated together
+in the retained experiment. This API change is not selected for main.
 
 ## Measured experimental integration
 
@@ -83,9 +84,16 @@ Four fixed-Service async cells fail, with point ratios 1.02913 to 1.04057 and
 upper bounds up to 1.05287. Do not promote it as a cost-preserving repair or
 repeat the unchanged source. The follow-up moves the borrowed timer state and
 drop guard into the blocked-send branch, so immediately ready sends do not
-query or construct them. That is a new, unmeasured hypothesis.
+query or construct them. Source `496e216d68aa47367af46adf79c7667a272f62c1`
+passes its 16 affected regressions but fails a separate four-pair preservation
+screen: sync 1.00081, async 0.99435, fixed Service unprotected sync 16,384 bytes
+1.02809. All four formerly failing async cells have point ratios at most 1.01516.
+Preserve this useful mechanism result without adopting the source, discarding
+the failing sync cell, or repeating the unchanged screen.
 
-Deliver and validate the timer correctness repair independently. Preserve the
+Deliver and validate the companion's current `MemoryProfile::ResidentRxScratch`
+binding against accepted core main. The existing one-shot timer API already
+owns and cancels wait futures; retain that supported design. Preserve the
 experimental branch, source commitments, raw failures and source-matched peer
 comparisons. The faster-than-libcoap goal remains open. A future optimization
 needs a distinct mechanism and evidence across supported workloads; avoid another
