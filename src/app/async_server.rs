@@ -95,6 +95,22 @@ pub(crate) struct ProtocolTransport<'a, T, Clock, Timer> {
     pub(crate) completed: u64,
 }
 
+// A blocked send borrows the platform deadline. Restore it on cancellation as
+// well as completion, before another operation reuses the timer.
+struct BorrowedDeadline<'a, T: AsyncTimer> {
+    timer: &'a mut T,
+    previous: Option<u64>,
+    changed: bool,
+}
+
+impl<T: AsyncTimer> Drop for BorrowedDeadline<'_, T> {
+    fn drop(&mut self) {
+        if self.changed {
+            self.timer.schedule(self.previous);
+        }
+    }
+}
+
 impl<T: DatagramTransport, Clock: FnMut() -> Result<u64, C>, Timer, C> DatagramTransport
     for ProtocolTransport<'_, T, Clock, Timer>
 {
@@ -122,18 +138,40 @@ impl<T: AsyncDatagramIo, Clock: FnMut() -> Result<u64, C>, Timer: AsyncTimer, C>
         if now >= self.deadline {
             return Err(AsyncIoError::Deadline);
         }
+        // A ready socket must not move the platform timer. A blocked send
+        // borrows it only when its deadline is earlier, then puts the previous
+        // deadline back. The registration is updated, not dropped.
+        let deadline = self.deadline;
+        let previous = self.timer.armed();
         let accepted = {
-            let mut timeout = pin!(self.timer.wait_until(self.deadline));
+            let mut registration = BorrowedDeadline {
+                timer: self.timer,
+                previous,
+                changed: false,
+            };
             let mut send = pin!(self.io.send(dest, bytes));
-            core::future::poll_fn(|cx| {
-                if timeout.as_mut().poll(cx).is_ready() {
-                    return Poll::Ready(Err(AsyncIoError::Deadline));
+            // A ready send does not create a timer wait. A blocked send owns
+            // its wait future so completion/cancellation unregisters its waker.
+            let first = core::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+            match first {
+                Poll::Ready(result) => result.map_err(AsyncIoError::Transport)?,
+                Poll::Pending => {
+                    if previous.map(|existing| deadline < existing).unwrap_or(true) {
+                        registration.timer.schedule(Some(deadline));
+                        registration.changed = true;
+                    }
+                    let mut timeout = pin!(registration.timer.wait());
+                    core::future::poll_fn(|cx| {
+                        if timeout.as_mut().poll(cx).is_ready() {
+                            return Poll::Ready(Err(AsyncIoError::Deadline));
+                        }
+                        send.as_mut()
+                            .poll(cx)
+                            .map(|result| result.map_err(AsyncIoError::Transport))
+                    })
+                    .await?
                 }
-                send.as_mut()
-                    .poll(cx)
-                    .map(|result| result.map_err(AsyncIoError::Transport))
-            })
-            .await?
+            }
         };
         let completed = (self.clock)().map_err(AsyncIoError::ClockAfterSend)?;
         if completed < now {

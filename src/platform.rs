@@ -5,17 +5,54 @@
 //! entropy can use [`WithEntropy`] for caller-owned mutable state or
 //! [`crate::app::RandomSource`] for function pointers. No platform SDK is required.
 
-/// Executor-neutral registration for one absolute monotonic deadline.
+/// One absolute deadline on the platform's own wait.
+///
+/// Host adapters keep one reactor timer, waited on with the socket in epoll,
+/// kqueue, or IOCP. Embedded adapters keep one compare-interrupt registration
+/// in the board time driver. [`Self::schedule`] moves that registration when
+/// the earliest deadline changes and leaves it armed when the value does not.
+/// Dropping a wait removes the waker for that wait. It does not clear a
+/// deadline the next wait still needs.
 ///
 /// The timestamp domain must match App's injected millisecond timestamps.
-/// The returned future registers the current task, completes when the deadline
-/// is reached, and releases its registration on cancellation. A past deadline
-/// completes immediately. It must not spin or block the executor. Timer and
-/// executor registration storage belongs to the platform resource budget.
+/// A past deadline completes on the next poll. The wait must not spin or block
+/// the executor. Registration storage belongs to the platform resource budget.
+/// A new board supplies this trait and [`crate::storage::AsyncDatagramIo`];
+/// it does not add a second scheduler inside App.
+///
+/// Implement all three scheduling primitives. Overriding only `wait_until`
+/// cannot serve App's separate schedule-and-wait operations.
+///
+/// ```compile_fail
+/// use coaptic::platform::AsyncTimer;
+/// struct LegacyTimer;
+/// impl AsyncTimer for LegacyTimer {
+///     async fn wait_until(&mut self, _: u64) {}
+/// }
+/// ```
 #[allow(async_fn_in_trait)]
 pub trait AsyncTimer {
-    /// Suspend until `deadline_ms`, without allocating in the Coaptic core.
-    async fn wait_until(&mut self, deadline_ms: u64);
+    /// Deadline currently armed, if any.
+    fn armed(&self) -> Option<u64>;
+
+    /// Arm `deadline_ms`, move the armed deadline, or disarm when `None`.
+    ///
+    /// The same value is not removed and inserted again.
+    fn schedule(&mut self, deadline_ms: Option<u64>);
+
+    /// Poll the armed deadline without changing it.
+    fn poll_wait(&mut self, cx: &mut core::task::Context<'_>) -> core::task::Poll<()>;
+
+    /// Suspend until the armed deadline, without allocating in the Coaptic core.
+    async fn wait(&mut self) {
+        core::future::poll_fn(|cx| self.poll_wait(cx)).await
+    }
+
+    /// Arm `deadline_ms` and suspend until it.
+    async fn wait_until(&mut self, deadline_ms: u64) {
+        self.schedule(Some(deadline_ms));
+        self.wait().await
+    }
 }
 
 /// A clock reading failed or moved behind the last accepted reading.

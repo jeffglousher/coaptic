@@ -40,10 +40,18 @@ impl coaptic::storage::AsyncDatagramIo for Io {
         DatagramIo::send(self, peer, bytes)
     }
 }
-struct NeverTimer;
+#[derive(Default)]
+struct NeverTimer(Option<u64>);
 impl coaptic::platform::AsyncTimer for NeverTimer {
-    async fn wait_until(&mut self, _: u64) {
-        core::future::pending::<()>().await
+    fn armed(&self) -> Option<u64> {
+        self.0
+    }
+    fn schedule(&mut self, deadline: Option<u64>) {
+        self.0 = deadline;
+    }
+    fn poll_wait(&mut self, _: &mut core::task::Context<'_>) -> core::task::Poll<()> {
+        // This manually driven fixture never advances the timer.
+        core::task::Poll::Pending
     }
 }
 #[test]
@@ -60,7 +68,7 @@ fn asynchronous_probe_preserves_canonical_send_and_drop_cleanup() {
         .allow_unprotected()
         .bind(Io::default())
         .unwrap();
-    let mut timer = NeverTimer;
+    let mut timer = NeverTimer::default();
     drop(
         app.get("discard")
             .to(PEER)

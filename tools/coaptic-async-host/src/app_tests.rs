@@ -80,8 +80,8 @@ fn native_app_classic_and_q_blockwise_over_real_udp() {
                 .allow_unprotected()
                 .bind(socket())
                 .unwrap();
-            let mut server_timer = clock;
-            let mut client_timer = clock;
+            let mut server_timer = clock.timer();
+            let mut client_timer = clock.timer();
             serve_until(
                 async {
                     loop {
@@ -160,8 +160,8 @@ fn native_app_observe_deferred_completion_and_local_wake() {
             .allow_unprotected()
             .bind(socket())
             .unwrap();
-        let mut server_timer = clock;
-        let mut client_timer = clock;
+        let mut server_timer = clock.timer();
+        let mut client_timer = clock.timer();
         let call = client
             .get("sensor")
             .to(endpoint)
@@ -316,8 +316,8 @@ fn native_protected_app_blockwise_observe_and_checkpoint_over_real_udp() {
                 protected: &protected,
             })
             .unwrap();
-        let mut server_timer = clock;
-        let mut client_timer = clock;
+        let mut server_timer = clock.timer();
+        let mut client_timer = clock.timer();
         serve_until(
             async {
                 loop {

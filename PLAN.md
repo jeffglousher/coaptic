@@ -8,6 +8,18 @@ it is not silently treated as finished software work.
 
 ## Current work
 
+The November 16/17 ESP continuation verified normal firmware without recovery
+flashing and identified stale timer waiters in the experimental integration.
+The selected repair owns cancellable waits, restores borrowed deadlines and
+requires scheduling primitives at compile time; migrate real adapters and
+qualification callers together. The unrelated quiet dispatch/ownership batch is
+preserved at `0d31cbc` and rejected: its complete-App four-pair CPU screen improves
+averages about 2.4% in each mode but fails seven of 28 cell preservation limits.
+Its clean Wi-Fi latency/C screens also fail: cache16 1.04366 and cache32 1.24687.
+Keep the [mechanism, measurement scopes and rejected paths](architecture/requirements/ESP-TIMER-LIFETIMES-20261117.md).
+The timer-only repair requires independent source validation; these failed
+experimental measurements must not be relabeled as measurements of that source.
+
 The subsequent libcoap-speed investigation has not qualified another library
 implementation. Eight CPU integrations and the exact-H cache32 device
 integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio

@@ -1886,16 +1886,18 @@ mod native_async {
         }
     }
     impl AsyncTimer for Timer {
-        async fn wait_until(&mut self, deadline: u64) {
-            self.deadline.set(deadline);
-            core::future::poll_fn(|_| {
-                if self.ready.get() {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            })
-            .await
+        fn armed(&self) -> Option<u64> {
+            Some(self.deadline.get()).filter(|deadline| *deadline != 0)
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            self.deadline.set(deadline.unwrap_or(0));
+        }
+        fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            if self.ready.get() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
         }
     }
     fn ready<T>(future: impl Future<Output = T>) -> T {
@@ -2188,9 +2190,14 @@ mod native_async {
                     .poll(&mut Context::from_waker(Waker::noop()))
                     .is_pending()
             );
+            assert_eq!(observed_deadline.get(), recovery_deadline);
         }
         assert!(!state_io(client.state.as_mut().unwrap()).bootstrap_mode);
-        assert_eq!(observed_deadline.get(), recovery_deadline);
+        assert_eq!(
+            observed_deadline.get(),
+            0,
+            "cancel restores the unarmed timer"
+        );
         assert!(net.borrow().sent.is_empty());
         client.validity = PolicyValidity::OnlineUntil {
             accepted_ms: 0,

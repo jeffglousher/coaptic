@@ -6,6 +6,10 @@
 //! pools. Receive scratch is supplied once by the caller and reused.
 
 use coaptic::{Endpoint, storage::AsyncDatagramIo};
+use core::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 use std::{io, time::Duration};
 use tokio::net::UdpSocket;
 
@@ -28,15 +32,70 @@ impl Clock {
     pub fn now_ms(self) -> io::Result<u64> {
         u64::try_from(self.0.elapsed().as_millis()).map_err(|_| io::ErrorKind::InvalidData.into())
     }
+
+    /// One Tokio timer registration sharing this epoch.
+    ///
+    /// The sleep is created on the first arm and then [`tokio::time::Sleep::reset`].
+    /// Repeating the same deadline does not allocate or replace it.
+    pub fn timer(self) -> Timer {
+        Timer {
+            epoch: self.0,
+            armed: None,
+            sleep: None,
+            inserts: 0,
+        }
+    }
 }
 
-impl coaptic::platform::AsyncTimer for Clock {
-    async fn wait_until(&mut self, deadline_ms: u64) {
-        if let Some(deadline) = self.0.checked_add(Duration::from_millis(deadline_ms)) {
-            tokio::time::sleep_until(deadline).await;
+/// The App's single Tokio deadline.
+///
+/// The socket stays registered by [`Udp`] for its whole life. This timer stays
+/// registered from the first arm until [`Self`] is dropped or the deadline is
+/// cleared. A later arm of a different time calls `Sleep::reset`.
+pub struct Timer {
+    epoch: tokio::time::Instant,
+    armed: Option<u64>,
+    sleep: Option<Pin<Box<tokio::time::Sleep>>>,
+    inserts: u32,
+}
+
+impl Timer {
+    /// Times a new `Sleep` was created. Resets of the existing sleep are not counted.
+    pub fn inserts(&self) -> u32 {
+        self.inserts
+    }
+}
+
+impl coaptic::platform::AsyncTimer for Timer {
+    fn armed(&self) -> Option<u64> {
+        self.armed
+    }
+
+    fn schedule(&mut self, deadline_ms: Option<u64>) {
+        if self.armed == deadline_ms {
+            return;
+        }
+        self.armed = deadline_ms;
+        let Some(deadline_ms) = deadline_ms else {
+            self.sleep = None;
+            return;
+        };
+        let Some(deadline) = self.epoch.checked_add(Duration::from_millis(deadline_ms)) else {
+            self.sleep = None;
+            return;
+        };
+        if let Some(sleep) = self.sleep.as_mut() {
+            sleep.as_mut().reset(deadline);
         } else {
-            // An unrepresentable absolute deadline cannot expire early.
-            core::future::pending::<()>().await;
+            self.inserts = self.inserts.saturating_add(1);
+            self.sleep = Some(Box::pin(tokio::time::sleep_until(deadline)));
+        }
+    }
+
+    fn poll_wait(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        match self.sleep.as_mut() {
+            Some(sleep) => sleep.as_mut().poll(cx),
+            None => Poll::Pending,
         }
     }
 }

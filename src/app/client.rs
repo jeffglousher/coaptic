@@ -1705,8 +1705,9 @@ where
     /// caller's responsibility. The clock must finish in bounded time and use
     /// the same nondecreasing monotonic domain as `now_ms` and later App polling.
     /// The configured request deadline is checked before transport acceptance,
-    /// races every pending send, and is checked again against completion time.
-    /// The timer uses the same monotonic domain and unregisters on cancellation.
+    /// races a send that is still waiting, and is checked again against completion
+    /// time. A ready send does not move the platform deadline. A blocked send
+    /// moves it only when this deadline is earlier, then restores the previous one.
     pub fn send_async<C: 'a>(
         self,
         now_ms: u64,
@@ -2240,10 +2241,18 @@ struct StagedClient {
 
 #[cfg(test)]
 mod async_request_tests {
-    struct NeverTimer;
+    #[derive(Default)]
+    struct NeverTimer(Option<u64>);
     impl crate::platform::AsyncTimer for NeverTimer {
-        async fn wait_until(&mut self, _: u64) {
-            core::future::pending::<()>().await;
+        fn armed(&self) -> Option<u64> {
+            self.0
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            self.0 = deadline;
+        }
+        fn poll_wait(&mut self, _: &mut core::task::Context<'_>) -> core::task::Poll<()> {
+            // This manually driven fixture never advances the timer.
+            core::task::Poll::Pending
         }
     }
 
@@ -2304,7 +2313,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_initial_call_drop_and_acceptance_share_existing_slots() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let state = State::default();
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
             .deterministic_for_tests()
@@ -2366,7 +2375,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_block1_and_q_window_acceptance_and_partial_failure() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let payload = [7; 1500];
         for q in [false, true] {
             for fail in [false, true] {
@@ -2423,7 +2432,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_clock_failure_after_send_leaves_no_call() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         for non in [false, true] {
             let state = State::default();
             state.ready.set(true);
@@ -2449,7 +2458,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_clock_regression_after_send_leaves_no_call() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         for non in [false, true] {
             let state = State::default();
             state.ready.set(true);
@@ -2484,24 +2493,20 @@ mod async_request_tests {
             waker: &'a core::cell::RefCell<Option<Waker>>,
         }
         impl crate::platform::AsyncTimer for ManualTimer<'_> {
-            async fn wait_until(&mut self, deadline: u64) {
-                struct Registration<'a>(&'a core::cell::RefCell<Option<Waker>>);
-                impl Drop for Registration<'_> {
-                    fn drop(&mut self) {
-                        self.0.borrow_mut().take();
-                    }
+            fn armed(&self) -> Option<u64> {
+                self.due.get()
+            }
+            fn schedule(&mut self, deadline: Option<u64>) {
+                self.due.set(deadline);
+            }
+            fn poll_wait(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+                if self.ready.get() {
+                    self.waker.borrow_mut().take();
+                    Poll::Ready(())
+                } else {
+                    *self.waker.borrow_mut() = Some(cx.waker().clone());
+                    Poll::Pending
                 }
-                let _registration = Registration(self.waker);
-                self.due.set(Some(deadline));
-                core::future::poll_fn(|cx| {
-                    if self.ready.get() {
-                        Poll::Ready(())
-                    } else {
-                        *self.waker.borrow_mut() = Some(cx.waker().clone());
-                        Poll::Pending
-                    }
-                })
-                .await;
             }
         }
         for partial_q in [false, true] {
@@ -2560,10 +2565,17 @@ mod async_request_tests {
 
     #[test]
     fn native_async_pending_send_yields_for_other_live_call_deadline() {
-        struct DueTimer;
+        struct DueTimer(Option<u64>);
         impl crate::platform::AsyncTimer for DueTimer {
-            async fn wait_until(&mut self, deadline: u64) {
-                assert_eq!(deadline, 50);
+            fn armed(&self) -> Option<u64> {
+                self.0
+            }
+            fn schedule(&mut self, deadline: Option<u64>) {
+                self.0 = deadline;
+            }
+            fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+                assert_eq!(self.0, Some(50));
+                Poll::Ready(())
             }
         }
         let state = State::default();
@@ -2576,7 +2588,7 @@ mod async_request_tests {
         .allow_unprotected()
         .bind(AsyncOnly(&state))
         .unwrap();
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let first = {
             let mut send = pin!(app.get("first").to(PEER).non().deadline(50).send_async(
                 0,
@@ -2588,10 +2600,12 @@ mod async_request_tests {
                 _ => panic!("first accepted"),
             }
         };
-        let mut due = DueTimer;
+        let mut due = DueTimer(None);
         {
+            // The other call's deadline is already due, so this send yields
+            // before it touches the socket.
             let mut send = pin!(app.get("second").to(PEER).non().send_async(
-                10,
+                50,
                 || Ok::<_, ()>(50),
                 &mut due
             ));
@@ -2610,7 +2624,7 @@ mod async_request_tests {
     fn native_async_driving_limit_preserves_call_response_lifetime() {
         let state = State::default();
         state.ready.set(true);
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let mut app = App::with_resources(
             crate::resources::Resources::<super::super::tests::AdmissionTwoRxCalls, 4>::new()
                 .client_calls::<2>(),
@@ -2653,7 +2667,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_deadline_at_acceptance_stops_call_installation() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let state = State::default();
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
             .deterministic_for_tests()
@@ -2681,7 +2695,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_response_continuation_cancellation_reclaims_call_and_ack() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         for poll_before_drop in [false, true] {
             let state = State::default();
             state.ready.set(true);
@@ -2747,7 +2761,7 @@ mod async_request_tests {
     #[test]
     fn native_async_ack_clock_failure_retires_only_ambiguous_call() {
         for before_acceptance in [false, true] {
-            let mut timer = NeverTimer;
+            let mut timer = NeverTimer::default();
             let state = State::default();
             state.ready.set(true);
             let mut app = App::with_resources(crate::resources::SmallDevice::new())
@@ -2809,7 +2823,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_response_continuation_acceptance_keeps_completion() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let state = State::default();
         state.ready.set(true);
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
@@ -2874,7 +2888,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_q_ack_cancellation_retires_advanced_upload() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let payload = [7; 1500];
         for poll_before_drop in [false, true] {
             let state = State::default();
@@ -2950,7 +2964,7 @@ mod async_request_tests {
     #[cfg(feature = "oscore")]
     #[test]
     fn native_async_protected_observe_preserves_identity_and_consumed_sequences() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         use crate::oscore::{DeriveParams, SecurityContext};
         let context = |sender, recipient| {
             SecurityContext::derive(DeriveParams {
@@ -3019,7 +3033,7 @@ mod async_request_tests {
 
     #[test]
     fn native_async_small_device_independent_storage_ceilings() {
-        let mut timer = NeverTimer;
+        let mut timer = NeverTimer::default();
         let state = State::default();
         let mut app = App::with_resources(crate::resources::SmallDevice::new())
             .deterministic_for_tests()

@@ -31,10 +31,17 @@ impl AsyncDatagramIo for Io<'_> {
         .await
     }
 }
-struct Timer;
+#[derive(Default)]
+struct Timer(Option<u64>);
 impl AsyncTimer for Timer {
-    async fn wait_until(&mut self, _: u64) {
-        pending().await
+    fn armed(&self) -> Option<u64> {
+        self.0
+    }
+    fn schedule(&mut self, deadline: Option<u64>) {
+        self.0 = deadline;
+    }
+    fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
     }
 }
 fn handler(_: Request<'_>) -> Response<'static> {
@@ -83,7 +90,7 @@ fn async_transaction_metadata_has_independent_small_device_ceilings() {
         })
         .unwrap();
         let mut clock = || Ok::<_, ()>(0);
-        let mut timer = Timer;
+        let mut timer = Timer::default();
         let progress = app.progress_async(0, &mut clock, &mut timer, 100);
         std::println!(
             "Constrained routes1 blockwise=false progress_async future={} local_rx_scratch={} optional_local_rx_scratch={}; future size only, not peak stack or whole RAM",
@@ -118,7 +125,7 @@ fn cancelled_notification_restores_due_and_releases_exact_tx() {
         .insert_observe(ObserveInterest::new(Token::EMPTY, PEER).with_resource(resource))
         .unwrap();
     let mut clock = || Ok::<_, ()>(10);
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     {
         let mut send = pin!(app.notify_confirmable_async(
             10,
@@ -174,7 +181,7 @@ fn cancelled_deferred_observe_keeps_handle_without_unsent_hold() {
     let rx = app.engine.acquire_rx().unwrap();
     app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
     let mut clock = || Ok::<_, ()>(10);
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     let mut handle = None;
     {
         let mut progress =
@@ -248,7 +255,7 @@ fn cancelled_partial_deferred_q_keeps_immutable_snapshot() {
     let rx = app.engine.acquire_rx().unwrap();
     app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
     let mut clock = || Ok::<_, ()>(10);
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     let mut handle = None;
     {
         let mut progress =
@@ -370,7 +377,7 @@ fn cancelled_deferred_q_followup_keeps_snapshot_for_recovery() {
     let rx = app.engine.acquire_rx().unwrap();
     app.engine.write_rx(rx, &wire[..n], PEER).unwrap();
     let mut clock = || Ok::<_, ()>(10);
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     let mut handle = None;
     {
         let mut progress =
@@ -551,7 +558,7 @@ fn cancelled_immediate_static_q_releases_snapshot_and_retries_exact_bytes() {
         let q = BlockValue::new(0, true, 0).unwrap().encode();
         let opts = [Opt::uri_path("q"), Opt::q_block2(&q)];
         let mut wire = [0; 64];
-        let mut timer = Timer;
+        let mut timer = Timer::default();
         for attempt in 0..2 {
             let request = Message::new(
                 Type::NonConfirmable,
@@ -667,7 +674,7 @@ fn accepted_retry_with_failed_clock_retires_call_without_automatic_resend() {
             accepted: &accepted,
         })
         .unwrap();
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     let call = {
         let mut send = pin!(app.get("remote").to(PEER).send_async(
             0,
@@ -681,7 +688,7 @@ fn accepted_retry_with_failed_clock_retires_call_without_automatic_resend() {
     };
     let mut samples = [Ok(3000), Err(())].into_iter();
     let mut clock = || samples.next().unwrap();
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     {
         let mut retry = pin!(app.progress_async(3000, &mut clock, &mut timer, 4000));
         assert!(matches!(
@@ -721,7 +728,7 @@ fn deadline_refusal_preserves_exact_retry_snapshot() {
             accepted: &accepted,
         })
         .unwrap();
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     {
         let mut send = pin!(app.get("remote").to(PEER).send_async(
             0,
@@ -734,7 +741,7 @@ fn deadline_refusal_preserves_exact_retry_snapshot() {
         ));
     }
     let before = app.engine.peek_retransmit(3000).unwrap();
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     let mut clock = || Ok::<_, ()>(3000);
     {
         let mut retry = pin!(app.progress_async(3000, &mut clock, &mut timer, 3000));
@@ -799,7 +806,7 @@ fn shared_association_barrier_precedes_effects_and_rejects_restored_replay() {
     let mut saw_other = false;
     let mut effects = 0;
     let mut clock = || Ok::<_, ()>(10);
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     {
         let mut progress = pin!(app.progress_with_association_checkpoint_async(
             10,
@@ -945,7 +952,7 @@ fn delayed_non_notification_commits_hold_and_max_age_at_acceptance() {
         .insert_observe(ObserveInterest::new(Token::EMPTY, PEER).with_resource(resource))
         .unwrap();
     let mut clock = || Ok::<_, ()>(now.get());
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     {
         let mut notification = pin!(app.notify_async(
             10,
@@ -1017,7 +1024,7 @@ fn cancelled_client_con_ack_through_progress_retires_call_and_rejects_replay() {
             last: &last,
         })
         .unwrap();
-    let mut timer = Timer;
+    let mut timer = Timer::default();
     // Keep an unrelated live Call without occupying the ACK's control slot.
     let other = {
         let mut send = pin!(app.get("other").to(OTHER_PEER).non().send_async(
@@ -1110,4 +1117,151 @@ fn cancelled_client_con_ack_through_progress_retires_call_and_rejects_replay() {
         app.take_response(other),
         Some(Err(CallFailure::Cancelled))
     ));
+}
+
+#[test]
+fn cancelled_blocked_send_restores_the_borrowed_platform_deadline() {
+    struct Scheduled<'a>(&'a Cell<Option<u64>>);
+    impl AsyncTimer for Scheduled<'_> {
+        fn armed(&self) -> Option<u64> {
+            self.0.get()
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            self.0.set(deadline);
+        }
+        fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Pending
+        }
+    }
+    for previous in [None, Some(100), Some(25)] {
+        let armed = Cell::new(previous);
+        let ready = Cell::new(false);
+        let accepted = Cell::new(0);
+        let mut socket = Io {
+            ready: &ready,
+            accepted: &accepted,
+        };
+        let mut timer = Scheduled(&armed);
+        let mut clock = || Ok::<_, ()>(10);
+        let mut transport = ProtocolTransport {
+            io: &mut socket,
+            clock: &mut clock,
+            timer: &mut timer,
+            deadline: 50,
+            completed: 0,
+        };
+        {
+            let mut send = pin!(transport.send(PEER, b"reply"));
+            assert!(
+                send.as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            assert_eq!(armed.get(), Some(previous.unwrap_or(50).min(50)));
+        }
+        assert_eq!(armed.get(), previous);
+        assert_eq!(accepted.get(), 0);
+    }
+}
+
+#[test]
+fn ready_send_does_not_arm_the_platform_timer() {
+    let ready = Cell::new(true);
+    let accepted = Cell::new(0);
+    let armed = Cell::new(0);
+    struct CountingTimer<'a>(&'a Cell<usize>, Option<u64>);
+    impl AsyncTimer for CountingTimer<'_> {
+        fn armed(&self) -> Option<u64> {
+            self.1
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            self.1 = deadline;
+            if deadline.is_some() {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        fn poll_wait(&mut self, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Pending
+        }
+    }
+    let mut io = Io {
+        ready: &ready,
+        accepted: &accepted,
+    };
+    let mut clock = || Ok::<u64, ()>(10);
+    let mut timer = CountingTimer(&armed, None);
+    let mut transport = ProtocolTransport {
+        io: &mut io,
+        clock: &mut clock,
+        timer: &mut timer,
+        deadline: 10_000,
+        completed: 0,
+    };
+    let mut send = pin!(AsyncDatagramIo::send(&mut transport, PEER, b"hi"));
+    assert!(matches!(
+        send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Ok(2))
+    ));
+    assert_eq!(armed.get(), 0);
+    assert_eq!(accepted.get(), 1);
+}
+
+#[test]
+fn waiting_send_arms_one_platform_deadline() {
+    let ready = Cell::new(false);
+    let accepted = Cell::new(0);
+    let armed = Cell::new(0);
+    let timer_ready = Cell::new(false);
+    struct CountingTimer<'a> {
+        armed: &'a Cell<usize>,
+        deadline: Option<u64>,
+        ready: &'a Cell<bool>,
+    }
+    impl AsyncTimer for CountingTimer<'_> {
+        fn armed(&self) -> Option<u64> {
+            self.deadline
+        }
+        fn schedule(&mut self, deadline: Option<u64>) {
+            self.deadline = deadline;
+            if deadline.is_some() {
+                self.armed.set(self.armed.get() + 1);
+            }
+        }
+        fn poll_wait(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+            if self.ready.get() {
+                Poll::Ready(())
+            } else {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+    let mut io = Io {
+        ready: &ready,
+        accepted: &accepted,
+    };
+    let mut clock = || Ok::<u64, ()>(10);
+    let mut timer = CountingTimer {
+        armed: &armed,
+        deadline: None,
+        ready: &timer_ready,
+    };
+    let mut transport = ProtocolTransport {
+        io: &mut io,
+        clock: &mut clock,
+        timer: &mut timer,
+        deadline: 10_000,
+        completed: 0,
+    };
+    let mut send = pin!(AsyncDatagramIo::send(&mut transport, PEER, b"hi"));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(send.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(armed.get(), 1);
+    assert_eq!(accepted.get(), 0);
+    timer_ready.set(true);
+    assert!(matches!(
+        send.as_mut().poll(&mut cx),
+        Poll::Ready(Err(AsyncIoError::Deadline))
+    ));
+    assert_eq!(accepted.get(), 0);
 }
