@@ -1,867 +1,112 @@
 # Project plan
 
-Coaptic serves direct UDP clients and servers, from embedded devices to host
-services. The accepted implementation is delivered: bounded fixed/allocated
-storage, sync/async operation, OSCORE/EDHOC, guided commissioning, durable
-ownership and application receipts. Remaining qualification is listed below;
-it is not silently treated as finished software work.
-
-## Current work
-
-The November 17 reliability continuation adds a finite same-App blackout and
-reconnect regression in `src/app/lifecycle_soak.rs`, covering sync/async and
-unprotected/OSCORE. It preserves exact retransmission bytes, checks one POST
-effect across a late duplicate, and recovers after explicit Call-capacity
-refusal, cancellation and deadline expiry. This is software datagram-loss
-injection, not installed-device Wi-Fi or physical qualification. Baseline core
-`6d0c1f0` passes 1,235 library and 44 selected recovery integration tests;
-companion `1de100c` passes 91 driver/network/pairing tests against that production
-tree using process-local Cargo paths, Rust 1.99.1, and unchanged lockfiles.
-The shared companion junction remains on its original older checkout. Core
-`d3f6fcd` adds the test fixture and passes all 1,237 library tests and strict all-target,
-all-feature Clippy; the example executes both client modes successfully.
-
-The bounded performance assessment qualifies no new candidate. Historical MCU
-wall spans do not isolate current-source task CPU; the retained timer, cache and
-ownership failures remain rejected. Keep #341/#650 open. The runnable
-`application_options` example covers sync/async payload, Accept/Content-Format,
-deadlines, actionable errors and custom response-option consumption. The
-[#759](https://github.com/jeffglousher/coaptic/issues/759) follow-up adds bounded
-custom elective request options using existing Call identity and upload-control
-storage. It preserves sorted repeat values through retry, classic/Q block
-continuation, FETCH and Observe; known/critical/zero numbers and retention
-overflow refuse explicitly. No App owner or pool capacity grows. The transient
-builder gains a borrowed slice; future and peak-stack changes are unmeasured.
-Core `b319ce3` passes 1,705 all-feature tests including 1,242 library
-tests, plus 737 no-default library tests. Both example modes execute; Rust 1.89
-all-feature and no-default checks, strict all-feature lint and rustdoc pass.
-
-Its loss fixture exposes Q-Block2 trailing loss
-([#761](https://github.com/jeffglousher/coaptic/issues/761)), reproduced without
-custom options on accepted `b319ce3`. The repair uses exact Size2 and the first
-accepted NON response mode to recover a missing suffix after four seconds,
-bounded to the current ten payloads. Timer state retains the mode across reset
-and backoff. CON/unspecified modes keep their existing observed-hole behavior;
-classic Size2 advisory semantics and exact Q-size checks remain unchanged.
-Immediate window Continue, deadlines, cancellation, retry exhaustion and fresh
-work remain supported. Six focused storage/App regressions pass, including
-sync/async and unprotected/OSCORE App cells. An extra mode field grew the native
-body sidecar from 688 to 696 bytes and failed the existing whole-App ceiling;
-that representation is rejected. Reusing the receive-state discriminant keeps
-the native sidecar at 688 bytes, with original capacities and backing retained.
-Independent general correctness/security review finds no remaining defect.
-The integrated source passes 1,711 all-feature tests (1,248 library), 743
-no-default library tests and strict lint in both configurations. Native
-whole-App ceilings pass. The Xtensa OSCORE library check passes with installed
-Rust 1.97.0-nightly; the target layout example still needs an explicit entropy
-backend for its host-only dev dependency, so it supplies no new target-layout
-evidence. This is software recovery proof;
-physical power recovery #333 and credential-touch qualification #365 remain
-unexecuted. No new firmware execution or performance gain is claimed here.
-
-The November 16/17 continuation verified normal ESP firmware without recovery
-flashing. The companion's current `MemoryProfile::ResidentRxScratch` binding
-is repaired: 91 integration checks, target/SDK builds and 48 device reads across
-both client modes pass; normal firmware is restored and verified. Keep the accepted timer
-API/runtime: the experimental dispatch and scheduled-timer integrations all
-fail their CPU preservation gates and remain unadopted. Fresh host comparisons
-close 84,000 reads with zero failures, but their speed wins do not override the
-CPU failures or the ESP Wi-Fi speed gap. Preserve the
-[source commitments, mechanisms and failed decisions](architecture/requirements/ESP-TIMER-LIFETIMES-20261117.md)
-and raw evidence; do not rerun unchanged failed sources or claim the broader
-faster-than-libcoap goal complete.
-
-The subsequent libcoap-speed investigation has not qualified another library
-implementation. Eight CPU integrations and the exact-H cache32 device
-integration remain unadopted. Its fresh host goodput/C ratios are 1.30214 Mio
-and 1.12069 async, but ESP32 latency/C ratios are 1.06576 sync and 1.47413 async;
-both device speed gates fail. All 1,152 device reads, resource/stability checks
-and original-stack startup checks pass; normal firmware is restored and verified.
-Keep the [comparison scopes, results and failures](architecture/requirements/LIBCOAP-SPEED-20261109.md)
-and the [fresh portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/021b691ed34167e488bde6915561613c98ae9455/tools/benchmark/evidence/esp-idle-observe-20261109).
-Earlier cohorts remain in their [separate evidence package](https://github.com/jeffglousher/coaptic-validation/tree/47ca9e024c365a795eb22259a67d30191bdbac05/tools/benchmark/evidence/esp-libcoap-speed-20261109).
-
-The existing ESP driver's task-local wake handling is delivered in companion
-[#258](https://github.com/jeffglousher/coaptic-validation/pull/258), with child
-readiness/deadline probes and the future-deadline regression. Production bytes
-match measured runtime 32f8; 11 network/OSCORE and 12 pairing driver checks pass
-against accepted a85 core. It adds one shared atomic word (four bytes), with no
-isolated complete-App CPU gain claimed. This is separate from rejected H profiles.
-
-The common MCU receive-return to send-entry diagnostic is complete: 192 reads,
-256 matched packet spans and one boot per profile. Tiny-request medians are
-405 us sync, 1,255 us async and 487.5/497.5 us for the two C controls. All spans
-have zero select calls; two async delays total 1,139 us. These instrumented wall
-spans include preemption and observer work, not isolated task CPU or clean RTT.
-Keep the [numeric vectors, source commitments and original failures](https://github.com/jeffglousher/coaptic-validation/tree/a50f202ed2ed289e391ec2cc358498954b55f6db/tools/benchmark/evidence/mcu-processing-span-20261109).
-Original workers, startup/resource floors and normal restoration pass.
-
-The subsequent c015 target code-generation/IRAM and compiled core1 integration
-also fails its speed gate. All 1,152 reads in twelve boots complete. Sync/C is
-0.85375 overall, but three sync-client cells fail; async/C is 1.48337 and async
-latency is 14.25% higher than its own Os/fat control. Original workers and
-capacities remain. RSSI spans -54 to -34 dBm, actual Rust task-core observations
-are missing, and the exact pre-task contiguous-allocation margin is unqualified.
-Keep the [complete vectors, failed decisions and memory tradeoffs](https://github.com/jeffglousher/coaptic-validation/tree/098d86b7106bc6a1ffdf6e610a51b6d578792f54/tools/benchmark/evidence/esp-target-cpu-20261109).
-Both candidates remain unadopted; normal firmware is restored and verified.
-
-The subsequent cold-client/control extraction and target constructor integration
-also fails its [four-pair complete-App CPU development screen](https://github.com/jeffglousher/coaptic-validation/tree/f9508db04dfd2f3fad2a767e1e697cd5d3edb280/tools/benchmark/evidence/async-client-cpu-20261109): 917,504 measured
-operations, sync ratio 0.98156, async 1.00910 and three cell points above 1.02.
-This is a continuation refusal, separate from the eight full 64-pair cohorts.
-Against its c015 target-layout control, the selected root future grows 224 bytes
-and whole-archive code grows 4,491 bytes despite a smaller main dispatch frame.
-Large constructor transfers remain. Keep this source unadopted; no full cohort
-or device rerun is justified for the unchanged candidate. Its public-App
-cancellation/duplicate regression
-was separately delivered in [#751](https://github.com/jeffglousher/coaptic/pull/751),
-with production source unchanged.
-
-Copy-owner analysis places the large client and control continuation transfers
-on response/empty-control branches; static sizes do not establish ordinary GET
-costs. Next finish the bounded matched task-priority study using accepted core
-and runtime sources, equal Rust/C policy and explicit loop/timer/API progress
-checks before firmware execution. Existing loops already block at bounded work
-intervals; no missing-yield defect or scheduler cause is established. The timer
-prototype remains untimed and on hold. Preserve capacities, original workers,
-security, failures and restoration guards. Builds, smaller frames and host
-throughput alone do not complete the host-and-device speed goal.
-
-The packet-lifetime/body-borrowing batch demonstrates 2.91% lower complete-App
-CPU cost in sync operation and 3.28% in async operation against pinned fd7d18a.
-All 28 workload bounds pass. Both selected Service progress futures are 2,536
-bytes smaller (16.37%), native Service Apps are 320 bytes smaller, and configured
-capacities and pool backing are unchanged. See the
-[implementation, measurements and tradeoffs](architecture/requirements/PACKET-LIVE-RANGES-20261106.md).
-All-feature library/integration/doctests, affected feature combinations, strict
-lint, Rust 1.89 checks and rustdoc pass on the exact measured source.
-Exact sources, raw comparisons, rejected attempts and reconstruction checks are
-retained in the [portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/e602a261fac18d839e92def713ae410f7c78d15d/tools/benchmark/evidence/packet-live-ranges-20261106).
-
-Shorter packet-preparation lifetimes, compact received-response metadata, lazy
-Location backing, static body retention and direct ordinary ETag/Content-Format
-encoding form the measured integration. Static retained replies avoid the full
-body snapshot and redundant equality scan; original chunk staging remains.
-Advanced mutation copies static bytes into existing reserved backing. The local
-ordinary encoder frame grows 48 bytes sync/32 bytes async and its code grows;
-selected futures and guarded dispatch/reclaim/retained-encoder frames shrink or
-stay equal. These are separate owner observations, not a peak-stack claim.
-
-Eight failed cohorts and three untimed precursors remain rejected or explicitly
-superseded. The completed-deferred matcher is outside the frozen timing fixture
-and receives no CPU credit. Continue from this integrated result, preserving the
-baseline, capacities and negative evidence. Independent body/packet backing is
-still the largest resident cost; new changes need measured whole-App benefit.
-Runtime adapter development is complete for this batch; Embassy firmware
-migration, new platforms and unrelated tooling remain deferred.
-
-The preceding phase-sharing batch demonstrates 0.625% lower complete-App CPU cost in both
-sync and async operation against pinned bd63199, with both selected Service
-progress futures 1,416 bytes smaller (8.37%). All 28 workload preservation bounds
-pass; App/pool owners, 32-bit layouts and configured capacities stay unchanged.
-See the [implementation, measurement and tradeoffs](architecture/requirements/PHASE-SHARING-20261106.md).
-Feature combinations, strict lint, Rust 1.89 checks and rustdoc all pass.
-Exact sources, raw comparisons and rejected hypotheses are retained in the
-[portable evidence](https://github.com/jeffglousher/coaptic-validation/tree/3e03f251877cd44c7a6e8515ac1225500da95a0a/tools/benchmark/evidence/phase-sharing-static-20261106).
-
-Blockwise dispatch shares collected-body backing, resident capacity lives in its
-type and five send helpers borrow response metadata. Original replay, client
-inbox and chunk-copy behavior remain. The untimed capacity-field precursor grew
-32-bit Service Apps by eight bytes and is retained. Earlier replay combinations
-4bf0738, ecf1747 and 995ae93 failed four, one and two CPU bounds respectively;
-none is adopted or reclassified. Their raw cohorts, source patches and checks
-remain in the companion evidence alongside the accepted integration.
-
-Continue only from measured complete-App costs and live owners. Independent body
-and packet capacity remains the largest resident cost; do not shrink capacities
-or infer peak-RAM savings from selected future/frame sizes. Runtime adapter work
-is complete for this batch. Embassy firmware migration and new platforms remain
-deferred.
-
-The response-ownership follow-up did not qualify another implementation. Borrowed
-handler responses reduced selected futures but increased complete-App async CPU
-cost by 2.50% and failed 17 of 28 workload bounds. A unified reply view and two
-smaller response-metadata representations failed the prospective native-frame
-guard before timing. The final borrowed-origin representation saved 216 bytes in
-each selected complete future, while one allocated Service polling frame grew
-16 bytes. That is a conservative guard refusal, not a measured CPU regression.
-All four candidates remain unmerged; the accepted implementation above is intact.
-See [sources, measurements and limits](architecture/requirements/RESPONSE-OWNERSHIP-20261106.md).
-Do not repeat these unchanged candidates. Before another ownership rewrite,
-identify the packet construction and dispatch live ranges responsible for work
-and overlapping memory; preserve independent body/packet capacities. API
-ergonomics alone is not a performance justification.
-
-Emitted-copy follow-ups are rejected too. Direct inline fill removes a staging
-array, and scalar TX writes remove the emitted full replay-row copy; the complete
-App cohort still fails sync acceptance. Adding fixed-table expiry bounds reduces
-retained memory but fails the frozen runtime bounds and five cell guards,
-including SmallDevice unprotected sync/async. All production changes are retired.
-Keep the [exact sources, assembly, diagnostic and both failed cohorts](https://github.com/jeffglousher/coaptic-validation/tree/b96fe89347cd9c4b023e1634580ea5397eb940f0/tools/benchmark/evidence/replay-active-copy-20261105).
-The final source passed926 alloc+oscore library tests plus a new duplicate-key App
-regression and general static review. These checks do not override runtime failure.
-The fixed bound adds eight bytes per table, including empty tables; account for
-that even where replay-owner savings are larger. Next inspect reply-table
-key/deadline traversal and hot metadata placement before selecting another
-coherent integration. Do not repeat these candidates or move the baseline/gates.
-
-The replay-owner follow-up is also rejected. Safe shared inline/TX replay storage
-shrinks SmallDevice App by64 bytes and Service fixed App/allocated pool heap by1024
-bytes, without reducing capacities. Its standalone runtime cohort fails. Adding
-owned-table lookup simplification establishes aggregate async gains but still
-fails sync acceptance and the SmallDevice unprotected sync guard. Neither change
-is accepted; both are retired. Preserve the
-[sources, diagnostics, raw failures and reproduction checks](https://github.com/jeffglousher/coaptic-validation/tree/b96fe89347cd9c4b023e1634580ea5397eb940f0/tools/benchmark/evidence/replay-storage-20261105).
-The combined source passed924 alloc+oscore library tests and independent static
-review, which do not override its runtime failure. The emitted-copy investigation
-above follows from this failure; do not repeat either unchanged candidate or
-relax the runtime gates.
-
-The receive-scratch follow-up is rejected: direct request opening and three
-request-lifetime integrations fail the frozen complete-App runtime checks.
-The selected future shrinks 1,952 bytes, but async runtime acceptance is not
-established. All candidate production code is retired. Preserve the
-[failures, source comparison and reproduction evidence](architecture/requirements/RECEIVE-SCRATCH-20261105.md).
-Next isolate material async runtime costs before another implementation; do not
-repeat these unchanged variants or relax their gates.
-
-The packet-staging/request-metadata batch lowers complete-App thread cycles by
-5.06% sync and 4.40% async against #740 with unchanged capacities. Successful
-OSCORE sealing removes its 1,280-byte staging buffer; the selected emitted frame
-chain shrinks 1,072 bytes. The measured complete progress future grows 32 bytes
-and the refusal-frame chain grows 176 bytes, so this is a scoped scratch win,
-not whole-memory acceptance. Keep the [integrated result, failed precursor and
-reproduction evidence](architecture/requirements/PACKET-DISPATCH-20261104.md).
-
-The integrated dispatch/response scratch batch demonstrates lower complete-App
-CPU-cycle cost in both modes: 0.85% sync and 1.36% async across the declared
-28-cell mix, with unchanged capacities. The selected complete Constrained
-progress future is 1,176 bytes smaller (6.87%); App/pool storage stays unchanged.
-Keep the [measurements, reproduction inputs and rejected experiments](architecture/requirements/DISPATCH-SCRATCH-20261104.md).
-The ordinary response specialization adds executable size; Location-response
-runtime and whole-system peak memory remain unmeasured. Retained-body copy removal
-failed to establish a runtime benefit and was removed, despite eliminating copies.
-
-Continue performance/memory work from measured live owners and complete sync/async
-App comparisons. Preserve reply-retention/expiry and ESP construction improvements.
-Keep ESP task stack reservations separate from measured use; selected frame sizes
-do not justify reducing reservations. Board/HAL migration remains deferred.
-
-The [runtime and comparison direction](architecture/ASYNC-RUNTIMES.md) is adopted.
-The reusable [Tokio adapter](tools/coaptic-tokio/README.md) now supplies caller-owned
-UDP and timers, with Windows loopback and full-App blockwise tests. The
-[Embassy adapter](tools/coaptic-embassy/README.md) now provides the `no_std`
-transport/time seam. Physical target application integration remains deferred.
-Keep the working async-io host option and
-existing ESP-IDF driver while that integration is evaluated. Establish
-equivalent-capability libcoap cells alongside minimal-workload cells before new
-cross-library claims. These are pending
-implementation tasks, not completed migrations; keep per-request performance work
-moving independently and preserve the delivered memory improvements.
-
-The combined reply-retention/expiry change
-[#733](https://github.com/jeffglousher/coaptic/pull/733) now optimizes fixed and
-allocated tables while preserving duplicate-key and TX-pin behavior. The final
-Windows thread-cycle comparison passes all14 guards: all12 Service workloads
-improve, and both SmallDevice preservation checks pass. The declared allocated
-integration uses5.16% fewer measured cycles, with no App/pool storage growth.
-Keep the [source, results and earlier failed variants](architecture/requirements/OWNED-DEDUP-OPERATIONS-20261104.md).
-These are CPU-cycle results, not wall-time or device qualification.
-
-The follow-up [#732](https://github.com/jeffglousher/coaptic/pull/732) fuses
-allocated deadline refresh into the existing expiry walk, with no added retained
-storage. In the declared single-CPU idle-expiry comparison, server App poll wall
-time falls6.46% unprotected and2.27% with established OSCORE versus #731;
-both steady allocated preservation guards and all descriptive controls pass.
-Keep the [matched fixture, sources, raw hashes, earlier unpinned guard failure
-and scope](architecture/requirements/FUSED-DEDUP-EXPIRY-20261104.md).
-
-The allocated dedup expiry improvement in [#731](https://github.com/jeffglousher/coaptic/pull/731)
-skips repeated expiry walks before the next possible deadline. The matched
-complete-App Service comparison shows 6.53% lower unprotected poll wall time and
-1.77% lower established-OSCORE poll wall time. Fixed storage layout is preserved;
-its percentage regression guards remain statistically unresolved. Keep the
-[exact workload, successes, failed guards and reproduction method](architecture/requirements/DEDUP-EXPIRY-20261103.md).
-This is scoped Windows App wall evidence, not either original CPU50 target.
-
-Windows profiling capability is delivered in companion #226/#227/#229. The
-[retained live proof](https://github.com/jeffglousher/coaptic-validation/tree/de360dd597e030a63525e1e2d44dda895e8d3ea6/tools/benchmark/evidence/windows-live-c1-capability-20261030)
-contains verified exchange counts, server-thread ETW capture, portable
-stack JSON and an interactive flame/self/inclusive view. The measured library
-is `8af71fe4aa73b3bb76a921a836a1a9647d75f361`; later sources do not inherit
-that measurement. Exact offline projection preserves all 3,164 unprotected
-samples, including 1,633 with App ancestry. Unwind/inline completeness, CPU mode
-and circular overwrite remain uncertain, so the result is diagnostic rather
-than a qualified hotspot ranking or CPU-share claim. Protected export refuses
-the unchanged count limit; the final two original captures remain not run.
-The recording/export campaign ends without larger caps or replacement samples.
-
-The [admission headroom candidate #716](https://github.com/jeffglousher/coaptic/pull/716)
-is rejected and closed without merge. Its
-[retained Stage A screen](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/admission-headroom-20261030)
-passes all eight normal-headroom gates. Public-App RX, TX, Observe cancellation
-and notification-backed Block2 software proofs also pass in both security modes
-on both core arms; the later isolated driver additionally checks ordinary
-borrowed Block2 and its pressure-refusal counterexample.
-
-The frozen Stage B [run 41154445351](https://github.com/jeffglousher/coaptic-validation/actions/runs/41154445351)
-at companion source c656045 passes 114 portable checks, 24 untimed qualification
-cases and all 40 timing processes. Its 72,000 latencies and 163,840 calibration
-values reproduce all 36 regression comparisons: 13 fail and 23 pass. Every
-one-sided upper95 B/A bound had to be at most 1.02. Functional success and Stage A
-benefit do not override the failed gates. [Companion #237](https://github.com/jeffglousher/coaptic-validation/pull/237)
-retains the complete source-specific evidence, original failed qualification,
-corrected qualification and standalone verifier. Stop without replacement
-samples, another variant, changed thresholds or pooling. The cause remains
-unknown; these are conditional instrumented release-test App wall comparisons,
-not CPU, socket, device, stack or whole-memory evidence. No admission optimization
-is delivered. Compiler execution, affinity, restoration and cleanup remain
-producer-attested; VM retirement is unverified.
-
-The [classified dedup insertion candidate #717](https://github.com/jeffglousher/coaptic/pull/717)
-is rejected and closed without merge. All 16 complete-App processes finished,
-but Default unprotected failed in both orders and Default OSCORE failed in AB
-order. All eight comparisons independently reproduce the frozen decisions.
-Retain the [complete screen and verifier](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/dedup-classified-20261030).
-Stop without another variant, replacement samples, changed gates or pooled appeal;
-the observed cost cause remains unknown. No core/API optimization from this
-candidate is delivered. The screen tooling and evidence are delivered separately.
-
-Linux capture qualification
-and device elapsed tracing remain separate from the delivered Windows proof;
-no device, stack, whole-memory or 50% CPU objective is established.
-
-The isolated Observe route-index experiment in #711 is rejected and remains
-unmerged. The complete due-notification poll screen misses both required
-32-route last-slot benefits in both AB/BA rounds: unprotected changes are
-+3.297% / +1.510%, OSCORE -0.613% / -1.398%, against a frozen 5% improvement
-gate. Ten of twelve other regression guards also fail. All 877 focused
-correctness tests, 48 fixture receipts and four timing arms pass; same-head
-quick checks pass 1,209 all-feature and 716 minimal-feature tests, strict Clippy
-and formatting. Retain the
-[raw samples and exact input reconstruction](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/observe-route-index-20261029).
-Stop without replacement samples, changed gates, another source variant or
-eight-profile expansion. This measures instrumented hosted App poll wall time
-with an in-memory transport; the observed cost cause remains unknown. No runtime
-optimization is delivered; accepted reductions and both CPU targets remain intact.
-
-The separate response-only cipher continuation in #709 is rejected and remains
-unmerged. First-slot ordinary responses slow 2.727% / 8.411%, with upper95
-+5.431% / +13.257%, failing the frozen 2% guard in both AB/BA rounds. Fallback
-improves 14.6-17.0%, but does not override those failures. All 139 focused
-correctness tests and four arms pass; separate quick checks pass 1,211
-all-feature and 711 minimal-feature library tests. Retain the
-[complete comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-cipher-continuation-20261029).
-The cipher-reuse campaign ends without replacement samples, changed gates,
-eight-profile expansion or another cipher variant. The ordinary-path cost cause
-remains unknown. No runtime optimization from this experiment is delivered;
-existing accepted reductions and all capabilities remain intact.
-
-The isolated response-binding lookup experiment in #705 is rejected and remains
-unmerged. Its lookup microbenchmark improves about 21%, but authenticated
-response opening slows 2.871% and 1.009% in the two AB/BA rounds; the first-slot
-regression guard also fails. All 134 correctness tests pass. Stop sampling and
-retain the [raw measurements](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-binding-lookup-20261029).
-No production rollback or CPU/memory gain follows.
-
-The separate transient-cipher prototype in #707 is also rejected and remains
-unmerged. Genuine original-binding fallback improves 10.4-10.7%, and rejected
-two-attempt traffic improves 15-16%, but all three normal-path upper95 guards
-fail in both rounds. Ordinary response opening slows 3.452% / 3.149%; first-slot
-opening slows 2.816% / 2.605%; latest-bound Observe opening slows 2.189% / 1.839%.
-All 136 OSCORE correctness tests, four arms and 840 sample pairs pass. Preserve
-these useful fallback results and the normal regressions in the
-[complete retained data](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/oscore-transient-cipher-20261029).
-The campaign stops without replacement samples or eight-profile expansion.
-A normal-path-preserving design may be investigated separately; the cost cause
-and emitted stack are unproven. No CPU50, socket or whole-memory gain follows.
-Existing delivered reductions remain intact.
-
-The October 29 hot-path pass developed six bounded mechanisms and screened a
-seventh. The combined batch in #699 is held, not promoted as a performance win:
-all eight Windows development runs pass functionally, but repeated adverse
-median signals remain in SmallDevice/Observe and then Gateway after a selective
-body-lookup refinement. Retain both complete cohorts and the staged source.
-Only the independent notification-scratch change is selected for delivery:
-four reachable metadata options use four private entries rather than 24.
-Windows x64 Rust object layout is 104 rather than 584 bytes; emitted stack,
-CPU and whole-memory effects remain unknown. No public option capacity changes.
-The unchanged notification encoder/oracle tests reuse the passing precursor
-executions explicitly; the notification-only source has fresh strict Clippy
-and MSRV checks, but no new library-test or quick-suite executable. See the
-[seven dispositions and proof limits](architecture/requirements/OPTIMIZATION-ITERATIONS.md#october-29-hot-path-screen).
-
-The October 27 direction is reliability first, performance second, ease of use
-third. Deliver independently proven memory, stack, code-size, CPU or reliability
-improvements without requiring each to meet the separate 50% CPU objective.
-Compare fixed configurations across library revisions; resource/concurrency
-tradeoffs remain explicit implementer choices. The
-[iteration plan and salvage dispositions](architecture/requirements/OPTIMIZATION-ITERATIONS.md)
-define the next small development-suite slice and separate it from full acceptance.
-Core [#693](https://github.com/jeffglousher/coaptic/pull/693) removes unused
-pin arrays from three fixed table owners and bounds local OSCORE AAD backing.
-The unchanged eight-profile Windows configuration measures enclosing-App savings
-of 8 bytes for Device, 32 for Gateway and 128 for each fixed Service row;
-SmallDevice and allocated Service remain unchanged. The local AAD object is
-40 rather than 72 bytes, without an emitted-stack claim. One full candidate
-run passes in 15.40 seconds; a second fails during common proof startup before
-all sixteen timing cells. Validation #208 repairs a concrete active-bind readiness
-race separately and passes finite checks on both frozen server binaries; the
-observed failure's discarded server log leaves its cause unestablished. Retain
-both receipts. These are bounded memory and functional
-results, with no CPU or latency acceptance. Allocated table-pin removal is validated
-separately in #695; the simple dedup replay enum is rejected because it
-would discard bytes observable through existing equality and hashing.
-
-Core #695 preserves that fixed implementation and omits unused allocated table
-pin backing. Matched Service requested pool heap falls 282,640 to 282,512 bytes;
-its inline App remains unchanged. Fault injection verifies exact allocation
-requests, partial cleanup, refusal and recovery. Both AB and a predeclared reverse
-BA development pair pass complete operations in about 14 to 15 seconds per run.
-Large opposite fixed-Service timing shifts do not repeat their signs; retain all
-four observations and make no CPU/latency acceptance claim. Startup allocation
-request counts are measured separately from operation timing. Both CPU targets
-and whole memory remain open; the original source baseline is unchanged.
-
-Core #697 skips only the terminal TX-body expiry scan when a fresh documented
-O(1) occupied count is zero, immediately after deferred expiry. Occupied/pinned
-bodies retain the original loop; no state, capacity or buffer is added. Focused
-checks pass 435 executions, Clippy/fmt and MSRV. The unchanged eight-profile AB
-screen passes in 14.37/14.29 seconds. A separate predeclared two-pair-per-mode
-512-operation fixed-Service wall probe observes unprotected median changes
--2.04%/-1.44%; OSCORE is mixed -2.23%/+1.82% and therefore inconclusive. Stop
-sampling and retain every run. This modest directional unprotected observation
-and removed empty work establish no CPU/latency or protected benefit claim.
-Measured App/requested owners stay unchanged; prior memory reductions remain.
-Both 50% targets and whole-memory/remaining qualification stay open.
-
-Companion #207 expands the prepared development suite to eight fixed rows:
-SmallDevice datagrams, blockwise and blockwise/Observe; Device and Gateway;
-Service without blockwise; and fixed/allocated Service blockwise. All run
-unprotected and established OSCORE. Device/Gateway demonstrate C2 and Service
-C4 over independent endpoints; Observe has a separate complete lifecycle proof.
-The sixteen socket cells and six separately scoped C1 core cells preserve exact
-capacities and mark ten unavailable core cells unsupported. The original
-four-profile #205 timings (8.03/7.86 seconds) remain historical evidence, not the
-expanded suite's duration. The expanded Windows proof passes in 14.27/14.23
-seconds after preparation, with protected Observe and all sixteen socket cells
-verified on both selected revisions. This is a development regression screen.
-Full CPU, memory and physical qualification remain separate. Direct RX's
-historical 2,048-byte enclosing-App saving is already retained in the companion;
-it is not a whole-memory result or justification for default promotion. The
-adversarial sanity pass found no supported correction warranting revival of the
-old ppoll or option-return batches. Preserve their useful ideas and exact failure
-records, rather than restarting those experiments unchanged.
-
-The bounded follow-up to the eBPF counts has ended. Linux level readiness in
-companion #202 verifies all 480,000 measured operations plus 320 warmups, but
-run `40130199038` fails the OSCORE repeat-2 median guard: 27.431 to 29.823 us
-(+2.392 us against the +2 us limit). Full-cohort CPU claims are withheld; all
-p99 and pooled passes cannot rescue the failed pair. Stop expansion, retain
-the failed cohort and leave the implementation unmerged. Ordinary Mio remains
-the reference. Linux and Windows functional proofs pass, including fixed-Service
-startup and authenticated 16 KiB responses; they do not establish a CPU gain or
-peak memory. No retry, replacement cohort or further diagnostic expansion is
-planned. Both 50% targets and the remaining acceptance matrix stay open.
-
-The requested eBPF syscall benchmark now has actual Linux results in
-[companion #200](https://github.com/jeffglousher/coaptic-validation/pull/200).
-Run `40112478137` completes sixteen SmallDevice 32-byte ordinary-Mio/C1 CON
-windows: 480,000 verified operations plus 320 warmups. Every ON capture records
-one successful send, one successful receive plus one EAGAIN receive, and one
-epoll wait per operation; anomaly counters are zero. Four pair median guards
-fail, so both tracing-overhead ratios remain withheld despite pooled passes.
-This is diagnostic functionality, not a CPU gain or removable transport share.
-Nine Linux loader tests (including seven command-reader regressions), 201 Python
-tests and locked builds pass. The two earlier failed attempts remain retained.
-The empty-receive hypothesis was tested in the bounded follow-up above; its
-failed latency guard ends that experiment without a qualified gain. No replacement
-capture or sampling-infrastructure expansion is planned. Both 50% CPU targets,
-remaining representative cells and whole-memory acceptance stay open.
-
-
-The [current delivery handoff](architecture/DELIVERY-HANDOFF.md) identifies saved
-work, pending checks and transport choices. The finite option-batch comparison
-has finished; its failed latency guard is retained. The bounded C1 profile fixture
-is delivered in companion #174 and independent-endpoint CON in #176. Staged
-fixture recovery (#175/#178) and Linux workflow integration (#177/#179) are now
-delivered and pass focused Linux proof. The first SmallDevice C1 comparison
-passes every guard, with modest CPU reductions; remaining implementation and
-representative qualification continue. Companion #184 now delivers bounded long
-low-load partitions and #186 bounded process-memory observations. The first
-500-second unprotected SmallDevice partition passes every guard, with a 3.09%
-server CPU reduction. The separate identical-core memory control verifies
-complete operations and 32 available snapshots; its CPU results remain withheld
-for low ticks and one failed OSCORE median guard. The first 500-second OSCORE
-SmallDevice partition verifies 400,000 operations but fails pair and pooled
-latency guards; its CPU comparisons are withheld. Both 50% targets and
-whole-memory acceptance remain open. PR watches and recurring tasks remain off.
-
-The first fixed-Service 16 KiB blockwise partition (`40081182117`) verifies
-29,600 unprotected operations plus 160 warmups. Its median guards fail in
-three pairs and the pooled stratum; CPU comparisons remain withheld. Actual
-Linux App owners match at 314,856 bytes, with separate 16,384-byte representation
-storage. The first required OSCORE counterpart (`40083610413`) passes all eight
-windows and every guard: server CPU is 610.811 to 561.486 microseconds/op
-(-8.08%). That remains above the required 0.5 ratio and does not replace the
-failed unprotected cohort. Companion #191 delivers the bounded Service
-complete-operation core probe and #192 its explicit Linux functional workflow.
-Windows validates both pinned cores and eight cells. Linux run `40090187411`
-also passes 32 native tests, strict binary Clippy and all eight cells, verifying
-1,152 complete operations. This supplies #190's bounded functional proof.
-These wall probes cannot qualify CPU reductions or rescue failed socket guards.
-
-Companion #194 delivers bounded inline caller and per-sample readouts for socket
-record captures. Linux diagnostic run `40096580435` verifies 36,000 complete
-operations plus 320 warmups and all eight new readout helpers. Every clean pair
-fails a latency guard; primary CPU comparisons remain withheld. User samples
-are 76/60 unprotected and 135/111 OSCORE for baseline/candidate, below 200 even
-before App filtering. App-rooted inline eligibility and exposure remain
-unestablished. This closes only #193's readout functionality after reviewed
-delivery; it supplies no cost nomination or optimization gain. No replacement
-run, parser expansion or sampling-rate escalation is planned.
-
-The refreshed [Windows library comparison](https://github.com/jeffglousher/coaptic-validation/tree/main/tools/benchmark/evidence/current-windows-20261023)
-contains 348,000 verified complete operations across 2,610 cells and 90 workload
-views, with zero failed operations. It includes unprotected, OSCORE, DTLS and
-separate HTTP/3 strata. Raw receipts, latency samples and a regrading command
-are published. These closed-loop rankings do not establish server saturation,
-whole-system memory requirements or the CPU target below. The measured core is
-`b9b83d8`; the later dependency update is outside that measurement.
-
-[CPU efficiency #650](https://github.com/jeffglousher/coaptic/issues/650) remains
-open: halve server CPU time per verified complete operation, separately for
-unprotected and established OSCORE communication. Preserve behavior, security,
-capacities, refusal and recovery. A passing host control does not complete the
-representative SmallDevice/Constrained and cloud targets.
-
-The [performance acceptance matrix](architecture/requirements/PERFORMANCE-ACCEPTANCE.md)
-records the retained baseline, unchanged host gates and explicit remaining
-representative cells. Missing baseline or sufficient-resolution evidence keeps a
-cell open. Production cleanup under validation #169 is repaired and qualified.
-The bounded Linux direct RX comparison qualifies all windows and latency guards
-but shows no consistent CPU saving. Companion #172 and #173 are merged; the
-latter preserves source-specific locked builds across the syn dependency change.
-Core option reuse was reviewed in #675 and closed without merging. The cumulative original-baseline
-comparison and current-main isolation both retain OSCORE p99 failures. The batch
-was ended after an independent disposition review found no evidence-supported
-correction; no further campaign is scheduled. Neither CPU target is complete.
-
-The [SmallDevice C1 run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
-compares original baseline `b8f44fa` with accepted `d23f93c`, using companion
-`8dc65fd`, the same Mio adapter and frozen baseline client. Its 32-byte, C1 CON,
-1,000/s, thirty-second, four-pair cells verify 480,000 operations plus 320 warmups.
-All sixteen windows and every pair/pooled latency guard pass. Server CPU/op is
-14.333 to 13.667 microseconds unprotected (-4.65%) and 15.917 to 15.417 OSCORE
-(-3.14%). This one representative stratum leaves both 50% targets open and does
-not replace failed host cohorts. See the handoff for sources, memory limits and
-reproduction; low-load, blockwise, Service, concurrency and throughput remain open.
-
-The matched original-to-accepted Windows core probe now verifies 322,048
-exchanges across sixteen windows. Its Default/Alloc 64-byte per-poll wall
-diagnostics do not establish server CPU gain or SmallDevice acceptance.
-Companion #188 adds the explicit fixed SmallDevice 32-byte mode without changing
-the legacy Default64 schema or batch CPU mode. Locked b8/d23 Windows checks and
-eight functional cells verify 1,152 exchanges. Companion #189 delivers its
-bounded opt-in Linux workflow; run `40079192247` passes twenty native tests and
-all eight Linux functional cells, verifying another 1,152 exchanges. This completes
-the narrow SmallDevice32 C1 probe proof under #187, with Default64 regression.
-These wall probes do not establish either CPU target or whole-memory acceptance.
-The bounded 9970 Hz screen from companion #181 stopped at its first control's
-rounded report count; the other three controls did not run. The approach is
-ended without a retry or communication capture. Companion #182 restores the
-qualified 997 Hz source as `bff8859`. See the handoff for sources and limits.
-
-Dispatch constructs responses directly and applies Observe updates in place.
-Local Inner scratch initializes only after protected input is selected. Windows
-emitted code confirms removal of the helper return copy and the ordinary
-608-byte response join copy. A qualified CPU gain remains unestablished.
-OSCORE builds AAD directly in its existing output buffer. Canonical bytes and
-refusal behavior are preserved. Windows emission confirms removal of the
-48-byte intermediate, its 44-byte clear and staging copy, with more branches
-and register saves. Net CPU benefit remains unestablished.
-
-Discovery catalog scratch initializes only for the selected built-in GET.
-Windows emission removes the ordinary 128-byte clear; scratch-owner layouts
-and the measured 17,128-byte constrained async future stay unchanged. The
-local dispatch frame grows by 16 bytes. This is a recorded stack cost, not
-a whole-memory saving or measured CPU gain.
-
-The historical clean socket comparison tests core `7ab6949` against baseline
-`b8f44fa`, using companion `eea0374`. Commands, compiler settings and limits
-are in the
-[Linux CPU guide](https://github.com/jeffglousher/coaptic-validation/blob/eea0374b60c93098a7f0dcf24a999e49d753d624/tools/benchmark/linux_cpu.md).
-
-The [server-App CPU diagnostic](https://github.com/jeffglousher/coaptic-validation/pull/170)
-is implemented and merged. Its [qualified Linux run](https://github.com/jeffglousher/coaptic-validation/actions/runs/40024678302)
-uses core `b9b83d8` and companion `ff46fd5`: four serial processes, each with
-50,000 measured operations and 128 warmups, a 64-byte representation and no UDP.
-All 200,512 exchanges verify, all four CPU windows qualify, and 1,001 independent
-evidence checks pass. The two unprotected observations are 0.901244 and 0.916253
-microseconds/op; OSCORE observations are 2.032878 and 2.034727 microseconds/op.
-These are server-App driver windows including full App polls, fixture copies,
-monotonic reads and loop/gate work. Client preparation and complete authenticated
-response verification run outside them. Two observations per mode do not establish
-a confidence interval, an optimization gain or either 50% target.
-
-The runner is Ubuntu 24.04, Linux 6.17.0-1022-azure, AMD EPYC 7763 with four
-assigned logical CPUs, glibc 2.39 and Rust 1.99.0. Release uses thin LTO, one codegen
-unit, debug information and frame pointers; detailed diagnostics are disabled.
-The prior [five-window control](https://github.com/jeffglousher/coaptic-validation/actions/runs/40022418841)
-also verifies every exchange, but unprotected windows are below the unchanged
-10 ms CPU minimum. Those failures remain retained. Consolidating the same 50,000
-operations into one window preserves the 10 ms, 100-resolution and 1% empty-control
-guards. Empty controls are never subtracted.
-
-Each diagnostic row has two 256-byte capture buffers and 40 bytes of metadata
-and padding: 552 bytes total. App/CoreIo datagrams remain 1,472 bytes with
-unchanged pools. Enclosing requested
-fixture plus App is 27,658,654 bytes, including all rows, metadata/padding,
-requested App heap, inline owners and a 16 KiB scratch allowance. This is below
-the 32 MiB diagnostic ceiling, not a production memory requirement or whole-RAM
-measurement. Allocator overhead and generated peak stack remain unknown. Native
-worker-death/control-EOF checks pass. Later Linux run `40042232531` also passes
-production launcher success/timeout and mixed-UID live-thread cleanup proofs for
-reserved inherited process groups. Arbitrary escaped-group containment remains
-outside that proof.
-
-### What the measurements support
-
-The [new original-baseline comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40043745872)
-uses accepted `b8f44fa` versus candidate `7c04304`, the same Mio adapter and the
-retained 4,000/s, C1 CON, 64/1024-byte, twelve-second, four-pair workload.
-All 32 clean windows verify 1,536,000 operations plus 640 warmups with zero
-operation failures; operation/rate/pacing/tick/cleanup gates pass. OSCORE p99
-fails two pairs (+17.861 and +15.664 microseconds) and both pooled sizes
-(+13.306 and +11.093 microseconds for 64/1024 bytes). Full-cohort CPU claims
-are withheld. All 16 separate profile windows verify 320,000 operations plus
-320 warmups; their timings do not enter clean comparisons. Sampling provides
-kernel scheduling/socket/syscall and dispatch/AES/CCM leads, with insufficient
-coverage/inline/throttle evidence for a causal hotspot ranking.
-
-This cumulative comparison does not isolate #675. The predeclared
-[incremental comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/40045613509)
-uses d23f93c versus the same 7c04304 and otherwise the same clean plan, with
-profiling off. All 32 windows verify 1,536,000 operations plus 640 warmups with
-zero failures; source, locks, pacing, ticks and cleanup pass. The second OSCORE
-1024-byte pair fails p99: 50.112 versus 72.139 microseconds, a +22.027-microsecond
-delta. Passing pooled guards cannot erase that failure. Qualified incremental
-CPU claims are withheld; the original-baseline failure remains retained and
-neither target can be completed by this local control.
-
-The [direct RX control](https://github.com/jeffglousher/coaptic-validation/actions/runs/40042232531)
-compares identical core `b9b83d8` using Mio versus direct Linux MSG_TRUNC receive:
-64/1024 bytes, both modes, 4,000/s, C1 CON, twelve seconds and two rotated pairs.
-All 16 windows, eight pair guards and four pooled latency guards pass; 768,000
-measured operations plus 320 warmups verify with zero operation failures.
-Direct/Mio CPU ratios are 0.93893/1.02290 unprotected and 1.01439/0.98089 OSCORE
-(64/1024 bytes). This mixed result does not justify expanding the approach or
-changing defaults. The earlier missing-Clippy setup failure `40041518786` remains
-retained with zero campaign windows. See the handoff for memory and reproduction.
-
-The [retained same-Mio comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39924741885)
-verified 1,536,000 operations plus 640 warmups with no operation failures:
-4,000/s, C1 CON, 64/1024 bytes, twelve seconds and four rotated pairs.
-Both labels use the same capacities and frozen baseline client. Sixteen of
-32 windows exceed the unchanged 1% missed-start limit. All four full-cohort
-CPU ratios are withheld; this run establishes no speedup.
-
-All pooled latency guards pass numerically, but two pair guards fail:
-unprotected 1024-byte median +2.212 microseconds and OSCORE 64-byte p99
-+10.402 microseconds. Both pairs also fail pacing eligibility. Preserve these
-failures; pooled values do not establish overall latency acceptance.
-
-The native Linux process-clock smoke test and all 32 bounded clock sidecars
-pass. These optional whole-process, all-thread readings supplement the
-original tick metrics. They do not change eligibility or provide replacement
-ratios; reported nanosecond resolution is not nanosecond accuracy. They
-exclude descendants and unattributed whole-machine work. Profiling was off.
-
-A separate [admission diagnostic](https://github.com/jeffglousher/coaptic-validation/actions/runs/39937330058)
-uses companion `c123d8b4` and identical core `1629c853` on both labels: Mio,
-64 bytes, both security modes, 4,000/s, C1 CON, twelve seconds and two rotated
-pairs. All eight windows pass the original operation, rate, pacing, tick and
-cleanup gates: 384,000 verified operations plus 160 warmups, with no operation
-failures. Linux checks pass 111 runner tests and 19 diagnostic tests; the
-workflow builds Rust binaries but does not run native Rust tests.
-
-The fixed counters reconcile 293 missed starts: 287 were already at least one
-period late at the preceding verified completion, and six crossed that limit
-after traversing the idle-wait branch. No first-admission or no-idle crossing
-occurred. Prior completion includes inherited delay; these categories do not
-identify a server, client, sleep or scheduler cause. The idle branch can include
-a zero-duration sleep. This instrumented cohort does not explain or replace the
-prior 16 pacing failures.
-
-Both diagnostic CPU ratios remain withheld even though the original gates pass.
-One descriptive OSCORE pair median guard fails at +13.615 microseconds. No
-latency acceptance or instrumentation-overhead estimate follows. The diagnostic
-state and its containing Option each occupy 208 bytes on Linux; those nested
-sizes are not additive or whole-memory measurements. Profiling was off.
-
-The prior [same-Mio core comparison](https://github.com/jeffglousher/coaptic-validation/actions/runs/39902235048)
-qualified all 32 windows: 640,000 operations plus 640 warmups at 4,000/s,
-C1 CON, 64/1024 bytes, five seconds and four rotated pairs. Baseline `f23d69c`
-and candidate `ff089264` use the same adapter, capacities and frozen client.
-Server CPU changes were -1.80%/-2.70% unprotected and -4.07%/-0.76% with OSCORE.
-These are only 1â€“5 pooled counter ticks; no material repeatable saving is
-established. Pooled latency guards pass, but three pair guards fail:
-unprotected 64-byte p99 +80.892 microseconds, unprotected 1024-byte median
-+2.634 microseconds and OSCORE 1024-byte median +4.427 microseconds.
-Preserve all three failures. Overall latency acceptance is not established.
-Profiling was off, so this run does not identify the next hotspot.
-
-The earlier [Ready-versus-Mio control](https://github.com/jeffglousher/coaptic-validation/actions/runs/39891201686)
-supports a limited host CPU saving of 8.28â€“14.29%, with two failed pair latency
-guards. [Receive staging](https://github.com/jeffglousher/coaptic-validation/actions/runs/39895566785)
-established no consistent gain and failed latency guards. Fewer empty App polls
-did not establish lower total cost. Full reports and failures remain in #650;
-existing selectors and defaults remain unchanged.
-
-These are separate host comparisons. Do not combine their ratios, replace failed
-windows or subtract timings with different scopes. Process CPU includes host I/O
-and scheduling; sparse earlier profiles did not establish a hotspot ranking.
-Per-call probe clocks and logical transport counts alone cannot prove CPU gains.
-
-### Next steps
-
-- Keep the client pacer unchanged: source inspection found no missing deadline
-  recheck or demonstrated defect. Preserve the original failed windows and gates;
-  interval counters establish no server, sleep or scheduler cause.
-- Reuse the merged server-App CPU mode for core diagnosis. Its source-matched
-  native checks and finite Linux clock/window qualification pass. Keep its
-  driver scope and cleanup limits explicit; subtracting it from another run's
-  socket timing cannot establish transport cost.
-- The bounded direct RX experiment against Mio is complete. Keep it explicit;
-  its mixed result does not justify further transport complexity. Any later
-  completion/batching experiment needs a demonstrated cost and bounded ownership,
-  cancellation, kernel/worker accounting and refusal/recovery proof first.
-- The transient validated-option experiment is ended without merging #675 after
-  its failed incremental p99 guard. Retain its sources, tests and measurements.
-  Existing
-  Windows object/future checks remain unchanged; generated dispatch/poll frame
-  reservations are unchanged, but validation is now outlined with a 200-byte
-  reservation and 64 bytes of saved registers. Record that cost without claiming
-  peak-stack acceptance. The optimizer-resistant probe verifies all 161,024
-  exchanges; per-call wall clocks establish no CPU gain.
-- Use the delivered C1 fixture extension for unchanged SmallDevice, explicitly
-  configured SmallDevice blockwise, and fixed/allocated Service profiles using
-  the existing Mio loop/client. Independent-endpoint CON is delivered in
-  companion #176 with one shared context and bounded socket lanes. Actual overlap
-  and fully verified service on every lane remain mandatory; concurrent NON
-  cannot substitute. Functional Windows checks are not Linux CPU qualification.
-- Optimize the largest supported cost in a coherent batch. Reuse storage and
-  parsing, preserve authentication, replay/nonce safety, cancellation, retained
-  bytes and fresh-clock ordering. Add no persistent timer cache or hidden growth.
-- Validate the change with matched, complete operations and clean CPU windows.
-  Keep diagnosis separate from clean measurement. Reuse the validated bounded
-  whole-process clock supplement alongside the original coarse ticks;
-  preserve eligibility, ratios and failures. Reuse existing counters and
-  runners; add bounded observability only to answer a concrete cost question.
-  Keep kernel/eBPF work proportional to measurable value.
-- Complete representative SmallDevice/Constrained and cloud qualification:
-  small messages, blockwise bodies, CON concurrency, CPU-limited throughput,
-  saturation, fairness, cancellation and recovery. Report client limits,
-  uncertainty and instrumentation overhead with all failures retained. The
-  default runner retains its 2..30-second windows. Delivered companion #184
-  additionally permits one representative single-security Mio C1 CON partition
-  with four rotated pairs and 31..1500 seconds per window, perf/diagnostics off.
-  All eligibility and pair/pooled latency gates remain. The global 60,000 client
-  sends can still leave cells below twenty server ticks regardless of duration;
-  pooling sub-floor windows cannot qualify them. Run `40065560596` now qualifies
-  the 100/s, 500-second unprotected SmallDevice slice at 50.20 to 48.65 microseconds
-  per complete operation; it does not meet the 50% target or replace failed cells.
-  OSCORE run `40073484846` completes all eight equivalent low-load windows but
-  fails repeat-one median/p99, repeat-three median and pooled median guards.
-  Keep its CPU comparisons withheld and that acceptance cell open; no retry or
-  replacement cohort is planned.
-  Service-fixed 16 KiB/C1 CON/50 starts/s/74-second run `40081182117` completes
-  all eight windows but fails three pair median guards and the pooled median.
-  Its CPU comparisons remain withheld. The first OSCORE counterpart
-  `40083610413` verifies 29,600 authenticated operations plus 160 warmups and
-  passes every measurement guard, with a 0.919248 CPU ratio. Preserve both
-  modes' original guards and failed cohorts. Reuse companion #190's delivered,
-  source-matched Service complete-operation core probes for the applicable paths.
-  Remaining Service storage/payload/load/concurrency,
-  throughput and the required 0.5 ratio stay open.
-  Use these retained results before extending remaining plans. Companion #186's
-  bounded lifetime memory/stack-limit observations pass the limited Linux proof
-  in `40066937573`; they do not establish whole-memory ceilings or used stack.
-
-Count whole-system memory: configured pools, initialization, metadata, scratch,
-security, transport, runtime, stacks and kernel costs. Pools are allocated at
-startup and reused; automatic expansion stays off. Inline components and RSS
-snapshots do not establish peak or whole RAM. The direct RX control reports
-App-including-adapter owners of 16,008 bytes for Mio and 13,960 for direct; Poll
-and Events are separate inline owners of 4 and 24 bytes (eight event capacity).
-Heap, allocator, generated peak stacks and kernel owners remain separate or
-unknown. The lazy local scratch adds one tag byte in measured Windows layouts,
-with no persistent App field or extra payload buffer. Do not sum nested owners;
-whole-memory acceptance remains open.
-The retained SmallDevice Linux ELF inspection now identifies the declared load
-image and its nested 32-byte representation/24-byte metadata statics in the
-handoff. Image extents and TLS headers do not establish resident, dynamic TLS or
-peak requirements; keep the remaining enclosing-owner ceilings open. The handoff
-now freezes source-identified host App/requested-pool owner caps from retained
-startup ledgers. The fixed-Service Linux run now supplies a matched 314,856-byte
-App reference, with zero requested pool heap and separate representation backing.
-Linux SmallDevice blockwise, allocated Service and aggregate/whole-memory caps
-remain open; host figures do not establish device RAM requirements.
-
-### Delivered behavior and boundaries
-
-No accepted protocol implementation gap remains in this batch. Fixed/allocated
-storage, sync/async operation, OSCORE/EDHOC, guided commissioning and durable
-ownership are implemented. App Calls have isolated concurrent Block2 assembly
-([#655](https://github.com/jeffglousher/coaptic/issues/655)); nonce ownership and
-per-endpoint NSTART still constrain concurrency qualification.
-
-The native async and blocking controls remain optional. Earlier async work did
-not establish a CPU gain; the blocking control has a distinct soft write-timeout
-policy. Neither is a substitute for immediate-refusal or async cancellation
-qualification. The adjacent deadline-query cleanup removes repeated work but
-establishes no measured CPU gain. Retained reports and #650 hold the full
-experiment ledger.
-
-[#647](https://github.com/jeffglousher/coaptic/issues/647) studies volatile
-plaintext/key lifetime and bounded zeroization; removing copies does not promise
-erasure. The third-party [Go comparator defect](https://github.com/jeffglousher/coaptic-validation/issues/146)
-is tracked separately from Coaptic implementation.
-
-## Qualification waiting for physical access
-
-These stay open. Continue software work while their prerequisites are unavailable.
-
-- **Power-loss recovery â€” [#333](https://github.com/jeffglousher/coaptic/issues/333):**
-  cold-power and interrupted persistent-write checks on the reserved ESP32.
-  Done when retained identity, authorization and unresolved effects recover
-  correctly, or the device explicitly refuses unsafe recovery.
-- **Backup-owner recovery â€” [#365](https://github.com/jeffglousher/coaptic/issues/365):**
-  execute installed recovery with three distinct credentials, then refuse reuse
-  of the consumed backup. Needs the operator's deferred touch action.
-- **Reverse LAN comparison â€” [#341](https://github.com/jeffglousher/coaptic/issues/341):**
-  execute MCU-to-host unprotected and protected cells. Needs scoped Windows
-  inbound UDP permission. Host-to-MCU execution and reverse software/build
-  checks already exist; they do not complete these two runtime cells.
-
-Preserve the reserved device's keys, NVS, custody history and unresolved effects.
-Missing history never authorizes resetting it to first use.
-
-## Scope and completion
-
-[Protocol scope](architecture/IETF-RFC-PLAN.md) defines the supported roles.
-The [qualification checklist](architecture/requirements/VALIDATION-PLAN.md)
-defines the remaining runs and points to retained proof.
-[#130](https://github.com/jeffglousher/coaptic/issues/130) coordinates delivery;
-[Project 2](https://github.com/users/jeffglousher/projects/2) shows its queue.
-
-The milestone is complete when accepted behavior is implemented, relevant finite
-checks pass, the onboarding flow is ready to try, and the report states measured
-performance, resource requirements and limits. An unavailable prerequisite is
-still unfinished qualification.
-
-Publication is separately authorized under
-[#132](https://github.com/jeffglousher/coaptic/issues/132).
-It requires a selected candidate and release review; it is not the next automatic
-development step. Unsupported transports and roles are contribution opportunities,
-not hidden completion gates.
+Updated 2026-11-17 after core `b875088` and companion main `4190a89`.
+Priorities: **reliability, performance, ease of use**, in that order.
+This is the current status and work order. Detailed results live in linked
+[evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
+
+## Current position
+
+The supported direct UDP App implementation is delivered: bounded fixed/allocated
+storage, sync/async operation, OSCORE/EDHOC, commissioning, durable ownership and
+application receipts. Software recovery coverage has improved. Current-source
+installed-device qualification and the broader faster-than-libcoap/CPU goals
+remain unfinished. A completed batch is not project completion.
+
+## Latest delivered batch
+
+- [#760](https://github.com/jeffglousher/coaptic/pull/760): same-App recovery across
+  finite datagram blackouts, including identical retries, duplicate suppression,
+  capacity refusal/recovery, cancellation and expiry, in sync/async and
+  unprotected/OSCORE cells. This is software injection, not physical Wi-Fi proof.
+- [#762](https://github.com/jeffglousher/coaptic/pull/762): bounded custom elective
+  request options and the runnable sync/async `application_options` example,
+  covering payload, Accept/Content-Format, deadlines and useful errors.
+- [#763](https://github.com/jeffglousher/coaptic/pull/763): known-size NON Q-Block2
+  trailing-loss recovery. The integrated core passes 1,711 all-feature tests,
+  743 no-default library tests and 91 source-selected companion checks, plus
+  strict lint, MSRV, rustdoc and an Xtensa OSCORE library check. Original
+  capacities and whole-App ceilings remain; native body sidecar stays 688 bytes.
+  See the [source-matched receipt](https://github.com/jeffglousher/coaptic/pull/763#issuecomment-6954242320).
+
+No new performance improvement or firmware execution was established by that
+batch. Hosted checks on #763 have since settled without failures. Companion
+ordinary CI still pins accepted core `a6400cb`; that proof must not be silently
+relabeled as qualification of newer core `b875088`.
+
+## Active batch
+
+No engineering batch is currently active. The next assignment below is ready to
+start; its owner should record the selected source pair and scope here at startup.
+This documentation update establishes the
+[required batch handoff](DEVELOPMENT.md#finish-a-batch-or-hand-off).
+
+## Next batch: current-source ESP32 Wi-Fi reliability
+
+Qualify the accepted core and companion together on the reserved ESP32-S3 before
+another optimization campaign. First verify board custody, normal operation,
+actual source selection and available fixtures. Reuse existing build lanes and
+finite recovery campaigns; do not expand into a long soak or new platform.
+
+Completion criteria:
+
+1. Pin core and companion revisions, toolchains, firmware/image identity, SDK,
+   runtime policy, security and configured capacities. Verify both sync and async
+   device paths; distinguish server mode from the host client's mode.
+2. Exercise ordinary requests, blockwise transfer and the repaired Q-Block2 suffix
+   path, with protected/unprotected cases supported by the existing device fixture.
+   Check finite interruption/recovery, cancellation, duplicate effects and bounded
+   refusal/reuse. Label unavailable combinations explicitly. Software injection
+   and physical Wi-Fi interruption are separate claims; do not modify a shared AP.
+3. Fix any reproduced defect, run focused regressions, and retain source-matched
+   device results with RSSI, retries/disconnects and startup/resource observations.
+   Preserve identity, credentials, NVS, workers and capacities; restore and verify
+   normal authorized firmware after device work.
+4. Use existing timing evidence to identify the next concrete performance question.
+   Keep processing, scheduler/timer waiting and Wi-Fi wall latency separate. Choose
+   one justified follow-up, or state which missing evidence prevents the choice.
+   Update this plan and the relevant issues before handing off.
+
+If a physical action or access is unavailable, finish independent software work
+and report the exact remaining action. Do not substitute software success for
+installed-device qualification or invent a performance change to finish the batch.
+Track installed qualification under [#130](https://github.com/jeffglousher/coaptic/issues/130)
+and resulting comparative work under [#341](https://github.com/jeffglousher/coaptic/issues/341).
+
+## Blocked and deferred work
+
+- [#333](https://github.com/jeffglousher/coaptic/issues/333): physical cold-power and
+  interrupted persistent-write recovery requires physical power control.
+- [#365](https://github.com/jeffglousher/coaptic/issues/365): installed three-credential
+  backup-owner recovery requires the operator's deferred credential touch.
+- [#341](https://github.com/jeffglousher/coaptic/issues/341): reverse MCU-to-host LAN
+  cells require scoped inbound UDP access. Host-to-MCU proof does not complete them.
+- [#650](https://github.com/jeffglousher/coaptic/issues/650): CPU reduction and the
+  broader peer-speed objective remain open. No new candidate qualified in the last batch.
+- [#647](https://github.com/jeffglousher/coaptic/issues/647): volatile plaintext and
+  zeroization policy is future hardening research, not an established remote defect.
+- Runtime adapter development is complete for the preceding optimization batch.
+  Embassy firmware migration, new platforms and unrelated tooling remain deferred.
+  Publication, tags and outreach need separate authorization under
+  [#132](https://github.com/jeffglousher/coaptic/issues/132).
+
+## Retained decisions and evidence
+
+The accepted packet-lifetime batch measured 2.91% lower complete-App CPU cost sync
+and 3.28% async against its pinned baseline, with smaller selected futures and App
+owners. These are [source-specific historical results](architecture/requirements/PACKET-LIVE-RANGES-20261106.md),
+not fresh device or current-main measurements.
+
+Quiet-dispatch, timer-lifetime, cache-size and target-layout integrations failed
+preservation or speed gates. Keep the
+[failed sources, raw vectors and limits](architecture/requirements/ESP-TIMER-LIFETIMES-20261117.md)
+and [earlier experiment history](architecture/requirements/PROJECT-HISTORY-20261117.md).
+Do not rerun unchanged failures or use host results from rejected code as accepted
+current-source performance. The rejected extra Q-Block2 mode field also exceeded
+the whole-App ceiling; its smaller receive-state representation is the accepted fix.
+
+[Protocol scope](architecture/IETF-RFC-PLAN.md), the
+[qualification checklist](architecture/requirements/VALIDATION-PLAN.md), and
+[runtime/comparison policy](architecture/ASYNC-RUNTIMES.md) define supported
+behavior and valid claims. Keep this page short and current; detailed acceptance
+belongs in issues and execution history in evidence documents.

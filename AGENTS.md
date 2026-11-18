@@ -16,6 +16,10 @@ for checks. Humans and agents may author and review.
   Clean settled branches and worktrees. Hosted CI is advisory during pre-release.
 - Report what changed, what ran and what remains. Ask for an exact human action
   only when it cannot be completed autonomously.
+- Before ending a batch or handing it to another thread, update the short
+  project status in PLAN.md and follow the
+  [batch handoff](DEVELOPMENT.md#finish-a-batch-or-hand-off) requirements.
+  A finished batch does not imply the project goal is complete.
 
 ## Preserve the design
 
