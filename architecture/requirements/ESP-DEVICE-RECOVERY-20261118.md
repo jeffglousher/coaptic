@@ -8,6 +8,10 @@ OSCORE cells passed. The [numeric receipt](ESP-DEVICE-RECOVERY-20261118.json)
 contains image/ELF/archive identities, operation spans, recovery grades and normal
 restoration captures. This is finite qualification, not certification.
 
+Companion implementation was squash-merged as
+[#264](https://github.com/jeffglousher/coaptic-validation/pull/264),
+accepted main `40f971ba789cfc6c13dd72601a8fabe76dd8fbf2`.
+
 ## Source and fixed capacities
 
 The source checkout was documentation head `a844277`; every recorded Rust source

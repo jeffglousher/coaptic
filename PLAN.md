@@ -1,6 +1,7 @@
 # Project plan
 
-Updated 2026-11-18 after production core `b875088` and the device recovery batch.
+Updated 2026-11-18 after production core `b875088` and companion main `40f971b`
+([#264](https://github.com/jeffglousher/coaptic-validation/pull/264)).
 Priorities: **reliability, performance, ease of use**, in that order.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
@@ -59,6 +60,10 @@ observations. It separates scheduled CPU, blocked and ready-unscheduled time;
 readiness/send and available post-send tails have explicit boundaries. It is not
 whole-App CPU, a normal-firmware peak-memory claim or a performance gain. No core
 protocol fix or new optimization was required.
+
+Implementation and evidence reviews are complete. No device/build job remains
+active; normal firmware restoration is verified. Detailed custody and private
+evidence locations belong in the batch handoff.
 
 ## Recommended next batch
 
