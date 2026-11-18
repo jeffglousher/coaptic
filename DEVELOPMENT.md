@@ -121,6 +121,40 @@ and unsupported combinations explicitly; a sync measurement is not async
 evidence. Apply the same mode coverage to device-to-host comparisons. Keep
 steady-state results primary, with memory and lifecycle costs separately named.
 
+## Finish a batch or hand off
+
+Project continuity is part of delivery. Before reporting a batch complete or
+transferring it to a fresh thread, update `PLAN.md`: date and source identities,
+current position, active batch (or none), one recommended next batch with its
+completion criteria, and blocked work with the exact prerequisite. Order work
+by reliability, performance, then ease of use. Keep this page short; move detailed
+results and historical work orders into linked evidence or history documents.
+Keep actionable acceptance criteria in issues and API contracts in rustdoc.
+
+Verify the checkout, uncommitted/unpushed work, PR state and remaining jobs.
+Identify who owns ongoing work; avoid two threads mutating the same checkout.
+Record source-matched proof, rejected approaches and any limitations that change
+the next decision. Reuse valid evidence rather than rerunning settled work.
+Close stale bugs that no longer reproduce on the declared current versions with
+the evidence and historical failures retained; a recurrence can open a fresh
+issue. Unexecuted qualification remains open until run or explicitly descoped.
+
+End with a compact report using these labels:
+
+- **Delivered:** behavior changed and merged PRs, or explicit delivery status.
+- **Verified:** source identities, relevant checks and what they establish.
+- **Remaining:** unfinished work, failures and limits; distinguish batch status
+  from the broader project goal.
+- **Next:** one recommended batch, why it comes next and its completion criteria.
+- **Handoff:** checkout/branch/revision, dirty work, active jobs/ownership,
+  evidence locations and any exact human action needed.
+
+When a fresh thread is requested, give it a self-contained assignment based on
+this updated state. Do not treat a stopped run or merged PR as completion of an
+unfinished objective. Private host paths and session state belong in the private
+handoff, not the public project plan. This workflow adds no approval gate and
+does not expand publication, hardware or cleanup authority.
+
 ## Prepare an authorized release
 
 Publication is separate work under
