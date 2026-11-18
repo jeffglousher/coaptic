@@ -13,7 +13,7 @@ application receipts. Software recovery coverage has improved. Current-source
 installed-device qualification and the broader faster-than-libcoap/CPU goals
 remain unfinished. A completed batch is not project completion.
 
-## Latest delivered batch
+## Preceding software batch
 
 - [#760](https://github.com/jeffglousher/coaptic/pull/760): same-App recovery across
   finite datagram blackouts, including identical retries, duplicate suppression,
@@ -34,48 +34,37 @@ batch. Hosted checks on #763 have since settled without failures. Companion
 ordinary CI still pins accepted core `a6400cb`; that proof must not be silently
 relabeled as qualification of newer core `b875088`.
 
+## Latest device qualification
+
+The source-matched [ESP32-S3 functional matrix](architecture/requirements/ESP-WIFI-RELIABILITY-20261117.md)
+passed sync/async device service in unprotected and durable OSCORE modes:
+96 complete timed reads, two nine-case independent unprotected campaigns and two
+nine-case protected campaigns. Normal authorized firmware was restored and
+verified after each cell. No core protocol fix or performance gain was established.
+Two mismatched fixture assemblies were rejected and retained before corrected
+sync qualification. All advisory checks on #764 settled without failure.
+
 ## Active batch
 
-Current-source ESP32-S3 Wi-Fi qualification is active on accepted core `e19ab923`
-(production `b875088`) and companion `1de100c` (tree equals main `4190a89`).
-Board custody and normal firmware identity were verified through the encrypted
-API before mutation. Existing build lanes and the shared source junction remain.
-The finite matrix selects sync/async device service, unprotected/durable OSCORE,
-ordinary and blockwise requests, and existing cancellation/refusal recovery cases.
-Missing fixture selectors and physical interruption remain explicit gaps.
-All advisory checks on documentation PR #764 have settled without failure.
+The finite existing-fixture functional batch is complete. No builds or device
+changes remain active. This does not complete installed reliability qualification
+or the broader performance goal; unsupported cells below remain open.
 
-## Next batch: current-source ESP32 Wi-Fi reliability
+## Next batch: missing device recovery controls
 
-Qualify the accepted core and companion together on the reserved ESP32-S3 before
-another optimization campaign. First verify board custody, normal operation,
-actual source selection and available fixtures. Reuse existing build lanes and
-finite recovery campaigns; do not expand into a long soak or new platform.
+Extend the existing finite fixture to select known-size NON Q-Block2 trailing
+loss, count duplicate effects and force explicit pool refusal/reuse. Add a bounded
+per-device Wi-Fi interruption/reconnect control with automatic recovery, preserving
+the shared AP, credentials, NVS, workers and capacities. Qualify each supported
+sync/async and security cell on matching Rust/C++ runtime images; restore and verify
+normal firmware. Do not repeat passing ordinary/blockwise cells without a concrete
+concern. Track this under [#130](https://github.com/jeffglousher/coaptic/issues/130).
 
-Completion criteria:
-
-1. Pin core and companion revisions, toolchains, firmware/image identity, SDK,
-   runtime policy, security and configured capacities. Verify both sync and async
-   device paths; distinguish server mode from the host client's mode.
-2. Exercise ordinary requests, blockwise transfer and the repaired Q-Block2 suffix
-   path, with protected/unprotected cases supported by the existing device fixture.
-   Check finite interruption/recovery, cancellation, duplicate effects and bounded
-   refusal/reuse. Label unavailable combinations explicitly. Software injection
-   and physical Wi-Fi interruption are separate claims; do not modify a shared AP.
-3. Fix any reproduced defect, run focused regressions, and retain source-matched
-   device results with RSSI, retries/disconnects and startup/resource observations.
-   Preserve identity, credentials, NVS, workers and capacities; restore and verify
-   normal authorized firmware after device work.
-4. Use existing timing evidence to identify the next concrete performance question.
-   Keep processing, scheduler/timer waiting and Wi-Fi wall latency separate. Choose
-   one justified follow-up, or state which missing evidence prevents the choice.
-   Update this plan and the relevant issues before handing off.
-
-If a physical action or access is unavailable, finish independent software work
-and report the exact remaining action. Do not substitute software success for
-installed-device qualification or invent a performance change to finish the batch.
-Track installed qualification under [#130](https://github.com/jeffglousher/coaptic/issues/130)
-and resulting comparative work under [#341](https://github.com/jeffglousher/coaptic/issues/341).
+The next performance assignment is a bounded measurement of current-device active
+task CPU and socket-ready-to-send time for the same small/large reads, separating
+preemption/waits from radio wall latency. Existing host traces cannot identify the
+largest device cost. Keep this measurement distinct from a new optimization
+campaign; [#341](https://github.com/jeffglousher/coaptic/issues/341) remains open.
 
 ## Blocked and deferred work
 
