@@ -1,0 +1,897 @@
+{
+  "schema": "coaptic-finite-device-reliability/1",
+  "source": {
+    "core": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+    "suite": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+    "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9"
+  },
+  "build_provenance": {
+    "path_config_sha256": "3b0e52061732468349deb7a02712527069ccc8e099082cba2a302a945e1b3a60",
+    "archive_build_log_sha256": "d7b6a36d345734489aeeed5d614e5053e91e7d239349e2cdeafac792244fa306",
+    "host_build_log_sha256": "6970b92419a7e2ae83b6bc07954c5d11a5afb76d257fecb822b03e637a62e079",
+    "metadata_sha256": "f2de13d564f16ac0e251b8fa3a25fb6248b34ca67fab7c8165e3159628217a6d",
+    "component_sha256": {
+      "__init__.py": "219879f6b98aeca2e1a69000dca24a97ac8fee0bab9ca1dd2e2280ae98e5084e",
+      "coaptic_network.cpp": "0fac17e9943f053e55fd9ca6744aec5fdb5bb83bd6165b2fa67f3639e837e14c",
+      "coaptic_network.h": "7c22407b84c5846b02a60382cef0bd0bda6e0d459993f8be5f0470b332241b39"
+    },
+    "device_compiler": "rustc 1.97.0-nightly (8ea53bcd7 2026-07-08) (1.97.0.0)\nbinary: rustc\ncommit-hash: 8ea53bcd7257011cbf96f6398551bdc650b04334\ncommit-date: 2026-07-08\nhost: x86_64-pc-windows-msvc\nrelease: 1.97.0-nightly\nLLVM version: 21.1.3\n",
+    "host_compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+    "credential_match": true,
+    "provision_only": false,
+    "cache_bytes": 16384
+  },
+  "cells": [
+    {
+      "name": "async-oscore",
+      "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+      "image_sha256": "314224d17be2b08bc4b862c342fc3c894db3c8f68b8c2bca51ad8ef3c6df6a3e",
+      "image_bytes": 1641072,
+      "partitions_unchanged": true,
+      "staging_restored": true,
+      "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9",
+      "archive_features": [
+        "async-network",
+        "oscore",
+        "standalone"
+      ],
+      "sdk": {
+        "ESP_DEFAULT_CPU_FREQ_MHZ": 240,
+        "ESPTOOLPY_FLASHFREQ": "80m",
+        "FREERTOS_HZ": 1000,
+        "PM_ENABLE": false,
+        "SPIRAM": false,
+        "VFS_SUPPORT_SELECT": true,
+        "ESP32S3_INSTRUCTION_CACHE_SIZE": 16384
+      },
+      "sdkconfig_sha256": "e43635e8069683893d0fb90391b7eb20fc1ff9552cd3fc71cb5a98ae69dba43b",
+      "observer": {
+        "wifi_signal_dbm": [
+          -43.0
+        ],
+        "connections": 1,
+        "unexpected_api_disconnects": 0,
+        "capture_complete": true,
+        "overflow": false,
+        "radio_retries_disconnects": "not measured by filtered capture",
+        "service_failure_observed": false
+      },
+      "network_samples": [
+        {
+          "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+          "rx": 0,
+          "tx": 0,
+          "dropped": 0,
+          "stack_high_water_bytes": 122420,
+          "stack_capacity_bytes": 196608,
+          "polls": 21,
+          "idle_waits": 21,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        }
+      ],
+      "resources_samples": [
+        {
+          "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 285980,
+          "free_bytes": 70832,
+          "region_min_free_sum_bytes": 65624,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 288092,
+          "free_bytes": 68708,
+          "region_min_free_sum_bytes": 65624,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        }
+      ],
+      "client": {
+        "receipt_sha256": "2be22f5b299797a3916ee07d060d0fdeaf81f260d1d791bb7150fa78743cd9ef",
+        "final": {
+          "passed": true,
+          "case": "timing_campaign",
+          "completed": 24,
+          "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+          "event_bound": 128,
+          "security": "durable-oscore",
+          "io_mode": "async",
+          "method": "portable fixed-storage native async protected initiator; bounded host trace; authenticated durable client state; readiness/absolute timers included; completed transport awaits traced; partial failures retained"
+        },
+        "operations": 24,
+        "wall_ns": 662615900,
+        "host_wait_ns": 660680500,
+        "host_poll_ns": 740400,
+        "send_events": 32
+      },
+      "protected_check": {
+        "passed": true,
+        "cases": [
+          "protected_firmware_identity",
+          "protected_complete_block2_2000",
+          "echo_128",
+          "echo_129_refusal",
+          "plaintext_refusal",
+          "wrong_key_refusal",
+          "tamper_refusal",
+          "replay_refusal",
+          "valid_after_refusals"
+        ],
+        "sender_start": 4608,
+        "sender_end": 4864,
+        "state_generation": 22,
+        "scope": "finite Coaptic-to-Coaptic IPv4; no enrollment/effects/power-loss proof"
+      }
+    },
+    {
+      "name": "async-unprotected",
+      "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+      "image_sha256": "41010617fe014287b11e855b44331dbdc7220e76f14a8516150245212746280b",
+      "image_bytes": 1640832,
+      "partitions_unchanged": true,
+      "staging_restored": true,
+      "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9",
+      "archive_features": [
+        "async-network",
+        "oscore",
+        "standalone"
+      ],
+      "observer": {
+        "wifi_signal_dbm": [
+          -45.0
+        ],
+        "connections": 1,
+        "unexpected_api_disconnects": 0,
+        "capture_complete": true,
+        "overflow": false,
+        "radio_retries_disconnects": "not measured by filtered capture",
+        "service_failure_observed": false
+      },
+      "network_samples": [
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "rx": 0,
+          "tx": 0,
+          "dropped": 0,
+          "stack_high_water_bytes": 91268,
+          "stack_capacity_bytes": 196608,
+          "polls": 21,
+          "idle_waits": 21,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "rx": 45,
+          "tx": 47,
+          "dropped": 0,
+          "stack_high_water_bytes": 91268,
+          "stack_capacity_bytes": 196608,
+          "polls": 83,
+          "idle_waits": 40,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "rx": 45,
+          "tx": 48,
+          "dropped": 0,
+          "stack_high_water_bytes": 91268,
+          "stack_capacity_bytes": 196608,
+          "polls": 102,
+          "idle_waits": 59,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "rx": 48,
+          "tx": 53,
+          "dropped": 0,
+          "stack_high_water_bytes": 91268,
+          "stack_capacity_bytes": 196608,
+          "polls": 125,
+          "idle_waits": 79,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "rx": 50,
+          "tx": 56,
+          "dropped": 0,
+          "stack_high_water_bytes": 91268,
+          "stack_capacity_bytes": 196608,
+          "polls": 147,
+          "idle_waits": 99,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        }
+      ],
+      "resources_samples": [
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 286016,
+          "free_bytes": 70812,
+          "region_min_free_sum_bytes": 65612,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 288136,
+          "free_bytes": 68680,
+          "region_min_free_sum_bytes": 65612,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 285948,
+          "free_bytes": 70888,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 288072,
+          "free_bytes": 68752,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 285948,
+          "free_bytes": 70888,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 288072,
+          "free_bytes": 68752,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 285948,
+          "free_bytes": 70888,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 288072,
+          "free_bytes": 68752,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 285948,
+          "free_bytes": 70888,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361788,
+          "allocated_bytes": 288072,
+          "free_bytes": 68752,
+          "region_min_free_sum_bytes": 59100,
+          "largest_free_block_bytes": 31744,
+          "coaptic_task_stack_reserved_bytes": 196608,
+          "sdk_snapshot_bytes": 28
+        }
+      ],
+      "client": {
+        "receipt_sha256": "4910cdbfb38bdc39405128466928e3c8ae236334feeea79581225c8829a2adbb",
+        "final": {
+          "passed": true,
+          "case": "timing_campaign",
+          "completed": 24,
+          "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+          "event_bound": 128,
+          "security": "unprotected",
+          "io_mode": "async",
+          "method": "portable fixed-storage native async unprotected initiator; bounded host trace; no security state; readiness/absolute timers included; completed transport awaits traced; partial failures retained"
+        },
+        "operations": 24,
+        "wall_ns": 328920400,
+        "host_wait_ns": 327108300,
+        "host_poll_ns": 600800,
+        "send_events": 32
+      },
+      "independent_client": {
+        "schema": "coaptic-network-runtime/1",
+        "peer": "aiocoap",
+        "peer_version": "0.4.16",
+        "port": 5683,
+        "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+        "source": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+        "suite_source": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+        "dirty": false,
+        "suite_dirty": false,
+        "suite_locks": {
+          "Cargo.lock": "f711ce82fa0c978951b004095f37ad2cc4b05c1ceabbff406646ba6c87ed934b",
+          "tools/benchmark/native/Cargo.lock": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42",
+          "tools/security-interop/Cargo.lock": "e12762939ad364280a46bc526683de74567855448bf0f4e6263d79bad32e0653",
+          "tools/security-profile/Cargo.lock": "278f01b25bc5f2e9aab89f1c53cdbb97e3f12ae6269d81452a36393755e9e8c5",
+          "tools/esphome/rust/Cargo.lock": "d789260ff4d27b17ba443128b9029d64f710aa25bcc3d0e45ed9251f8c6ca2a0",
+          "tools/qualification/esp32/Cargo.lock": "5fda0d74045b28886c9b5dead108857d87e64b405ce193eeb7e1255483ef0773",
+          "tools/durable-host/Cargo.lock": "201a985ddbb079b851b734371217185a62b8260710c5686a1f772655eb07643b"
+        },
+        "firmware_sha256": "b7ae515e48c7e9056eb75c3ebaaa4796d1c8b32f43b8ddb51638f56e9588a008",
+        "runtime_passed": true,
+        "cases": [
+          {
+            "name": "firmware_identity",
+            "passed": true,
+            "elapsed_ms": 8.297
+          },
+          {
+            "name": "non_confirmable_get",
+            "passed": true,
+            "elapsed_ms": 7.316
+          },
+          {
+            "name": "binary_echo_and_size_refusal",
+            "passed": true,
+            "elapsed_ms": 12.615
+          },
+          {
+            "name": "block1_upload",
+            "passed": true,
+            "elapsed_ms": 16.998
+          },
+          {
+            "name": "block2_download",
+            "passed": true,
+            "elapsed_ms": 23.725
+          },
+          {
+            "name": "discovery_and_errors",
+            "passed": true,
+            "elapsed_ms": 26.166
+          },
+          {
+            "name": "observe_and_cancel_reuse",
+            "passed": true,
+            "elapsed_ms": 20225.98
+          },
+          {
+            "name": "malformed_and_oversized_recovery",
+            "passed": true,
+            "elapsed_ms": 2597.243
+          },
+          {
+            "name": "repeated_get_10",
+            "passed": true,
+            "elapsed_ms": 63.91
+          }
+        ],
+        "scope": "independent client over IPv4 UDP; OSCORE, actuators and durable state excluded"
+      }
+    },
+    {
+      "name": "sync-oscore",
+      "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+      "image_sha256": "2aa958cb2950bbeb47f77071c2de362d4c78dc2f5e264af8ea6a5c73dd032272",
+      "image_bytes": 1218304,
+      "partitions_unchanged": true,
+      "staging_restored": true,
+      "archive_sha256": "440f1ceafb1bc44c5f7f7cf8901a2eb3d2142f5d862aa00e435c19366f88d56a",
+      "archive_features": [
+        "network",
+        "oscore",
+        "standalone"
+      ],
+      "sdk": {
+        "ESP_DEFAULT_CPU_FREQ_MHZ": 240,
+        "ESPTOOLPY_FLASHFREQ": "80m",
+        "FREERTOS_HZ": 1000,
+        "PM_ENABLE": false,
+        "SPIRAM": false,
+        "VFS_SUPPORT_SELECT": false,
+        "ESP32S3_INSTRUCTION_CACHE_SIZE": 16384
+      },
+      "sdkconfig_sha256": "f73f6aa1d1b066f0e93525d0632cca42adc7ae76ad2cd4809aecf63271803e2e",
+      "observer": {
+        "wifi_signal_dbm": [
+          -41.0
+        ],
+        "connections": 1,
+        "unexpected_api_disconnects": 0,
+        "capture_complete": true,
+        "overflow": false,
+        "radio_retries_disconnects": "not measured by filtered capture",
+        "service_failure_observed": false
+      },
+      "network_samples": [
+        {
+          "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+          "rx": 0,
+          "tx": 0,
+          "dropped": 0,
+          "stack_high_water_bytes": 81960,
+          "stack_capacity_bytes": 98304,
+          "polls": 491,
+          "idle_waits": 491,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        }
+      ],
+      "resources_samples": [
+        {
+          "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 187416,
+          "free_bytes": 169456,
+          "region_min_free_sum_bytes": 164248,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 189528,
+          "free_bytes": 167332,
+          "region_min_free_sum_bytes": 164248,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        }
+      ],
+      "client": {
+        "receipt_sha256": "da4d772376e8e01d8093bc103787d33993b46e5f6b2be3fc8f10af1c3ba75a4d",
+        "final": {
+          "passed": true,
+          "case": "timing_campaign",
+          "completed": 24,
+          "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+          "event_bound": 128,
+          "security": "durable-oscore",
+          "io_mode": "async",
+          "method": "portable fixed-storage native async protected initiator; bounded host trace; authenticated durable client state; readiness/absolute timers included; completed transport awaits traced; partial failures retained"
+        },
+        "operations": 24,
+        "wall_ns": 619154100,
+        "host_wait_ns": 617279700,
+        "host_poll_ns": 670100,
+        "send_events": 32
+      },
+      "protected_check": {
+        "passed": true,
+        "cases": [
+          "protected_firmware_identity",
+          "protected_complete_block2_2000",
+          "echo_128",
+          "echo_129_refusal",
+          "plaintext_refusal",
+          "wrong_key_refusal",
+          "tamper_refusal",
+          "replay_refusal",
+          "valid_after_refusals"
+        ],
+        "sender_start": 5120,
+        "sender_end": 5376,
+        "state_generation": 24,
+        "scope": "finite Coaptic-to-Coaptic IPv4; no enrollment/effects/power-loss proof"
+      }
+    },
+    {
+      "name": "sync-unprotected",
+      "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+      "image_sha256": "1bcb05cd8ff5994283307970c44cef7c56a1957acfd88504fb3c925c87101e37",
+      "image_bytes": 1218048,
+      "partitions_unchanged": true,
+      "staging_restored": true,
+      "archive_sha256": "440f1ceafb1bc44c5f7f7cf8901a2eb3d2142f5d862aa00e435c19366f88d56a",
+      "archive_features": [
+        "network",
+        "oscore",
+        "standalone"
+      ],
+      "sdk": {
+        "ESP_DEFAULT_CPU_FREQ_MHZ": 240,
+        "ESPTOOLPY_FLASHFREQ": "80m",
+        "FREERTOS_HZ": 1000,
+        "PM_ENABLE": false,
+        "SPIRAM": false,
+        "VFS_SUPPORT_SELECT": false,
+        "ESP32S3_INSTRUCTION_CACHE_SIZE": 16384
+      },
+      "sdkconfig_sha256": "f73f6aa1d1b066f0e93525d0632cca42adc7ae76ad2cd4809aecf63271803e2e",
+      "observer": {
+        "wifi_signal_dbm": [
+          -41.0
+        ],
+        "connections": 1,
+        "unexpected_api_disconnects": 0,
+        "capture_complete": true,
+        "overflow": false,
+        "radio_retries_disconnects": "not measured by filtered capture",
+        "service_failure_observed": false
+      },
+      "network_samples": [
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "rx": 46,
+          "tx": 48,
+          "dropped": 0,
+          "stack_high_water_bytes": 86868,
+          "stack_capacity_bytes": 98304,
+          "polls": 495,
+          "idle_waits": 450,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "rx": 46,
+          "tx": 49,
+          "dropped": 0,
+          "stack_high_water_bytes": 86868,
+          "stack_capacity_bytes": 98304,
+          "polls": 949,
+          "idle_waits": 904,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "rx": 49,
+          "tx": 54,
+          "dropped": 0,
+          "stack_high_water_bytes": 86868,
+          "stack_capacity_bytes": 98304,
+          "polls": 1403,
+          "idle_waits": 1355,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "rx": 51,
+          "tx": 57,
+          "dropped": 0,
+          "stack_high_water_bytes": 86868,
+          "stack_capacity_bytes": 98304,
+          "polls": 1858,
+          "idle_waits": 1808,
+          "scheduler_yields": 0,
+          "wait_errors": 0
+        }
+      ],
+      "resources_samples": [
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 187204,
+          "free_bytes": 169688,
+          "region_min_free_sum_bytes": 163516,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 189316,
+          "free_bytes": 167564,
+          "region_min_free_sum_bytes": 163516,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 187184,
+          "free_bytes": 169712,
+          "region_min_free_sum_bytes": 162212,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 189304,
+          "free_bytes": 167580,
+          "region_min_free_sum_bytes": 162212,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 187184,
+          "free_bytes": 169712,
+          "region_min_free_sum_bytes": 160652,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 189304,
+          "free_bytes": 167580,
+          "region_min_free_sum_bytes": 160652,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "internal_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 187184,
+          "free_bytes": 169712,
+          "region_min_free_sum_bytes": 160652,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        },
+        {
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "phase": "running",
+          "caps": "all_8bit",
+          "total_bytes": 361812,
+          "allocated_bytes": 189304,
+          "free_bytes": 167580,
+          "region_min_free_sum_bytes": 160652,
+          "largest_free_block_bytes": 124928,
+          "coaptic_task_stack_reserved_bytes": 98304,
+          "sdk_snapshot_bytes": 28
+        }
+      ],
+      "client": {
+        "receipt_sha256": "e8014fc91e742b96a8df0a6200ee6db78fcd91c009924220e17788be7d5dfb67",
+        "final": {
+          "passed": true,
+          "case": "timing_campaign",
+          "completed": 24,
+          "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+          "event_bound": 128,
+          "security": "unprotected",
+          "io_mode": "async",
+          "method": "portable fixed-storage native async unprotected initiator; bounded host trace; no security state; readiness/absolute timers included; completed transport awaits traced; partial failures retained"
+        },
+        "operations": 24,
+        "wall_ns": 385453000,
+        "host_wait_ns": 383884500,
+        "host_poll_ns": 472000,
+        "send_events": 32
+      },
+      "independent_client": {
+        "schema": "coaptic-network-runtime/1",
+        "peer": "aiocoap",
+        "peer_version": "0.4.16",
+        "port": 5683,
+        "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+        "source": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+        "suite_source": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+        "dirty": false,
+        "suite_dirty": false,
+        "suite_locks": {
+          "Cargo.lock": "f711ce82fa0c978951b004095f37ad2cc4b05c1ceabbff406646ba6c87ed934b",
+          "tools/benchmark/native/Cargo.lock": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42",
+          "tools/security-interop/Cargo.lock": "e12762939ad364280a46bc526683de74567855448bf0f4e6263d79bad32e0653",
+          "tools/security-profile/Cargo.lock": "278f01b25bc5f2e9aab89f1c53cdbb97e3f12ae6269d81452a36393755e9e8c5",
+          "tools/esphome/rust/Cargo.lock": "d789260ff4d27b17ba443128b9029d64f710aa25bcc3d0e45ed9251f8c6ca2a0",
+          "tools/qualification/esp32/Cargo.lock": "5fda0d74045b28886c9b5dead108857d87e64b405ce193eeb7e1255483ef0773",
+          "tools/durable-host/Cargo.lock": "201a985ddbb079b851b734371217185a62b8260710c5686a1f772655eb07643b"
+        },
+        "firmware_sha256": "143a399689d9a6b8c2b1713c7e1968220ccc52c2f51124c392d4fe32ba9ae82f",
+        "runtime_passed": true,
+        "cases": [
+          {
+            "name": "firmware_identity",
+            "passed": true,
+            "elapsed_ms": 13.173
+          },
+          {
+            "name": "non_confirmable_get",
+            "passed": true,
+            "elapsed_ms": 12.249
+          },
+          {
+            "name": "binary_echo_and_size_refusal",
+            "passed": true,
+            "elapsed_ms": 12.213
+          },
+          {
+            "name": "block1_upload",
+            "passed": true,
+            "elapsed_ms": 20.819
+          },
+          {
+            "name": "block2_download",
+            "passed": true,
+            "elapsed_ms": 19.802
+          },
+          {
+            "name": "discovery_and_errors",
+            "passed": true,
+            "elapsed_ms": 35.51
+          },
+          {
+            "name": "observe_and_cancel_reuse",
+            "passed": true,
+            "elapsed_ms": 20207.371
+          },
+          {
+            "name": "malformed_and_oversized_recovery",
+            "passed": true,
+            "elapsed_ms": 2594.058
+          },
+          {
+            "name": "repeated_get_10",
+            "passed": true,
+            "elapsed_ms": 58.284
+          }
+        ],
+        "scope": "independent client over IPv4 UDP; OSCORE, actuators and durable state excluded"
+      }
+    }
+  ],
+  "scope": "Finite installed functional cells; no physical interruption, sustained RF, CPU comparison or certification claim",
+  "trials": [
+    {
+      "source": {
+        "core": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+        "suite": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+        "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9"
+      },
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "client_mode": "async-network",
+      "cells": [
+        {
+          "device_mode": "async",
+          "security": "oscore",
+          "passed": true
+        }
+      ],
+      "restore_verified": true
+    },
+    {
+      "source": {
+        "core": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+        "suite": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+        "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9"
+      },
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "client_mode": "async-network",
+      "cells": [
+        {
+          "device_mode": "async",
+          "security": "unprotected",
+          "passed": true
+        }
+      ],
+      "restore_verified": true
+    },
+    {
+      "source": {
+        "core": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+        "suite": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+        "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9"
+      },
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "client_mode": "async-network",
+      "cells": [
+        {
+          "device_mode": "sync",
+          "security": "oscore",
+          "passed": true
+        }
+      ],
+      "restore_verified": true
+    },
+    {
+      "source": {
+        "core": "48e513e71bdb81020b6d75231325ceacfce3d0a8",
+        "suite": "1de100ccca190e2f660810b24b0aac91ed7a0dfe",
+        "archive_sha256": "ad3a7a5f27d5ee20f764727510f67cbdf43fd9c4d123036634eec3410f6a45f9"
+      },
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "client_mode": "async-network",
+      "cells": [
+        {
+          "device_mode": "sync",
+          "security": "unprotected",
+          "passed": true,
+          "readiness": "exact live CoAP identity"
+        }
+      ],
+      "restore_verified": true
+    }
+  ],
+  "rejected_attempts": [
+    {
+      "name": "sync assembly with async Rust archive",
+      "count": 2,
+      "outcome": "source-bound readiness refused; restored normal firmware; second observer path collision reverified separately",
+      "classification": "fixture assembly, not a qualified sync core defect"
+    }
+  ],
+  "private_evidence_bytes": 49224752
+}
