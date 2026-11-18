@@ -36,10 +36,14 @@ relabeled as qualification of newer core `b875088`.
 
 ## Active batch
 
-No engineering batch is currently active. The next assignment below is ready to
-start; its owner should record the selected source pair and scope here at startup.
-This documentation update establishes the
-[required batch handoff](DEVELOPMENT.md#finish-a-batch-or-hand-off).
+Current-source ESP32-S3 Wi-Fi qualification is active on accepted core `e19ab923`
+(production `b875088`) and companion `1de100c` (tree equals main `4190a89`).
+Board custody and normal firmware identity were verified through the encrypted
+API before mutation. Existing build lanes and the shared source junction remain.
+The finite matrix selects sync/async device service, unprotected/durable OSCORE,
+ordinary and blockwise requests, and existing cancellation/refusal recovery cases.
+Missing fixture selectors and physical interruption remain explicit gaps.
+All advisory checks on documentation PR #764 have settled without failure.
 
 ## Next batch: current-source ESP32 Wi-Fi reliability
 
