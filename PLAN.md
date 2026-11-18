@@ -1,6 +1,7 @@
 # Project plan
 
-Updated 2026-11-17 after core `b875088` and companion main `4190a89`.
+Updated 2026-11-18 after production core `b875088` and companion main `40f971b`
+([#264](https://github.com/jeffglousher/coaptic-validation/pull/264)).
 Priorities: **reliability, performance, ease of use**, in that order.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
@@ -9,9 +10,8 @@ This is the current status and work order. Detailed results live in linked
 
 The supported direct UDP App implementation is delivered: bounded fixed/allocated
 storage, sync/async operation, OSCORE/EDHOC, commissioning, durable ownership and
-application receipts. Software recovery coverage has improved. Current-source
-installed-device qualification and the broader faster-than-libcoap/CPU goals
-remain unfinished. A completed batch is not project completion.
+application receipts. Software recovery coverage has improved. Selected current-source installed-device recovery cells are qualified. Broader
+qualification and faster-than-libcoap/CPU goals remain unfinished. A completed batch is not project completion.
 
 ## Preceding software batch
 
@@ -30,9 +30,8 @@ remain unfinished. A completed batch is not project completion.
   See the [source-matched receipt](https://github.com/jeffglousher/coaptic/pull/763#issuecomment-6954242320).
 
 No new performance improvement or firmware execution was established by that
-batch. Hosted checks on #763 have since settled without failures. Companion
-ordinary CI still pins accepted core `a6400cb`; that proof must not be silently
-relabeled as qualification of newer core `b875088`.
+batch. Hosted checks on #763 have since settled without failures. The recovery batch explicitly advances companion ordinary CI to accepted core
+`b875088`; older CI proof is not relabeled.
 
 ## Latest device qualification
 
@@ -44,27 +43,39 @@ verified after each cell. No core protocol fix or performance gain was establish
 Two mismatched fixture assemblies were rejected and retained before corrected
 sync qualification. All advisory checks on #764 settled without failure.
 
-## Active batch
+## Latest recovery batch
 
-The finite existing-fixture functional batch is complete. No builds or device
-changes remain active. This does not complete installed reliability qualification
-or the broader performance goal; unsupported cells below remain open.
+All four sync/async and unprotected/durable OSCORE device cells passed observable
+duplicate effects, explicit Observe refusal/reuse, known-size NON Q-Block2 suffix
+loss/repair and same-App Call retry/reconnect during a bounded per-device Wi-Fi
+interruption. Normal firmware was restored and verified after every trial.
+Q-Block2 loss is on host receive; MCU-client recovery and other pool exhaustion
+remain separate. Calls started during the outage; pre-existing-at-disable Calls
+are not established. The [source-matched recovery record](architecture/requirements/ESP-DEVICE-RECOVERY-20261118.md)
+retains failures, exact scope, image/archive identities and independent review.
 
-## Next batch: missing device recovery controls
+One bounded async OSCORE CPU diagnostic completed 24 authenticated reads and 32
+matched exchanges, with 350 complete metadata rows and protected traffic resource
+observations. It separates scheduled CPU, blocked and ready-unscheduled time;
+readiness/send and available post-send tails have explicit boundaries. It is not
+whole-App CPU, a normal-firmware peak-memory claim or a performance gain. No core
+protocol fix or new optimization was required.
 
-Extend the existing finite fixture to select known-size NON Q-Block2 trailing
-loss, count duplicate effects and force explicit pool refusal/reuse. Add a bounded
-per-device Wi-Fi interruption/reconnect control with automatic recovery, preserving
-the shared AP, credentials, NVS, workers and capacities. Qualify each supported
-sync/async and security cell on matching Rust/C++ runtime images; restore and verify
-normal firmware. Do not repeat passing ordinary/blockwise cells without a concrete
-concern. Track this under [#130](https://github.com/jeffglousher/coaptic/issues/130).
+Implementation and evidence reviews are complete. No device/build job remains
+active; normal firmware restoration is verified. Detailed custody and private
+evidence locations belong in the batch handoff.
 
-The next performance assignment is a bounded measurement of current-device active
-task CPU and socket-ready-to-send time for the same small/large reads, separating
-preemption/waits from radio wall latency. Existing host traces cannot identify the
-largest device cost. Keep this measurement distinct from a new optimization
-campaign; [#341](https://github.com/jeffglousher/coaptic/issues/341) remains open.
+## Recommended next batch
+
+Reliability remains first: select explicit remaining pool controls on the same
+finite fixture, with observable refusal, release/expiry and fresh reuse. Name
+which pools and supported runtime/security cells are exercised; preserve original
+capacities and normal restoration. Keep #130 open for unexecuted qualification.
+Do not repeat settled ordinary/blockwise or recovery cells without a concern.
+
+Use the bounded CPU evidence to select one concrete cost boundary only when a
+new performance batch is authorized; require matched sync/async and security
+coverage before any broader improvement claim. #341 and #650 remain open.
 
 ## Blocked and deferred work
 

@@ -1,0 +1,2793 @@
+{
+  "schema": "coaptic-finite-device-recovery/1",
+  "production_core": "b8750885f8bd10d2f5dd73c92807df00c7f2f0a8",
+  "core_source_inventory_sha256": "e2dd6f8c7855747f2ba6cde33d7503cdade80d4ea9416f53a66f6ffe8b246c4c",
+  "cells": [
+    {
+      "mode": "async",
+      "security": "durable-oscore",
+      "run_id": "d4e10d44ea6345829264ffea3ecff6ca",
+      "image_sha256": "7a63eaaf73d313f00010102ec71abb819634a15178a55b585725fe905775d33e",
+      "elf_sha256": "4b4b6eb585e7418cfe23dc99ef1030f6de815d572d3882a66060a6888f1bb9ef",
+      "archive_sha256": "5216175976eff4d6182c64fd5e5b27b5c8058e2b9b3f820a940d9538900f9db4",
+      "archive_features": [
+        "async-network",
+        "oscore",
+        "standalone"
+      ],
+      "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
+      "suite_recorded_at_build_completion": "0e45ceca91d4be2af571cd8e2afec55f40944c31",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "18ad2f61a0e3fb98029d6994831ec0865b9a8a42e38d9e18cbe2a55f03bfbae4"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "native",
+          "sha256": "18ad2f61a0e3fb98029d6994831ec0865b9a8a42e38d9e18cbe2a55f03bfbae4"
+        }
+      },
+      "duplicate_effects": {
+        "before": 0,
+        "after": 1,
+        "exact_duplicate_cached_reply": true
+      },
+      "observe_capacity": 2,
+      "observe_refused_and_reused": true,
+      "qblock_suffix": {
+        "passed": true,
+        "case": "known_size_non_qblock2_suffix",
+        "security": "durable-oscore",
+        "run_id": "d4e10d44ea6345829264ffea3ecff6ca",
+        "first_size2_2000": true,
+        "dropped_final_976": true,
+        "suffix_repair_sent": true,
+        "error": "",
+        "scope": "host receive loss; device response reissue; no MCU client recovery proof"
+      },
+      "wifi": {
+        "passed": true,
+        "calibration_token": "fe90ac08285cdbf9",
+        "clock_offset_low_ns": -10322615500,
+        "clock_offset_high_ns": -10280728800,
+        "clock_uncertainty_ns": 10000000,
+        "delayed_call": 76,
+        "fresh_call": 77,
+        "request_started": "not_proven_before_disable",
+        "scope": "same-App Call during interruption completes after connection observation"
+      },
+      "delayed_call_elapsed_us": 7158238,
+      "restorations": [
+        {
+          "verified": true,
+          "capture_sha256": "8385e06c0431e91adbeecda128d90ab937aedc67313ecc665a92b8e891dded66"
+        },
+        {
+          "verified": true,
+          "capture_sha256": "93873f5fcf0046f02e6a933d0b7055a73c1580b7940bee281da8b008ac4d2214"
+        }
+      ]
+    },
+    {
+      "mode": "async",
+      "security": "unprotected",
+      "run_id": "7e99fd9afa4e4a3eb3014346807623a8",
+      "image_sha256": "d52c51701718576425b7da7455383596cbb74e41a026876897109863ba585d1b",
+      "elf_sha256": "3e6052b0e23ff4c59644c549556e833fabe7bb7979299876826d6d4f8b41234a",
+      "archive_sha256": "5216175976eff4d6182c64fd5e5b27b5c8058e2b9b3f820a940d9538900f9db4",
+      "archive_features": [
+        "async-network",
+        "oscore",
+        "standalone"
+      ],
+      "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
+      "suite_recorded_at_build_completion": "3cdb069c80a7b044315388045b5dd4a42644b3bf",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "aiocoap-script",
+          "script_sha256": "77fa22aace0a97baef87b565ed9cec514218ca8b7cbcd028800990a44932ed2c"
+        }
+      },
+      "duplicate_effects": {
+        "before": 0,
+        "after": 1,
+        "identical_requests": 2
+      },
+      "observe_capacity": 2,
+      "observe_refused_and_reused": true,
+      "qblock_suffix": {
+        "passed": true,
+        "case": "known_size_non_qblock2_suffix",
+        "security": "unprotected",
+        "run_id": "7e99fd9afa4e4a3eb3014346807623a8",
+        "first_size2_2000": true,
+        "dropped_final_976": true,
+        "suffix_repair_sent": true,
+        "error": "",
+        "scope": "host receive loss; device response reissue; no MCU client recovery proof"
+      },
+      "wifi": {
+        "passed": true,
+        "calibration_token": "47f337b0855538a5",
+        "clock_offset_low_ns": -10723150900,
+        "clock_offset_high_ns": -10691421900,
+        "clock_uncertainty_ns": 10000000,
+        "delayed_call": 81,
+        "fresh_call": 82,
+        "request_started": "not_proven_before_disable",
+        "scope": "same-App Call during interruption completes after connection observation"
+      },
+      "delayed_call_elapsed_us": 8124771,
+      "restorations": [
+        {
+          "verified": true,
+          "capture_sha256": "b8b45d992280ef3b8f5b34772b1d802f2968047495e3ecaeb9e9ef2e10c667bd"
+        },
+        {
+          "verified": true,
+          "capture_sha256": "4fe66d854ba463ab02c2ee35dc7847f634c73479f843cad7e518cac124602b62"
+        }
+      ]
+    },
+    {
+      "mode": "sync",
+      "security": "unprotected",
+      "run_id": "4a6da4d59bf54915afe2aca611bc72e8",
+      "image_sha256": "603d53292635e9a10dd6c98be08c2e12dcd3791fb60196496750c4143eeafc1f",
+      "elf_sha256": "3c20be71afe811691235bb857064f30bff87a4c48ee4d458571f885b4a76c1df",
+      "archive_sha256": "a5a3ced46868da56e55ee8103aa9afc96fa4e3c723a3d9ec944b08290f7b67ec",
+      "archive_features": [
+        "network",
+        "oscore",
+        "standalone"
+      ],
+      "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
+      "suite_recorded_at_build_completion": "d94f9ffb9fd66fc0c158d4cf158316982d5bad0b",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "aiocoap-script",
+          "script_sha256": "77fa22aace0a97baef87b565ed9cec514218ca8b7cbcd028800990a44932ed2c"
+        }
+      },
+      "duplicate_effects": {
+        "before": 0,
+        "after": 1,
+        "identical_requests": 2
+      },
+      "observe_capacity": 2,
+      "observe_refused_and_reused": true,
+      "qblock_suffix": {
+        "passed": true,
+        "case": "known_size_non_qblock2_suffix",
+        "security": "unprotected",
+        "run_id": "4a6da4d59bf54915afe2aca611bc72e8",
+        "first_size2_2000": true,
+        "dropped_final_976": true,
+        "suffix_repair_sent": true,
+        "error": "",
+        "scope": "host receive loss; device response reissue; no MCU client recovery proof"
+      },
+      "wifi": {
+        "passed": true,
+        "calibration_token": "0e69f4645ebc0293",
+        "clock_offset_low_ns": -10089732300,
+        "clock_offset_high_ns": -10058728400,
+        "clock_uncertainty_ns": 10000000,
+        "delayed_call": 80,
+        "fresh_call": 81,
+        "request_started": "not_proven_before_disable",
+        "scope": "same-App Call during interruption completes after connection observation"
+      },
+      "delayed_call_elapsed_us": 8866795,
+      "restorations": [
+        {
+          "verified": true,
+          "capture_sha256": "b6f3f73ad3931a3ce3a2588b9628b98f02da17caaed905792455484390c9e162"
+        }
+      ]
+    },
+    {
+      "mode": "sync",
+      "security": "durable-oscore",
+      "run_id": "bd01c140f508456fb1342c4d64300caa",
+      "image_sha256": "029eec7f970c10cd6dd30eb93453402741cf03cccab78210a7f379ec1c10fbe9",
+      "elf_sha256": "225a08b119da9ec63934b415e5ef42adec02d371c398064d0b7ecbf25b2560eb",
+      "archive_sha256": "a5a3ced46868da56e55ee8103aa9afc96fa4e3c723a3d9ec944b08290f7b67ec",
+      "archive_features": [
+        "network",
+        "oscore",
+        "standalone"
+      ],
+      "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
+      "suite_recorded_at_build_completion": "d94f9ffb9fd66fc0c158d4cf158316982d5bad0b",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        }
+      },
+      "duplicate_effects": {
+        "before": 0,
+        "after": 1,
+        "exact_duplicate_cached_reply": true
+      },
+      "observe_capacity": 2,
+      "observe_refused_and_reused": true,
+      "qblock_suffix": {
+        "passed": true,
+        "case": "known_size_non_qblock2_suffix",
+        "security": "durable-oscore",
+        "run_id": "bd01c140f508456fb1342c4d64300caa",
+        "first_size2_2000": true,
+        "dropped_final_976": true,
+        "suffix_repair_sent": true,
+        "error": "",
+        "scope": "host receive loss; device response reissue; no MCU client recovery proof"
+      },
+      "wifi": {
+        "passed": true,
+        "calibration_token": "ebda041a16b25fc2",
+        "clock_offset_low_ns": -10109980100,
+        "clock_offset_high_ns": -10071686100,
+        "clock_uncertainty_ns": 10000000,
+        "delayed_call": 77,
+        "fresh_call": 78,
+        "request_started": "not_proven_before_disable",
+        "scope": "same-App Call during interruption completes after connection observation"
+      },
+      "delayed_call_elapsed_us": 6710754,
+      "restorations": [
+        {
+          "verified": true,
+          "capture_sha256": "79b82ecd88ce7b159fb149d58261ee8658b2f9b7eb9ff1c8299e9cf8409bfbc5"
+        }
+      ]
+    }
+  ],
+  "performance": {
+    "mode": "async",
+    "security": "durable-oscore",
+    "run_id": "1cd2c5c4fd51465e84511ad62b547c4e",
+    "image_sha256": "a006e8c79958cfed39782ab5bf46486a10022e15caead88e39aa1cf186721b06",
+    "elf_sha256": "ee4fe6a57feefbebc816d407e222827c04b07572cc6c0bc8b3d9c1185f491a65",
+    "kernel_original_sha256": "193c3d8379acc847097632da8e6d4dd2ee0bf8e069d78979d68dd26b653d48df",
+    "kernel_copy_sha256": "8602aae33239714918e9801bd347b4215ff7db6adedb6481641a72aeb0aae9dc",
+    "restoration": {
+      "verified": true,
+      "capture_sha256": "906dfdaf0a13469605fd4ca86b2fa54ccb69fee4ef0e38d4856197081352db60"
+    },
+    "passed": true,
+    "operations": [
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 18931,
+          "task_cpu_us": 18401,
+          "blocked_us": 0,
+          "ready_unscheduled_us": 530
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 17470,
+          "task_cpu_us": 16940,
+          "blocked_us": 0,
+          "ready_unscheduled_us": 530
+        },
+        "path": "identity",
+        "iteration": 0,
+        "host_elapsed_ns": 24386700,
+        "exchanges": [
+          {
+            "mid": 56116,
+            "token": "7e46c45d683e78f1",
+            "receive_us": 10094901,
+            "send_us": 10111100,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16585,
+              "task_cpu_us": 16055,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 530
+            },
+            "receive_to_send": {
+              "wall_us": 16199,
+              "task_cpu_us": 15669,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 530
+            },
+            "sample_start": {
+              "w": 10094515,
+              "c": 96750,
+              "b": 5404106,
+              "r": 435
+            },
+            "send_call": {
+              "wall_us": 885,
+              "task_cpu_us": 885,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 0
+            },
+            "send_complete_us": 10111985,
+            "end_index": 10,
+            "sample_end": {
+              "w": 10111985,
+              "c": 113690,
+              "b": 5404106,
+              "r": 965
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16796,
+          "task_cpu_us": 15624,
+          "blocked_us": 282,
+          "ready_unscheduled_us": 890
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15320,
+          "task_cpu_us": 14148,
+          "blocked_us": 282,
+          "ready_unscheduled_us": 890
+        },
+        "path": "test",
+        "iteration": 0,
+        "host_elapsed_ns": 17294700,
+        "exchanges": [
+          {
+            "mid": 56117,
+            "token": "a58d5f93403dbb89",
+            "receive_us": 10119970,
+            "send_us": 10133707,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14120,
+              "task_cpu_us": 13205,
+              "blocked_us": 282,
+              "ready_unscheduled_us": 633
+            },
+            "receive_to_send": {
+              "wall_us": 13737,
+              "task_cpu_us": 12822,
+              "blocked_us": 282,
+              "ready_unscheduled_us": 633
+            },
+            "sample_start": {
+              "w": 10119587,
+              "c": 116412,
+              "b": 5408976,
+              "r": 975
+            },
+            "send_call": {
+              "wall_us": 1200,
+              "task_cpu_us": 943,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 257
+            },
+            "send_complete_us": 10134907,
+            "end_index": 21,
+            "sample_end": {
+              "w": 10134907,
+              "c": 130560,
+              "b": 5409258,
+              "r": 1865
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 52780,
+          "task_cpu_us": 41190,
+          "blocked_us": 8923,
+          "ready_unscheduled_us": 2667
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 45957,
+          "task_cpu_us": 37239,
+          "blocked_us": 7070,
+          "ready_unscheduled_us": 1648
+        },
+        "path": "large",
+        "iteration": 0,
+        "host_elapsed_ns": 52963600,
+        "exchanges": [
+          {
+            "mid": 56118,
+            "token": "11c713f87dc9c47a",
+            "receive_us": 10137801,
+            "send_us": 10155049,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 17588,
+              "task_cpu_us": 16377,
+              "blocked_us": 887,
+              "ready_unscheduled_us": 324
+            },
+            "receive_to_send": {
+              "wall_us": 17248,
+              "task_cpu_us": 16037,
+              "blocked_us": 887,
+              "ready_unscheduled_us": 324
+            },
+            "sample_start": {
+              "w": 10137461,
+              "c": 133041,
+              "b": 5409258,
+              "r": 1938
+            },
+            "send_call": {
+              "wall_us": 1556,
+              "task_cpu_us": 982,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 574
+            },
+            "send_complete_us": 10156605,
+            "end_index": 32,
+            "sample_end": {
+              "w": 10156605,
+              "c": 150400,
+              "b": 5410145,
+              "r": 2836
+            }
+          },
+          {
+            "mid": 56119,
+            "token": "11c713f87dc9c47a",
+            "receive_us": 10166113,
+            "send_us": 10181936,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16222,
+              "task_cpu_us": 16085,
+              "blocked_us": 134,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 15823,
+              "task_cpu_us": 15686,
+              "blocked_us": 134,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10165714,
+              "c": 153057,
+              "b": 5416194,
+              "r": 3239
+            },
+            "send_call": {
+              "wall_us": 1482,
+              "task_cpu_us": 1138,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 344
+            },
+            "send_complete_us": 10183418,
+            "end_index": 43,
+            "sample_end": {
+              "w": 10183418,
+              "c": 170280,
+              "b": 5416328,
+              "r": 3586
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 17422,
+          "task_cpu_us": 15933,
+          "blocked_us": 921,
+          "ready_unscheduled_us": 568
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 16131,
+          "task_cpu_us": 14679,
+          "blocked_us": 921,
+          "ready_unscheduled_us": 531
+        },
+        "path": "identity",
+        "iteration": 1,
+        "host_elapsed_ns": 33939100,
+        "exchanges": [
+          {
+            "mid": 56120,
+            "token": "92f049e79e0b9b72",
+            "receive_us": 10194465,
+            "send_us": 10208831,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14721,
+              "task_cpu_us": 13797,
+              "blocked_us": 921,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 14366,
+              "task_cpu_us": 13442,
+              "blocked_us": 921,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10194110,
+              "c": 175255,
+              "b": 5420913,
+              "r": 4718
+            },
+            "send_call": {
+              "wall_us": 1410,
+              "task_cpu_us": 882,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 528
+            },
+            "send_complete_us": 10210241,
+            "end_index": 54,
+            "sample_end": {
+              "w": 10210241,
+              "c": 189934,
+              "b": 5421834,
+              "r": 5249
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16755,
+          "task_cpu_us": 15879,
+          "blocked_us": 111,
+          "ready_unscheduled_us": 765
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15421,
+          "task_cpu_us": 14723,
+          "blocked_us": 111,
+          "ready_unscheduled_us": 587
+        },
+        "path": "test",
+        "iteration": 1,
+        "host_elapsed_ns": 20233700,
+        "exchanges": [
+          {
+            "mid": 56121,
+            "token": "0ed544d7b805f721",
+            "receive_us": 10225269,
+            "send_us": 10239070,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14202,
+              "task_cpu_us": 13857,
+              "blocked_us": 111,
+              "ready_unscheduled_us": 234
+            },
+            "receive_to_send": {
+              "wall_us": 13801,
+              "task_cpu_us": 13456,
+              "blocked_us": 111,
+              "ready_unscheduled_us": 234
+            },
+            "sample_start": {
+              "w": 10224868,
+              "c": 192383,
+              "b": 5433757,
+              "r": 5504
+            },
+            "send_call": {
+              "wall_us": 1219,
+              "task_cpu_us": 866,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 353
+            },
+            "send_complete_us": 10240289,
+            "end_index": 65,
+            "sample_end": {
+              "w": 10240289,
+              "c": 207106,
+              "b": 5433868,
+              "r": 6091
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 42926,
+          "task_cpu_us": 38069,
+          "blocked_us": 3621,
+          "ready_unscheduled_us": 1236
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 41581,
+          "task_cpu_us": 36724,
+          "blocked_us": 3621,
+          "ready_unscheduled_us": 1236
+        },
+        "path": "large",
+        "iteration": 1,
+        "host_elapsed_ns": 52081700,
+        "exchanges": [
+          {
+            "mid": 56122,
+            "token": "41298f5dbe8bbbf7",
+            "receive_us": 10245400,
+            "send_us": 10261960,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16961,
+              "task_cpu_us": 16098,
+              "blocked_us": 860,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16560,
+              "task_cpu_us": 15697,
+              "blocked_us": 860,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10244999,
+              "c": 209326,
+              "b": 5435760,
+              "r": 6689
+            },
+            "send_call": {
+              "wall_us": 1495,
+              "task_cpu_us": 1144,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 351
+            },
+            "send_complete_us": 10263455,
+            "end_index": 76,
+            "sample_end": {
+              "w": 10263455,
+              "c": 226568,
+              "b": 5436620,
+              "r": 7043
+            }
+          },
+          {
+            "mid": 56123,
+            "token": "41298f5dbe8bbbf7",
+            "receive_us": 10269199,
+            "send_us": 10285337,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16541,
+              "task_cpu_us": 16268,
+              "blocked_us": 270,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16138,
+              "task_cpu_us": 15865,
+              "blocked_us": 270,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10268796,
+              "c": 228809,
+              "b": 5439111,
+              "r": 7652
+            },
+            "send_call": {
+              "wall_us": 1243,
+              "task_cpu_us": 973,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 270
+            },
+            "send_complete_us": 10286580,
+            "end_index": 87,
+            "sample_end": {
+              "w": 10286580,
+              "c": 246050,
+              "b": 5439381,
+              "r": 7925
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 18017,
+          "task_cpu_us": 16185,
+          "blocked_us": 924,
+          "ready_unscheduled_us": 908
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15493,
+          "task_cpu_us": 14961,
+          "blocked_us": 176,
+          "ready_unscheduled_us": 356
+        },
+        "path": "identity",
+        "iteration": 2,
+        "host_elapsed_ns": 20488700,
+        "exchanges": [
+          {
+            "mid": 56124,
+            "token": "68bef437d29d7e1a",
+            "receive_us": 10298290,
+            "send_us": 10312154,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14264,
+              "task_cpu_us": 14085,
+              "blocked_us": 176,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 13864,
+              "task_cpu_us": 13685,
+              "blocked_us": 176,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10297890,
+              "c": 248535,
+              "b": 5448130,
+              "r": 8001
+            },
+            "send_call": {
+              "wall_us": 1229,
+              "task_cpu_us": 876,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 353
+            },
+            "send_complete_us": 10313383,
+            "end_index": 98,
+            "sample_end": {
+              "w": 10313383,
+              "c": 263496,
+              "b": 5448306,
+              "r": 8357
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16982,
+          "task_cpu_us": 16028,
+          "blocked_us": 921,
+          "ready_unscheduled_us": 33
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15506,
+          "task_cpu_us": 14552,
+          "blocked_us": 921,
+          "ready_unscheduled_us": 33
+        },
+        "path": "test",
+        "iteration": 2,
+        "host_elapsed_ns": 19263100,
+        "exchanges": [
+          {
+            "mid": 56125,
+            "token": "c24bc33f4f97ff50",
+            "receive_us": 10318355,
+            "send_us": 10332496,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14528,
+              "task_cpu_us": 13574,
+              "blocked_us": 921,
+              "ready_unscheduled_us": 33
+            },
+            "receive_to_send": {
+              "wall_us": 14141,
+              "task_cpu_us": 13187,
+              "blocked_us": 921,
+              "ready_unscheduled_us": 33
+            },
+            "sample_start": {
+              "w": 10317968,
+              "c": 265778,
+              "b": 5449681,
+              "r": 9285
+            },
+            "send_call": {
+              "wall_us": 978,
+              "task_cpu_us": 978,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 0
+            },
+            "send_complete_us": 10333474,
+            "end_index": 109,
+            "sample_end": {
+              "w": 10333474,
+              "c": 280330,
+              "b": 5450602,
+              "r": 9318
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 45179,
+          "task_cpu_us": 37307,
+          "blocked_us": 6363,
+          "ready_unscheduled_us": 1509
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 43843,
+          "task_cpu_us": 36159,
+          "blocked_us": 6363,
+          "ready_unscheduled_us": 1321
+        },
+        "path": "large",
+        "iteration": 2,
+        "host_elapsed_ns": 50848400,
+        "exchanges": [
+          {
+            "mid": 56126,
+            "token": "aae0d8311ec31e5f",
+            "receive_us": 10337812,
+            "send_us": 10354242,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16812,
+              "task_cpu_us": 16133,
+              "blocked_us": 676,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16430,
+              "task_cpu_us": 15751,
+              "blocked_us": 676,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10337430,
+              "c": 282979,
+              "b": 5451837,
+              "r": 9390
+            },
+            "send_call": {
+              "wall_us": 1261,
+              "task_cpu_us": 913,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 348
+            },
+            "send_complete_us": 10355503,
+            "end_index": 120,
+            "sample_end": {
+              "w": 10355503,
+              "c": 300025,
+              "b": 5452513,
+              "r": 9741
+            }
+          },
+          {
+            "mid": 56127,
+            "token": "aae0d8311ec31e5f",
+            "receive_us": 10363789,
+            "send_us": 10380024,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16641,
+              "task_cpu_us": 15949,
+              "blocked_us": 689,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16235,
+              "task_cpu_us": 15543,
+              "blocked_us": 689,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10363383,
+              "c": 302287,
+              "b": 5457511,
+              "r": 10361
+            },
+            "send_call": {
+              "wall_us": 1249,
+              "task_cpu_us": 902,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 347
+            },
+            "send_complete_us": 10381273,
+            "end_index": 131,
+            "sample_end": {
+              "w": 10381273,
+              "c": 319138,
+              "b": 5458200,
+              "r": 10711
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 17289,
+          "task_cpu_us": 16194,
+          "blocked_us": 318,
+          "ready_unscheduled_us": 777
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15928,
+          "task_cpu_us": 15052,
+          "blocked_us": 318,
+          "ready_unscheduled_us": 558
+        },
+        "path": "identity",
+        "iteration": 3,
+        "host_elapsed_ns": 20709900,
+        "exchanges": [
+          {
+            "mid": 56128,
+            "token": "ece7b139ce77049c",
+            "receive_us": 10388899,
+            "send_us": 10403194,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14689,
+              "task_cpu_us": 14162,
+              "blocked_us": 318,
+              "ready_unscheduled_us": 209
+            },
+            "receive_to_send": {
+              "wall_us": 14295,
+              "task_cpu_us": 13768,
+              "blocked_us": 318,
+              "ready_unscheduled_us": 209
+            },
+            "sample_start": {
+              "w": 10388505,
+              "c": 321360,
+              "b": 5462669,
+              "r": 11252
+            },
+            "send_call": {
+              "wall_us": 1239,
+              "task_cpu_us": 890,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 349
+            },
+            "send_complete_us": 10404433,
+            "end_index": 142,
+            "sample_end": {
+              "w": 10404433,
+              "c": 336412,
+              "b": 5462987,
+              "r": 11810
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16342,
+          "task_cpu_us": 15107,
+          "blocked_us": 703,
+          "ready_unscheduled_us": 532
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15023,
+          "task_cpu_us": 13967,
+          "blocked_us": 703,
+          "ready_unscheduled_us": 353
+        },
+        "path": "test",
+        "iteration": 3,
+        "host_elapsed_ns": 19809200,
+        "exchanges": [
+          {
+            "mid": 56129,
+            "token": "3462fbeadb673418",
+            "receive_us": 10409795,
+            "send_us": 10423194,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13803,
+              "task_cpu_us": 13097,
+              "blocked_us": 703,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 13399,
+              "task_cpu_us": 12693,
+              "blocked_us": 703,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10409391,
+              "c": 338728,
+              "b": 5464831,
+              "r": 12608
+            },
+            "send_call": {
+              "wall_us": 1220,
+              "task_cpu_us": 870,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 350
+            },
+            "send_complete_us": 10424414,
+            "end_index": 153,
+            "sample_end": {
+              "w": 10424414,
+              "c": 352695,
+              "b": 5465534,
+              "r": 12961
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 44250,
+          "task_cpu_us": 38707,
+          "blocked_us": 5009,
+          "ready_unscheduled_us": 534
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 42896,
+          "task_cpu_us": 37353,
+          "blocked_us": 5009,
+          "ready_unscheduled_us": 534
+        },
+        "path": "large",
+        "iteration": 3,
+        "host_elapsed_ns": 50366600,
+        "exchanges": [
+          {
+            "mid": 56130,
+            "token": "e6a318d454607886",
+            "receive_us": 10430029,
+            "send_us": 10446500,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16873,
+              "task_cpu_us": 16093,
+              "blocked_us": 777,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16471,
+              "task_cpu_us": 15691,
+              "blocked_us": 777,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10429627,
+              "c": 354990,
+              "b": 5467730,
+              "r": 13683
+            },
+            "send_call": {
+              "wall_us": 1062,
+              "task_cpu_us": 954,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 108
+            },
+            "send_complete_us": 10447562,
+            "end_index": 164,
+            "sample_end": {
+              "w": 10447562,
+              "c": 372037,
+              "b": 5468507,
+              "r": 13794
+            }
+          },
+          {
+            "mid": 56131,
+            "token": "e6a318d454607886",
+            "receive_us": 10454316,
+            "send_us": 10471265,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 17341,
+              "task_cpu_us": 16445,
+              "blocked_us": 893,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16949,
+              "task_cpu_us": 16053,
+              "blocked_us": 893,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10453924,
+              "c": 374986,
+              "b": 5471846,
+              "r": 13868
+            },
+            "send_call": {
+              "wall_us": 1258,
+              "task_cpu_us": 912,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 346
+            },
+            "send_complete_us": 10472523,
+            "end_index": 175,
+            "sample_end": {
+              "w": 10472523,
+              "c": 392343,
+              "b": 5472739,
+              "r": 14217
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 17439,
+          "task_cpu_us": 16078,
+          "blocked_us": 988,
+          "ready_unscheduled_us": 373
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 16063,
+          "task_cpu_us": 14709,
+          "blocked_us": 988,
+          "ready_unscheduled_us": 366
+        },
+        "path": "identity",
+        "iteration": 4,
+        "host_elapsed_ns": 32605900,
+        "exchanges": [
+          {
+            "mid": 56132,
+            "token": "e72586d718af9430",
+            "receive_us": 10480437,
+            "send_us": 10494859,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14818,
+              "task_cpu_us": 13827,
+              "blocked_us": 988,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 14422,
+              "task_cpu_us": 13431,
+              "blocked_us": 988,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10480041,
+              "c": 394832,
+              "b": 5477697,
+              "r": 14288
+            },
+            "send_call": {
+              "wall_us": 1245,
+              "task_cpu_us": 882,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 363
+            },
+            "send_complete_us": 10496104,
+            "end_index": 186,
+            "sample_end": {
+              "w": 10496104,
+              "c": 409541,
+              "b": 5478685,
+              "r": 14654
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16166,
+          "task_cpu_us": 15853,
+          "blocked_us": 164,
+          "ready_unscheduled_us": 149
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 14670,
+          "task_cpu_us": 14357,
+          "blocked_us": 164,
+          "ready_unscheduled_us": 149
+        },
+        "path": "test",
+        "iteration": 4,
+        "host_elapsed_ns": 19836600,
+        "exchanges": [
+          {
+            "mid": 56133,
+            "token": "a164587eb928cd0f",
+            "receive_us": 10513291,
+            "send_us": 10526487,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13604,
+              "task_cpu_us": 13437,
+              "blocked_us": 164,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 13196,
+              "task_cpu_us": 13029,
+              "blocked_us": 164,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10512883,
+              "c": 412002,
+              "b": 5492909,
+              "r": 14748
+            },
+            "send_call": {
+              "wall_us": 1066,
+              "task_cpu_us": 920,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 146
+            },
+            "send_complete_us": 10527553,
+            "end_index": 197,
+            "sample_end": {
+              "w": 10527553,
+              "c": 426359,
+              "b": 5493073,
+              "r": 14897
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 46080,
+          "task_cpu_us": 38589,
+          "blocked_us": 5156,
+          "ready_unscheduled_us": 2335
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 44473,
+          "task_cpu_us": 37412,
+          "blocked_us": 5156,
+          "ready_unscheduled_us": 1905
+        },
+        "path": "large",
+        "iteration": 4,
+        "host_elapsed_ns": 51010100,
+        "exchanges": [
+          {
+            "mid": 56134,
+            "token": "14691355529d1a4d",
+            "receive_us": 10533154,
+            "send_us": 10551219,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 18441,
+              "task_cpu_us": 17279,
+              "blocked_us": 564,
+              "ready_unscheduled_us": 598
+            },
+            "receive_to_send": {
+              "wall_us": 18065,
+              "task_cpu_us": 16903,
+              "blocked_us": 564,
+              "ready_unscheduled_us": 598
+            },
+            "sample_start": {
+              "w": 10532778,
+              "c": 429018,
+              "b": 5495629,
+              "r": 14907
+            },
+            "send_call": {
+              "wall_us": 1258,
+              "task_cpu_us": 909,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 349
+            },
+            "send_complete_us": 10552477,
+            "end_index": 208,
+            "sample_end": {
+              "w": 10552477,
+              "c": 447206,
+              "b": 5496193,
+              "r": 15854
+            }
+          },
+          {
+            "mid": 56135,
+            "token": "14691355529d1a4d",
+            "receive_us": 10559817,
+            "send_us": 10575995,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16547,
+              "task_cpu_us": 16098,
+              "blocked_us": 446,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16178,
+              "task_cpu_us": 15729,
+              "blocked_us": 446,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10559448,
+              "c": 449429,
+              "b": 5500339,
+              "r": 16456
+            },
+            "send_call": {
+              "wall_us": 1256,
+              "task_cpu_us": 903,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 353
+            },
+            "send_complete_us": 10577251,
+            "end_index": 219,
+            "sample_end": {
+              "w": 10577251,
+              "c": 466430,
+              "b": 5500785,
+              "r": 16812
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16458,
+          "task_cpu_us": 16091,
+          "blocked_us": 12,
+          "ready_unscheduled_us": 355
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15325,
+          "task_cpu_us": 14958,
+          "blocked_us": 12,
+          "ready_unscheduled_us": 355
+        },
+        "path": "identity",
+        "iteration": 5,
+        "host_elapsed_ns": 28826500,
+        "exchanges": [
+          {
+            "mid": 56136,
+            "token": "4caf0accd09a0079",
+            "receive_us": 10584457,
+            "send_us": 10597977,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13904,
+              "task_cpu_us": 13889,
+              "blocked_us": 12,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 13520,
+              "task_cpu_us": 13505,
+              "blocked_us": 12,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10584073,
+              "c": 468691,
+              "b": 5504636,
+              "r": 17522
+            },
+            "send_call": {
+              "wall_us": 1421,
+              "task_cpu_us": 1069,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 352
+            },
+            "send_complete_us": 10599398,
+            "end_index": 230,
+            "sample_end": {
+              "w": 10599398,
+              "c": 483649,
+              "b": 5504648,
+              "r": 17877
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16351,
+          "task_cpu_us": 15230,
+          "blocked_us": 53,
+          "ready_unscheduled_us": 1068
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 14444,
+          "task_cpu_us": 14041,
+          "blocked_us": 53,
+          "ready_unscheduled_us": 350
+        },
+        "path": "test",
+        "iteration": 5,
+        "host_elapsed_ns": 17475900,
+        "exchanges": [
+          {
+            "mid": 56137,
+            "token": "4042821f8d1b691d",
+            "receive_us": 10613423,
+            "send_us": 10626239,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13216,
+              "task_cpu_us": 13160,
+              "blocked_us": 53,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 12816,
+              "task_cpu_us": 12760,
+              "blocked_us": 53,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10613023,
+              "c": 485973,
+              "b": 5515936,
+              "r": 17890
+            },
+            "send_call": {
+              "wall_us": 1228,
+              "task_cpu_us": 881,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 347
+            },
+            "send_complete_us": 10627467,
+            "end_index": 241,
+            "sample_end": {
+              "w": 10627467,
+              "c": 500014,
+              "b": 5515989,
+              "r": 18240
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 45315,
+          "task_cpu_us": 39189,
+          "blocked_us": 5589,
+          "ready_unscheduled_us": 537
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 43975,
+          "task_cpu_us": 37849,
+          "blocked_us": 5589,
+          "ready_unscheduled_us": 537
+        },
+        "path": "large",
+        "iteration": 5,
+        "host_elapsed_ns": 48059500,
+        "exchanges": [
+          {
+            "mid": 56138,
+            "token": "93f3cd89d54f5e05",
+            "receive_us": 10630956,
+            "send_us": 10648700,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 18101,
+              "task_cpu_us": 16944,
+              "blocked_us": 906,
+              "ready_unscheduled_us": 251
+            },
+            "receive_to_send": {
+              "wall_us": 17744,
+              "task_cpu_us": 16587,
+              "blocked_us": 906,
+              "ready_unscheduled_us": 251
+            },
+            "sample_start": {
+              "w": 10630599,
+              "c": 502117,
+              "b": 5515989,
+              "r": 19269
+            },
+            "send_call": {
+              "wall_us": 932,
+              "task_cpu_us": 932,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 0
+            },
+            "send_complete_us": 10649632,
+            "end_index": 252,
+            "sample_end": {
+              "w": 10649632,
+              "c": 519993,
+              "b": 5516895,
+              "r": 19520
+            }
+          },
+          {
+            "mid": 56139,
+            "token": "93f3cd89d54f5e05",
+            "receive_us": 10656746,
+            "send_us": 10673329,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16968,
+              "task_cpu_us": 16258,
+              "blocked_us": 707,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16583,
+              "task_cpu_us": 15873,
+              "blocked_us": 707,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10656361,
+              "c": 522741,
+              "b": 5520871,
+              "r": 19525
+            },
+            "send_call": {
+              "wall_us": 1245,
+              "task_cpu_us": 967,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 278
+            },
+            "send_complete_us": 10674574,
+            "end_index": 263,
+            "sample_end": {
+              "w": 10674574,
+              "c": 539966,
+              "b": 5521578,
+              "r": 19806
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16997,
+          "task_cpu_us": 15957,
+          "blocked_us": 506,
+          "ready_unscheduled_us": 534
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15210,
+          "task_cpu_us": 14738,
+          "blocked_us": 115,
+          "ready_unscheduled_us": 357
+        },
+        "path": "identity",
+        "iteration": 6,
+        "host_elapsed_ns": 18447100,
+        "exchanges": [
+          {
+            "mid": 56140,
+            "token": "1a6752b7e9a97b47",
+            "receive_us": 10679283,
+            "send_us": 10692905,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13990,
+              "task_cpu_us": 13872,
+              "blocked_us": 115,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 13622,
+              "task_cpu_us": 13504,
+              "blocked_us": 115,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10678915,
+              "c": 542536,
+              "b": 5523285,
+              "r": 19870
+            },
+            "send_call": {
+              "wall_us": 1220,
+              "task_cpu_us": 866,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 354
+            },
+            "send_complete_us": 10694125,
+            "end_index": 274,
+            "sample_end": {
+              "w": 10694125,
+              "c": 557274,
+              "b": 5523400,
+              "r": 20227
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 16836,
+          "task_cpu_us": 15081,
+          "blocked_us": 568,
+          "ready_unscheduled_us": 1187
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 14872,
+          "task_cpu_us": 13663,
+          "blocked_us": 568,
+          "ready_unscheduled_us": 641
+        },
+        "path": "test",
+        "iteration": 6,
+        "host_elapsed_ns": 18166900,
+        "exchanges": [
+          {
+            "mid": 56141,
+            "token": "313128a7ad68704f",
+            "receive_us": 10697876,
+            "send_us": 10711152,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13633,
+              "task_cpu_us": 12786,
+              "blocked_us": 568,
+              "ready_unscheduled_us": 279
+            },
+            "receive_to_send": {
+              "wall_us": 13276,
+              "task_cpu_us": 12429,
+              "blocked_us": 568,
+              "ready_unscheduled_us": 279
+            },
+            "sample_start": {
+              "w": 10697519,
+              "c": 559460,
+              "b": 5523791,
+              "r": 21044
+            },
+            "send_call": {
+              "wall_us": 1239,
+              "task_cpu_us": 877,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 362
+            },
+            "send_complete_us": 10712391,
+            "end_index": 285,
+            "sample_end": {
+              "w": 10712391,
+              "c": 573123,
+              "b": 5524359,
+              "r": 21685
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 42824,
+          "task_cpu_us": 37956,
+          "blocked_us": 3770,
+          "ready_unscheduled_us": 1098
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 41486,
+          "task_cpu_us": 36828,
+          "blocked_us": 3770,
+          "ready_unscheduled_us": 888
+        },
+        "path": "large",
+        "iteration": 6,
+        "host_elapsed_ns": 45280300,
+        "exchanges": [
+          {
+            "mid": 56142,
+            "token": "c2b2a3b5dd3ed25e",
+            "receive_us": 10716304,
+            "send_us": 10732095,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16142,
+              "task_cpu_us": 16002,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 140
+            },
+            "receive_to_send": {
+              "wall_us": 15791,
+              "task_cpu_us": 15651,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 140
+            },
+            "sample_start": {
+              "w": 10715953,
+              "c": 575759,
+              "b": 5524645,
+              "r": 22325
+            },
+            "send_call": {
+              "wall_us": 1462,
+              "task_cpu_us": 1184,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 278
+            },
+            "send_complete_us": 10733557,
+            "end_index": 296,
+            "sample_end": {
+              "w": 10733557,
+              "c": 592945,
+              "b": 5524645,
+              "r": 22743
+            }
+          },
+          {
+            "mid": 56143,
+            "token": "c2b2a3b5dd3ed25e",
+            "receive_us": 10739673,
+            "send_us": 10756181,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 16871,
+              "task_cpu_us": 16222,
+              "blocked_us": 536,
+              "ready_unscheduled_us": 113
+            },
+            "receive_to_send": {
+              "wall_us": 16508,
+              "task_cpu_us": 15859,
+              "blocked_us": 536,
+              "ready_unscheduled_us": 113
+            },
+            "sample_start": {
+              "w": 10739310,
+              "c": 595454,
+              "b": 5527879,
+              "r": 22753
+            },
+            "send_call": {
+              "wall_us": 1258,
+              "task_cpu_us": 911,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 347
+            },
+            "send_complete_us": 10757439,
+            "end_index": 307,
+            "sample_end": {
+              "w": 10757439,
+              "c": 612587,
+              "b": 5528415,
+              "r": 23213
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": {
+          "wall_us": 17139,
+          "task_cpu_us": 16330,
+          "blocked_us": 290,
+          "ready_unscheduled_us": 519
+        },
+        "readiness_to_final_send_return": {
+          "wall_us": 15961,
+          "task_cpu_us": 15152,
+          "blocked_us": 290,
+          "ready_unscheduled_us": 519
+        },
+        "path": "identity",
+        "iteration": 7,
+        "host_elapsed_ns": 19270400,
+        "exchanges": [
+          {
+            "mid": 56144,
+            "token": "5823d1be12aa9ca0",
+            "receive_us": 10761792,
+            "send_us": 10775974,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 14542,
+              "task_cpu_us": 14249,
+              "blocked_us": 290,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 14182,
+              "task_cpu_us": 13889,
+              "blocked_us": 290,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10761432,
+              "c": 614797,
+              "b": 5529467,
+              "r": 23944
+            },
+            "send_call": {
+              "wall_us": 1419,
+              "task_cpu_us": 903,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 516
+            },
+            "send_complete_us": 10777393,
+            "end_index": 318,
+            "sample_end": {
+              "w": 10777393,
+              "c": 629949,
+              "b": 5529757,
+              "r": 24463
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": null,
+        "readiness_to_final_send_return": {
+          "wall_us": 15031,
+          "task_cpu_us": 13843,
+          "blocked_us": 835,
+          "ready_unscheduled_us": 353
+        },
+        "path": "test",
+        "iteration": 7,
+        "host_elapsed_ns": 16686300,
+        "exchanges": [
+          {
+            "mid": 56145,
+            "token": "13ec8a6227a67401",
+            "receive_us": 10781342,
+            "send_us": 10794723,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 13808,
+              "task_cpu_us": 12970,
+              "blocked_us": 835,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 13381,
+              "task_cpu_us": 12543,
+              "blocked_us": 835,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10780915,
+              "c": 632619,
+              "b": 5530594,
+              "r": 24478
+            },
+            "send_call": {
+              "wall_us": 1223,
+              "task_cpu_us": 873,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 350
+            },
+            "send_complete_us": 10795946,
+            "end_index": 329,
+            "sample_end": {
+              "w": 10795946,
+              "c": 646462,
+              "b": 5531429,
+              "r": 24831
+            }
+          }
+        ]
+      },
+      {
+        "readiness_to_next_select_entry": null,
+        "readiness_to_final_send_return": {
+          "wall_us": 41627,
+          "task_cpu_us": 36587,
+          "blocked_us": 4307,
+          "ready_unscheduled_us": 733
+        },
+        "path": "large",
+        "iteration": 7,
+        "host_elapsed_ns": 50941200,
+        "exchanges": [
+          {
+            "mid": 56146,
+            "token": "55ae6e64e3eae388",
+            "receive_us": 10798261,
+            "send_us": 10813751,
+            "readiness_boundary": "receive_return",
+            "ready_to_send": {
+              "wall_us": 15490,
+              "task_cpu_us": 15490,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 0
+            },
+            "receive_to_send": {
+              "wall_us": 15490,
+              "task_cpu_us": 15490,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 0
+            },
+            "sample_start": {
+              "w": 10798261,
+              "c": 648122,
+              "b": 5531429,
+              "r": 25486
+            },
+            "send_call": {
+              "wall_us": 1299,
+              "task_cpu_us": 1132,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 167
+            },
+            "send_complete_us": 10815050,
+            "end_index": 338,
+            "sample_end": {
+              "w": 10815050,
+              "c": 664744,
+              "b": 5531429,
+              "r": 25653
+            }
+          },
+          {
+            "mid": 56147,
+            "token": "55ae6e64e3eae388",
+            "receive_us": 10821551,
+            "send_us": 10838412,
+            "readiness_boundary": "worker_select_return",
+            "ready_to_send": {
+              "wall_us": 17234,
+              "task_cpu_us": 16340,
+              "blocked_us": 891,
+              "ready_unscheduled_us": 3
+            },
+            "receive_to_send": {
+              "wall_us": 16861,
+              "task_cpu_us": 15967,
+              "blocked_us": 891,
+              "ready_unscheduled_us": 3
+            },
+            "sample_start": {
+              "w": 10821178,
+              "c": 667443,
+              "b": 5534845,
+              "r": 25666
+            },
+            "send_call": {
+              "wall_us": 1476,
+              "task_cpu_us": 926,
+              "blocked_us": 0,
+              "ready_unscheduled_us": 550
+            },
+            "send_complete_us": 10839888,
+            "end_index": 349,
+            "sample_end": {
+              "w": 10839888,
+              "c": 684709,
+              "b": 5535736,
+              "r": 26219
+            }
+          }
+        ]
+      }
+    ],
+    "state_spans": [
+      {
+        "kind": "read",
+        "wall_us": 1791,
+        "task_cpu_us": 1791,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 5690,
+        "task_cpu_us": 5160,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 530
+      },
+      {
+        "kind": "read",
+        "wall_us": 1402,
+        "task_cpu_us": 1402,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1566,
+        "task_cpu_us": 1566,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4275,
+        "task_cpu_us": 3914,
+        "blocked_us": 282,
+        "ready_unscheduled_us": 79
+      },
+      {
+        "kind": "read",
+        "wall_us": 1670,
+        "task_cpu_us": 1363,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 307
+      },
+      {
+        "kind": "read",
+        "wall_us": 1570,
+        "task_cpu_us": 1570,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 5127,
+        "task_cpu_us": 3916,
+        "blocked_us": 887,
+        "ready_unscheduled_us": 324
+      },
+      {
+        "kind": "read",
+        "wall_us": 1236,
+        "task_cpu_us": 1236,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1560,
+        "task_cpu_us": 1560,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3795,
+        "task_cpu_us": 3658,
+        "blocked_us": 134,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1245,
+        "task_cpu_us": 1245,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1680,
+        "task_cpu_us": 1680,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4563,
+        "task_cpu_us": 3639,
+        "blocked_us": 921,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1240,
+        "task_cpu_us": 1240,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1910,
+        "task_cpu_us": 1679,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 231
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4169,
+        "task_cpu_us": 4055,
+        "blocked_us": 111,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1274,
+        "task_cpu_us": 1274,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1564,
+        "task_cpu_us": 1564,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4529,
+        "task_cpu_us": 3666,
+        "blocked_us": 860,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1238,
+        "task_cpu_us": 1238,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1566,
+        "task_cpu_us": 1566,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4290,
+        "task_cpu_us": 4017,
+        "blocked_us": 270,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1293,
+        "task_cpu_us": 1293,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1563,
+        "task_cpu_us": 1563,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3840,
+        "task_cpu_us": 3661,
+        "blocked_us": 176,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1247,
+        "task_cpu_us": 1247,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1564,
+        "task_cpu_us": 1564,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 5285,
+        "task_cpu_us": 4331,
+        "blocked_us": 921,
+        "ready_unscheduled_us": 33
+      },
+      {
+        "kind": "read",
+        "wall_us": 1262,
+        "task_cpu_us": 1262,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1665,
+        "task_cpu_us": 1665,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4520,
+        "task_cpu_us": 3841,
+        "blocked_us": 676,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1271,
+        "task_cpu_us": 1271,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1567,
+        "task_cpu_us": 1567,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4345,
+        "task_cpu_us": 3653,
+        "blocked_us": 689,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1332,
+        "task_cpu_us": 1332,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1562,
+        "task_cpu_us": 1562,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4328,
+        "task_cpu_us": 3801,
+        "blocked_us": 318,
+        "ready_unscheduled_us": 209
+      },
+      {
+        "kind": "read",
+        "wall_us": 1274,
+        "task_cpu_us": 1274,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1566,
+        "task_cpu_us": 1566,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4362,
+        "task_cpu_us": 3656,
+        "blocked_us": 703,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1251,
+        "task_cpu_us": 1251,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1550,
+        "task_cpu_us": 1550,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4704,
+        "task_cpu_us": 3924,
+        "blocked_us": 777,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1261,
+        "task_cpu_us": 1261,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1583,
+        "task_cpu_us": 1583,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4668,
+        "task_cpu_us": 3772,
+        "blocked_us": 893,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1245,
+        "task_cpu_us": 1245,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1568,
+        "task_cpu_us": 1568,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4695,
+        "task_cpu_us": 3704,
+        "blocked_us": 988,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1282,
+        "task_cpu_us": 1282,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1639,
+        "task_cpu_us": 1639,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4242,
+        "task_cpu_us": 4075,
+        "blocked_us": 164,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1290,
+        "task_cpu_us": 1290,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 2763,
+        "task_cpu_us": 2212,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 551
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4480,
+        "task_cpu_us": 3869,
+        "blocked_us": 564,
+        "ready_unscheduled_us": 47
+      },
+      {
+        "kind": "read",
+        "wall_us": 1280,
+        "task_cpu_us": 1280,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1580,
+        "task_cpu_us": 1580,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4340,
+        "task_cpu_us": 3891,
+        "blocked_us": 446,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1275,
+        "task_cpu_us": 1275,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1576,
+        "task_cpu_us": 1576,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3803,
+        "task_cpu_us": 3788,
+        "blocked_us": 12,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1261,
+        "task_cpu_us": 1261,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1574,
+        "task_cpu_us": 1574,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3929,
+        "task_cpu_us": 3873,
+        "blocked_us": 53,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1294,
+        "task_cpu_us": 1294,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1649,
+        "task_cpu_us": 1649,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4830,
+        "task_cpu_us": 3918,
+        "blocked_us": 906,
+        "ready_unscheduled_us": 6
+      },
+      {
+        "kind": "read",
+        "wall_us": 1325,
+        "task_cpu_us": 1325,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1585,
+        "task_cpu_us": 1585,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4499,
+        "task_cpu_us": 3789,
+        "blocked_us": 707,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1264,
+        "task_cpu_us": 1264,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1648,
+        "task_cpu_us": 1648,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3787,
+        "task_cpu_us": 3669,
+        "blocked_us": 115,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1303,
+        "task_cpu_us": 1303,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1562,
+        "task_cpu_us": 1562,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4164,
+        "task_cpu_us": 3593,
+        "blocked_us": 568,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1266,
+        "task_cpu_us": 1266,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1577,
+        "task_cpu_us": 1577,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3554,
+        "task_cpu_us": 3554,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1264,
+        "task_cpu_us": 1264,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1582,
+        "task_cpu_us": 1582,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4403,
+        "task_cpu_us": 3864,
+        "blocked_us": 536,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1295,
+        "task_cpu_us": 1295,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1588,
+        "task_cpu_us": 1588,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4085,
+        "task_cpu_us": 3792,
+        "blocked_us": 290,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1265,
+        "task_cpu_us": 1265,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1579,
+        "task_cpu_us": 1579,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4518,
+        "task_cpu_us": 3680,
+        "blocked_us": 835,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1265,
+        "task_cpu_us": 1265,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1589,
+        "task_cpu_us": 1589,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 3701,
+        "task_cpu_us": 3701,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1262,
+        "task_cpu_us": 1262,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "read",
+        "wall_us": 1592,
+        "task_cpu_us": 1592,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      },
+      {
+        "kind": "commit",
+        "wall_us": 4977,
+        "task_cpu_us": 4083,
+        "blocked_us": 891,
+        "ready_unscheduled_us": 3
+      },
+      {
+        "kind": "read",
+        "wall_us": 1288,
+        "task_cpu_us": 1288,
+        "blocked_us": 0,
+        "ready_unscheduled_us": 0
+      }
+    ],
+    "resources": [
+      {
+        "at": 10095573,
+        "rx": 1,
+        "tx": 0,
+        "free": 41132,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 64992
+      },
+      {
+        "at": 10598585,
+        "rx": 21,
+        "tx": 20,
+        "free": 40932,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 11102346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 11603346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 12104346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 12605346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 13106359,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 13607347,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 14108346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 14610346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 33068,
+        "largest": 30720,
+        "stack_free": 62320
+      },
+      {
+        "at": 15114346,
+        "rx": 32,
+        "tx": 32,
+        "free": 37624,
+        "minimum": 32556,
+        "largest": 28672,
+        "stack_free": 62320
+      },
+      {
+        "at": 15616346,
+        "rx": 32,
+        "tx": 32,
+        "free": 40744,
+        "minimum": 32556,
+        "largest": 30720,
+        "stack_free": 62320
+      }
+    ],
+    "ledger_rows": 350,
+    "ledger_bytes": 28672,
+    "scope": "instrumented scheduled-task CPU includes attributed ISR/stall time; readiness is worker observed; no performance gain comparison"
+  },
+  "capacities": {
+    "rx_datagrams": 2,
+    "tx_datagrams": 2,
+    "datagram_bytes": 1152,
+    "body_bytes_each_direction": 4096,
+    "dedup": 4,
+    "observe": 2,
+    "calls": 4,
+    "security_bindings": 4,
+    "associations": 1,
+    "deferred": 0,
+    "routes": 8
+  },
+  "limits": [
+    "QBlock2 loss is host receive/device response reissue, not MCU-client recovery",
+    "Call initiated during outage; pre-existing-at-disable Call unproven",
+    "Only Observe pool exhaustion selected",
+    "CPU is one instrumented async OSCORE diagnostic, includes attributed ISR/stall time; no gain comparison",
+    "Resource samples and startup-inclusive minima do not establish normal firmware traffic peaks",
+    "Physical power333, deferred credential touch365 and scoped inbound reverse-LAN remain unexecuted"
+  ]
+}
