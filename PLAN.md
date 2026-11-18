@@ -46,9 +46,7 @@ sync qualification. All advisory checks on #764 settled without failure.
 
 ## Active batch
 
-The finite existing-fixture functional batch is complete. No builds or device
-changes remain active. This does not complete installed reliability qualification
-or the broader performance goal; unsupported cells below remain open.
+The active finite recovery batch extends the existing fixture with known-size NON Q-Block2 suffix loss, observable duplicate handler invocations, explicit pool refusal/reuse and one automatically recovered per-device Wi-Fi interruption. Preserve the supported sync/async and security cells, capacities, security history and normal-firmware restoration guards. Reuse the preceding ordinary/blockwise evidence. After reliability, run one bounded device CPU/socket-ready-to-send measurement and protected traffic-period resource capture. Implementation, source-matched device validation and independent review remain pending; no new execution or performance claim is established. Advisory checks on #765 settled successfully.
 
 ## Next batch: missing device recovery controls
 
