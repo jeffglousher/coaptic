@@ -101,7 +101,10 @@ time includes yields and preemption. Instrumentation overhead is included.
 
 For all eight small reads, observed readiness-to-final-send-return scheduled CPU
 averages 14,161.75 us, versus 15,035.875 us wall. The eight large reads average
-37,018.875 us CPU and 43,229.75 us wall across both blocks. Host complete-read
+37,018.875 us CPU and 43,229.75 us wall across both blocks. Across the cohort,
+31 exchanges start at select return; the first exchange of large iteration 7
+uses receive return. That large mean includes this explicitly selected fallback
+boundary. Host complete-read
 means are 18.5958 ms small and 50.193925 ms large. These are different boundaries;
 the difference is not isolated radio latency. Large device wall spans include
 waiting for the next block request. Readiness means worker-observed select
