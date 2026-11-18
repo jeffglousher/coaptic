@@ -46,7 +46,19 @@ sync qualification. All advisory checks on #764 settled without failure.
 
 ## Active batch
 
-The active finite recovery batch extends the existing fixture with known-size NON Q-Block2 suffix loss, observable duplicate handler invocations, explicit pool refusal/reuse and one automatically recovered per-device Wi-Fi interruption. Preserve the supported sync/async and security cells, capacities, security history and normal-firmware restoration guards. Reuse the preceding ordinary/blockwise evidence. After reliability, run one bounded device CPU/socket-ready-to-send measurement and protected traffic-period resource capture. Implementation, source-matched device validation and independent review remain pending; no new execution or performance claim is established. Advisory checks on #765 settled successfully.
+The active fixture work adds observable echo-handler counts, explicit Observe
+pool refusal/reuse, a finite per-device Wi-Fi interruption and a known-size NON
+Q-Block2 suffix selector. Capacities and security history are preserved. One
+sync/unprotected installed cell passed duplicate counts, Observe refusal/reuse
+and automatic Wi-Fi recovery; normal firmware restoration was verified.
+
+The Q-Block2 selector passes a real UDP regression after adding the fixture's
+missing stable ETag. This proves host receive-loss recovery and server reissue,
+not MCU client recovery. Updated source-matched device execution, protected
+selectors, the remaining cells and one bounded CPU/socket-ready-to-send
+measurement remain pending. Independent reviews found and corrected receipt,
+reply-matching and transfer-binding issues. Changes remain local and unmerged;
+no performance gain is claimed. Advisory checks on #765 settled successfully.
 
 ## Next batch: missing device recovery controls
 
