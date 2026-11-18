@@ -17,7 +17,20 @@
       ],
       "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
       "suite_recorded_at_build_completion": "0e45ceca91d4be2af571cd8e2afec55f40944c31",
-      "client_sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "18ad2f61a0e3fb98029d6994831ec0865b9a8a42e38d9e18cbe2a55f03bfbae4"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "native",
+          "sha256": "18ad2f61a0e3fb98029d6994831ec0865b9a8a42e38d9e18cbe2a55f03bfbae4"
+        }
+      },
       "duplicate_effects": {
         "before": 0,
         "after": 1,
@@ -73,7 +86,20 @@
       ],
       "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
       "suite_recorded_at_build_completion": "3cdb069c80a7b044315388045b5dd4a42644b3bf",
-      "client_sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "aiocoap-script",
+          "script_sha256": "77fa22aace0a97baef87b565ed9cec514218ca8b7cbcd028800990a44932ed2c"
+        }
+      },
       "duplicate_effects": {
         "before": 0,
         "after": 1,
@@ -129,7 +155,20 @@
       ],
       "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
       "suite_recorded_at_build_completion": "d94f9ffb9fd66fc0c158d4cf158316982d5bad0b",
-      "client_sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "aiocoap-script",
+          "script_sha256": "77fa22aace0a97baef87b565ed9cec514218ca8b7cbcd028800990a44932ed2c"
+        }
+      },
       "duplicate_effects": {
         "before": 0,
         "after": 1,
@@ -181,7 +220,20 @@
       ],
       "source_head": "a844277db040d72c969eb0e0daa1468e8fd0be94",
       "suite_recorded_at_build_completion": "d94f9ffb9fd66fc0c158d4cf158316982d5bad0b",
-      "client_sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5",
+      "clients": {
+        "wifi": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "qblock_suffix": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        },
+        "duplicate_and_observe": {
+          "kind": "native",
+          "sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5"
+        }
+      },
       "duplicate_effects": {
         "before": 0,
         "after": 1,

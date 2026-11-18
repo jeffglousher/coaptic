@@ -44,7 +44,7 @@ sync qualification. All advisory checks on #764 settled without failure.
 
 ## Latest recovery batch
 
-All four sync/async ? unprotected/durable OSCORE device cells passed observable
+All four sync/async and unprotected/durable OSCORE device cells passed observable
 duplicate effects, explicit Observe refusal/reuse, known-size NON Q-Block2 suffix
 loss/repair and same-App Call retry/reconnect during a bounded per-device Wi-Fi
 interruption. Normal firmware was restored and verified after every trial.

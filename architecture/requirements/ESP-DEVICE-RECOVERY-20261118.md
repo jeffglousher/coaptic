@@ -13,8 +13,12 @@ restoration captures. This is finite qualification, not certification.
 The source checkout was documentation head `a844277`; every recorded Rust source
 hash equals production `b875088`. The fixture service and platform control match
 companion `0e45cec`; later host selectors and grading were added separately. The
-host executable was built at companion `3cdb069`, SHA-256
+Q-Block2 and later host executable was built at companion `3cdb069`, SHA-256
 `7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5`.
+The earlier async OSCORE Wi-Fi/duplicate/Observe trial used companion `0e45cec`
+and client SHA-256
+`18ad2f61a0e3fb98029d6994831ec0865b9a8a42e38d9e18cbe2a55f03bfbae4`.
+The numeric receipt binds each native client or independent script to its role.
 Receipt fields recording a later suite HEAD at execution/build completion do not
 mean that unchanged binaries were rebuilt at that HEAD. Independent review
 checked code equivalence, four OTA/ELF hashes, Rust source hashes and runtime
@@ -89,13 +93,13 @@ with zero observed accounting error.
 The diagnostic copies the exact IDF kernel into owned build inputs; the installed
 SDK remains unchanged. The linked archive has exactly one `tasks.c` object.
 A read-only snapshot includes the current running slice under the kernel lock;
-blocked?Ready and context-switch observations distinguish blocked waiting from
+blocked-to-Ready and context-switch observations distinguish blocked waiting from
 ready-but-unscheduled time. The worker is unpinned, so snapshots use its current
 core. U64 ESP timer runtime counters and the specific non-SMP two-core kernel
 are mandatory. CPU includes attributed interrupt time and flash stalls; ready
 time includes yields and preemption. Instrumentation overhead is included.
 
-For all eight small reads, observed readiness?final-send-return scheduled CPU
+For all eight small reads, observed readiness-to-final-send-return scheduled CPU
 averages 14,161.75 us, versus 15,035.875 us wall. The eight large reads average
 37,018.875 us CPU and 43,229.75 us wall across both blocks. Host complete-read
 means are 18.5958 ms small and 50.193925 ms large. These are different boundaries;
