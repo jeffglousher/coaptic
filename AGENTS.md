@@ -9,17 +9,20 @@ for checks. Humans and agents may author and review.
   Finish code and integration before expanding diagnostics or qualification,
   unless that work is requested.
 - Work in coherent batches, then run checks that can catch faults in the change.
-  Reuse valid evidence; repeat tests for a concrete concern.
+  Reuse valid evidence; repeat tests for a concrete concern. After each validated
+  batch, begin the next unblocked work toward the authorized objective in the
+  same run. A merged PR or completed batch is a checkpoint, not a stopping rule.
 - Keep independent work moving during builds and reviews. A hardware action or
   approval blocks only the work that needs it.
 - Fix review findings and merge authorized changes to main by squash only.
   Clean settled branches and worktrees. Hosted CI is advisory during pre-release.
 - Report what changed, what ran and what remains. Ask for an exact human action
   only when it cannot be completed autonomously.
-- Before ending a batch or handing it to another thread, update the short
+- At meaningful batch boundaries, update the short
   project status in PLAN.md and follow the
-  [batch handoff](DEVELOPMENT.md#finish-a-batch-or-hand-off) requirements.
-  A finished batch does not imply the project goal is complete.
+  [continuation and handoff](DEVELOPMENT.md#finish-a-batch-or-hand-off) requirements.
+  Continue through checkpoints; hand over when requested or when a concrete
+  execution/continuity limit justifies it, with verified state and clear custody.
 
 ## Preserve the design
 
