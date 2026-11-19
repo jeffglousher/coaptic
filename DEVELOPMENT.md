@@ -123,31 +123,91 @@ steady-state results primary, with memory and lifecycle costs separately named.
 
 ## Finish a batch or hand off
 
-Project continuity is part of delivery. Before reporting a batch complete or
-transferring it to a fresh thread, update `PLAN.md`: date and source identities,
+### Continue across batches
+
+Project continuity is part of delivery. Work toward the full authorized objective
+across multiple coherent batches in one sustained run. After implementation,
+integration, relevant validation and authorized delivery, reconcile what remains
+and start the next unblocked task. A passing check, merged PR, rejected candidate,
+clean tree or completed evidence report does not by itself end the run. On receipt
+of a handoff, verify current state and custody, then execute the first unblocked
+task; acknowledgment, advisory CI inspection and a next-batch recommendation alone
+are not substantive continuation.
+
+At meaningful batch boundaries, update `PLAN.md`: date and source identities,
 current position, active batch (or none), one recommended next batch with its
 completion criteria, and blocked work with the exact prerequisite. Order work
 by reliability, performance, then ease of use. Keep this page short; move detailed
 results and historical work orders into linked evidence or history documents.
 Keep actionable acceptance criteria in issues and API contracts in rustdoc.
 
+Treat this update as a checkpoint and continue. Use commentary for progress while
+working. Keep independent work moving during waits. When an experiment fails,
+retain its evidence and select a different justified approach or remaining task;
+avoid repeated unchanged campaigns and diagnostics without a decision they enable.
+There is no arbitrary time or batch quota: maximize useful progress without
+expanding scope, permissions, concurrency or resource budgets.
+
+### Decide whether to stop or transfer
+
+End the run when the user's objective is verified complete, the user requests
+stop/pause/handover, or further authorized progress is prevented by a concrete
+blocker or execution limit. Verify that independent remaining work cannot proceed
+before reporting the whole objective blocked. Name the exact prerequisite and
+keep partial completion distinct from goal completion.
+
+Prefer checkpoints within the existing run. An autonomous handover normally
+follows substantial productive work at a validated boundary and needs a concrete
+continuity reason: for example, observed context loss not repaired by a compact
+checkpoint or an approaching enforced execution limit. A single finished batch,
+routine compaction, pending advisory checks or a preference for a fresh thread is
+insufficient. An explicit request or unavoidable interruption may require an
+earlier handover with incomplete validation recorded honestly.
+
+### Prepare and transfer custody
+
 Verify the checkout, uncommitted/unpushed work, PR state and remaining jobs.
 Identify who owns ongoing work; avoid two threads mutating the same checkout.
 Record source-matched proof, rejected approaches and any limitations that change
 the next decision. Reuse valid evidence rather than rerunning settled work.
-Close stale bugs that no longer reproduce on the declared current versions with
-the evidence and historical failures retained; a recurrence can open a fresh
-issue. Unexecuted qualification remains open until run or explicitly descoped.
+During authorized batch work, close stale bugs that no longer reproduce on the
+declared current versions, retaining evidence and historical failures; a recurrence
+can open a fresh issue. Handover preparation alone does not require reproduction
+or issue changes. Unexecuted qualification remains open until run or explicitly
+descoped.
 
-End with a compact report using these labels:
+Carry the full objective and completion criteria forward, with accepted batch
+statuses, the remaining requirements in priority order and the first executable
+action. Preserve dirty work, evidence and unresolved failures; do not force a
+merge, clean tree or passing result to manufacture a handover boundary. Validate
+the latest coherent change where possible, recording exact source and limits.
+Confirm normal firmware/runtime restoration where required. Each live job and
+mutable resource must have a named continuing owner or be safely stopped and
+verified within existing authority; retain generated inputs still in use.
+
+A prepared prompt is not proof of a running replacement. Use only an available,
+authorized continuation mechanism. Freeze sender mutations and record final
+state; the receiver verifies that state and accepts conditional custody; the
+sender confirms release; only then may the receiver mutate. If no receiver is
+confirmed, label continuation
+pending and preserve a recoverable checkpoint with safe runtime/job state.
+Never claim guaranteed resumption or leave live effects unowned. Honor an explicit
+stop without waiting indefinitely for a receiver. If safe stop is unauthorized
+or fails and no receiver exists, promptly name the live effect and exact operator
+takeover needed; do not invent authority or report fictitious continuing ownership.
+
+For a requested status report, actual stop or handover, use these compact labels;
+they do not require ending execution at every batch boundary:
 
 - **Delivered:** behavior changed and merged PRs, or explicit delivery status.
 - **Verified:** source identities, relevant checks and what they establish.
 - **Remaining:** unfinished work, failures and limits; distinguish batch status
   from the broader project goal.
-- **Next:** one recommended batch, why it comes next and its completion criteria.
+- **Next:** the next executable action and batch, why it comes next and its
+  completion criteria; continue it now unless a stated stop/transfer reason applies.
 - **Handoff:** checkout/branch/revision, dirty work, active jobs/ownership,
-  evidence locations and any exact human action needed.
+  evidence locations, stop/transfer reason, receiver acceptance or pending state,
+  and any exact human action needed.
 
 When a fresh thread is requested, give it a self-contained assignment based on
 this updated state. Do not treat a stopped run or merged PR as completion of an

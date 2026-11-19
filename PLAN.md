@@ -1,7 +1,8 @@
 # Project plan
 
-Updated 2026-11-18 after production core `b875088` and companion main `40f971b`
-([#264](https://github.com/jeffglousher/coaptic-validation/pull/264)).
+Updated 2026-11-18 after accepted core `094b482` and companion main `76be9a0`
+([#265](https://github.com/jeffglousher/coaptic-validation/pull/265)); production
+Rust remains `b875088`.
 Priorities: **reliability, performance, ease of use**, in that order.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
@@ -66,6 +67,12 @@ active; normal firmware restoration is verified. Detailed custody and private
 evidence locations belong in the batch handoff.
 
 ## Recommended next batch
+
+This is a continuation checkpoint. After verifying current state and custody,
+execute the next unblocked batch in the same run; completed qualification and
+advisory-check settlement alone are not reasons to end. Follow the
+[continuation and handoff procedure](DEVELOPMENT.md#finish-a-batch-or-hand-off)
+for actual stop or transfer conditions.
 
 Reliability remains first: select explicit remaining pool controls on the same
 finite fixture, with observable refusal, release/expiry and fresh reuse. Name
