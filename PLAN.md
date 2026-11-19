@@ -1,9 +1,10 @@
 # Project plan
 
-Updated 2026-11-18 after accepted core `094b482` and companion main `76be9a0`
-([#265](https://github.com/jeffglousher/coaptic-validation/pull/265)); production
-Rust remains `b875088`.
-Priorities: **reliability, performance, ease of use**, in that order.
+Updated 2026-11-19 after measuring accepted core `73093d8` and companion
+`76be9a0`. Production Rust remains `b875088`. Companion
+[#266](https://github.com/jeffglousher/coaptic-validation/pull/266) delivers the
+Windows process-cycle diagnostic.
+Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
@@ -42,7 +43,7 @@ passed sync/async device service in unprotected and durable OSCORE modes:
 nine-case protected campaigns. Normal authorized firmware was restored and
 verified after each cell. No core protocol fix or performance gain was established.
 Two mismatched fixture assemblies were rejected and retained before corrected
-sync qualification. All advisory checks on #764 settled without failure.
+sync qualification. All advisory checks on #765 settled without failure.
 
 ## Latest recovery batch
 
@@ -66,7 +67,7 @@ Implementation and evidence reviews are complete. No device/build job remains
 active; normal firmware restoration is verified. Detailed custody and private
 evidence locations belong in the batch handoff.
 
-## Recommended next batch
+## Active performance and reliability effort
 
 This is a continuation checkpoint. After verifying current state and custody,
 execute the next unblocked batch in the same run; completed qualification and
@@ -74,15 +75,23 @@ advisory-check settlement alone are not reasons to end. Follow the
 [continuation and handoff procedure](DEVELOPMENT.md#finish-a-batch-or-hand-off)
 for actual stop or transfer conditions.
 
-Reliability remains first: select explicit remaining pool controls on the same
-finite fixture, with observable refusal, release/expiry and fresh reuse. Name
-which pools and supported runtime/security cells are exercised; preserve original
-capacities and normal restoration. Keep #130 open for unexecuted qualification.
-Do not repeat settled ordinary/blockwise or recovery cells without a concern.
-
-Use the bounded CPU evidence to select one concrete cost boundary only when a
-new performance batch is authorized; require matched sync/async and security
-coverage before any broader improvement claim. #341 and #650 remain open.
+1. The [current Windows screen](architecture/requirements/WINDOWS-RUNTIME-SCREEN-20261119.md)
+   covers both runtime and security modes, complete small and blockwise reads,
+   process time and cycles, and an independent libcoap screen. High-rate pacing
+   missed periods. Lower-rate cycles are more repeatable than process CPU time
+   in the pilot. Two independent endpoints also complete overlapping CON Calls
+   in all selected cells. The Tokio path remains a priority after the
+   same-runtime sync control. Existing staged receive does not earn adoption.
+2. Attribute the I/O and scheduling cost before choosing one adapter candidate.
+   Match runtime, capacities, payload, offered load and client. Keep CPU time,
+   cycles and latency separate. Require recovery, security and memory checks.
+3. Reconcile peer speed and device evidence against that result. Keep the
+   original #650 baseline and both 50% targets. For device work, separate live
+   CPU attribution from end-to-end speed and preserve normal restoration.
+4. Extend reliability coverage where it changes the performance decision. Name
+   each remaining pool and runtime/security cell, prove refusal, release or
+   expiry and fresh reuse at unchanged capacities. Keep #130 open for unexecuted
+   qualification. Reuse settled recovery evidence where it applies.
 
 ## Blocked and deferred work
 
