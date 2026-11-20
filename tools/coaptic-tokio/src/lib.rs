@@ -45,7 +45,7 @@ impl coaptic::platform::AsyncTimer for Clock {
 ///
 /// Scratch must hold one byte more than the largest supplied receive buffer.
 /// Accepted bytes are copied once into that buffer. Oversized datagrams are
-/// consumed and rejected; no truncated prefix is delivered as a valid packet.
+/// consumed with [`io::ErrorKind::InvalidData`] before copying any prefix.
 pub struct Udp<S> {
     socket: UdpSocket,
     scratch: S,
@@ -115,7 +115,17 @@ impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
             .ok_or(io::ErrorKind::InvalidInput)?;
         // Tokio's receive future is cancellation-safe: Pending consumes no
         // datagram. The scratch borrow cannot outlive this future.
-        let (len, peer) = self.socket.recv_from(scratch).await?;
+        let received = self.socket.recv_from(scratch).await;
+        #[cfg(windows)]
+        let received = received.map_err(|error| {
+            const WSAEMSGSIZE: i32 = 10040;
+            // Winsock consumes datagrams larger than the guard buffer.
+            if error.raw_os_error() == Some(WSAEMSGSIZE) {
+                return io::ErrorKind::InvalidData.into();
+            }
+            error
+        });
+        let (len, peer) = received?;
         if len > buf.len() {
             return Err(io::ErrorKind::InvalidData.into());
         }

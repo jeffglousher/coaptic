@@ -105,10 +105,13 @@ for actual stop or transfer conditions.
    refusal and reuse, Call refusal and established OSCORE binding refusal.
    Keep #130 open for the remaining runtime/security cells and device
    qualification. Reuse settled recovery evidence where it applies.
-5. Compare the existing standalone async-io adapter with Tokio at matched
-   App capacities, payload, protection and load. Account for both runtimes'
-   worker and reactor costs. Preserve Tokio for caller-owned Tokio runtimes
-   and require a fresh measured and functional gate for any adapter change.
+5. The [standalone async-io screen](architecture/requirements/WINDOWS-HOST-ADAPTERS-20261119.md)
+   passes selected small-read cycle pairs and misses the blockwise gates.
+   Both adapters now report oversized receives as InvalidData on Windows
+   and prove same-socket reuse. Continue with a source-matched comparison
+   against the original #650 baseline using one common Mio fixture.
+   Preserve previous separate cohorts, both protection modes and the
+   original acceptance matrix.
 
 ## Blocked and deferred work
 
