@@ -179,6 +179,10 @@ for actual stop or transfer conditions.
     clears the CPU accounting floor and verifies all 28,800 reads. The
     median guard withholds the CPU ratio. Run the separately pinned
     established OSCORE partition and apply the same guards.
+20. The [Windows Tokio timer-poll probe](architecture/requirements/WINDOWS-TOKIO-TIMER-POLLS-20261120.md)
+    verifies 157,440 reads and counts a pending progress timer poll per
+    send. Timing perturbation limits the comparison. Keep the current
+    timer policy and preserve the earlier timer results.
 
 ## Blocked and deferred work
 
