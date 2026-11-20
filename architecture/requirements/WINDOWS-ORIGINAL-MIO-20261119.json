@@ -1,0 +1,2295 @@
+{
+  "schema": 1,
+  "workload": {
+    "rate": 800,
+    "concurrency": 1,
+    "message": "CON",
+    "rounds": 2,
+    "warmup": 32,
+    "operations_per_window": 6560,
+    "bytes": [
+      64,
+      1024,
+      4096
+    ],
+    "profile": "historical Default/AllocMemory C1 host control"
+  },
+  "authority": {
+    "qualifies_650": false,
+    "historical_cohorts_untouched": true,
+    "output_budget_bytes": 33554432
+  },
+  "host": {
+    "runner_sha256": "723b554505312dd7a33b265edd35fb21a95fb63403705433544c1bbac8bddd86",
+    "profiles_sha256": "be41966bc9d69aba6823f6bcb8492a86141db5697ec5f51104b22c4f1d72bc96",
+    "wrapper_sha256": "9a98cdc154b64bb8028df7194286b7e0058d8776a8671f52b7b0992aafd482ec",
+    "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+    "windows": "10.0.26200",
+    "machine": "AMD64",
+    "python": "3.14.4",
+    "psutil": "7.0.0",
+    "cpu": "AMD Ryzen 7 5800X3D",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1"
+  },
+  "original_commit": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+  "current_commit": "da486b0f88b12a1b72ada12901da7d2af4eb000c",
+  "original_tree": "f5aeb6cb9a1198928ab8aa01c60ef0b17fe223b2",
+  "current_tree": "e27175152ca44db2eea7ec251f638d7596689ef9",
+  "fixture_commit": "eea0374b60c93098a7f0dcf24a999e49d753d624",
+  "fixture_rust_sha256": {
+    "tools/benchmark/native/driver/src/main.rs": {
+      "archive_sha256": "68c5a6ae4f530bf8ea16ed25a65713fff9cdef5412ef606409651dce44138e6c",
+      "git_blob_sha256": "5bda2a57d71cf1adc02196312841290c2fb5ebc05618fc37825987520749144e"
+    },
+    "tools/benchmark/native/profile/src/main.rs": {
+      "archive_sha256": "94dcbdbb04660b5b2b79a09d15a50b4123a629232f54b3f2eb408d5b22a3767e",
+      "git_blob_sha256": "29660f0e78a6ceb16f13b792286b27ad57b287832af207bd9decc5fbd96b21ac"
+    },
+    "tools/benchmark/native/profile/src/timing.rs": {
+      "archive_sha256": "25b3777797159e47cd4dc4a1c2f6b80e0194139ea3514184e3358ff54f00e44b",
+      "git_blob_sha256": "f45c6d82e3d9d767bad0c0c4a410e23e8db4228238ea9f0d17bcb71ab83348fc"
+    },
+    "tools/benchmark/native/servers/src/bin/bench-core.rs": {
+      "archive_sha256": "7d9a09d40016c12041997a94491096bb48452a412a617e8940e179aa84a15d10",
+      "git_blob_sha256": "2430e9dfead4a88aa2b6bc9e3c84273605fdc52f5809778beec794334d895f76"
+    },
+    "tools/benchmark/native/servers/src/bin/bench-native-client.rs": {
+      "archive_sha256": "407a3fbec6608513c974f8a8eb66faca02101b1a1b7a40be3ae285ab0bafedc3",
+      "git_blob_sha256": "842c0ae7b78a67a39779652afc4a8330eeecd0675a3aeff83433d48ebfd2bb53"
+    },
+    "tools/benchmark/native/servers/src/main.rs": {
+      "archive_sha256": "30b4fc75f3d8bcfe05e363d9adfd6464c7cec20c0af8554795db8071310b1069",
+      "git_blob_sha256": "438fef340e10eb16d7bfddc6a4c7e3d940ca35908cfcf2624a52495e6e3dec0a"
+    },
+    "tools/benchmark/native/servers/src/staged_mio.rs": {
+      "archive_sha256": "2c823a39a7a0f333651aa3174b7daaf48ec42e5c4c6105d124e5bf139a63cad7",
+      "git_blob_sha256": "6980d4ca2b6396981eb3e73d2f443f0a866a09707c98f1ece8896bf5146bec6d"
+    },
+    "tools/benchmark/native/servers/src/staged_ready.rs": {
+      "archive_sha256": "eab78807c3b68f9a57b3228b5efd554f0eb615bd252ca9dd4583732f0949d092",
+      "git_blob_sha256": "01b7f1cbf90248b6721f0ed7252807cca1ef07a9fd2a80410f347fa9c061d5e2"
+    },
+    "tools/benchmark/native/servers/src/staged_udp.rs": {
+      "archive_sha256": "e1580c1f58365f8cfe3dc393bf036b25e7c0a92bb7e00d30b69bfd493f6775c8",
+      "git_blob_sha256": "bf2599fad359fcbf10fff015bc4fb812d7861dc86dc2bd36a1d3bdf89fb920ab"
+    }
+  },
+  "runner_commit": "9019751b09d53d0ef3f9fbed7b3a6f4bd5832c88",
+  "inputs_sha256": {
+    "build.py": "2d350899420e8028a3cffad769ea8b38f97c37faf2d3adf219461a9580203ae2",
+    "run.py": "9a98cdc154b64bb8028df7194286b7e0058d8776a8671f52b7b0992aafd482ec",
+    "assess.py": "a1e42cc1dda5fdafe893ba6f34124946bbea6e8dea1557220221634eb6df861c",
+    "original-Cargo.lock": "aecd3e37a4a762ef0a0831ad047979536b9ddb5ab7c3bcf83ca40405b691191f",
+    "current-Cargo.lock": "b96a064a900695f3189c7e4e2cb4833ba2623e6aacbd0183cc71259def1f188d",
+    "original.exe": "8d0bd04f70ca14af007e07af8ed166a637e272ac4500fe2bd9fd0a1e2674c3da",
+    "current.exe": "27b317b58cea724f1222bc4582eb4a88e132011874a23df40f23ffd74f0d5610",
+    "original-metadata.json": "526c23844307a2bed5aed9254c2fb5f2a353bd3f3cffc37bd4da5a4da8d94d09",
+    "current-metadata.json": "1d7265516192417f91489950e9a7b9f7c8b4b56baccfec52caba50ad2b5d19aa"
+  },
+  "locks": {
+    "original_only": [
+      [
+        "aes",
+        "0.9.3",
+        "registry+https://github.com/rust-lang/crates.io-index",
+        "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
+      ]
+    ],
+    "current_only": [
+      [
+        "aes",
+        "0.9.4",
+        "registry+https://github.com/rust-lang/crates.io-index",
+        "fc0fc36d7440d015b45468ba08a21e80e056ebbd014c611c6298bb7503e04bd1"
+      ]
+    ]
+  },
+  "gates": {
+    "max_misses": 6,
+    "max_relative_rate_delta": 0.005,
+    "max_median_delta_ns": 2000,
+    "max_p99_delta_ns": 10000,
+    "diagnostic_twenty_observed_quanta_seconds": 0.3125
+  },
+  "observed_cpu_time_quantum_seconds": 0.015625,
+  "pair_results": {
+    "r1-unprotected-64": {
+      "label_order": [
+        "original",
+        "current"
+      ],
+      "windows": {
+        "original": {
+          "raw_sha256": "50b488b5ec1810906f6a0947f90720b7dca545855f46ccc3ab0cd80d456ec0b1",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 48200.0,
+            "p99_ns": 73400
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.296875,
+              "total_seconds": 0.296875,
+              "ns_per_verified_operation": 45255.33536585366
+            },
+            "server": {
+              "user_seconds": 0.046875,
+              "system_seconds": 0.1875,
+              "total_seconds": 0.234375,
+              "ns_per_verified_operation": 35727.89634146341
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1191940380,
+              "cycles_per_verified_operation": 181698.2286585366
+            },
+            "server": {
+              "cycles": 658063880,
+              "cycles_per_verified_operation": 100314.61585365854
+            }
+          },
+          "rate": 800.1144066026515,
+          "elapsed_ns": 8198827500,
+          "missed": 7,
+          "late": 6560,
+          "maximum_lateness_ns": 1923800,
+          "resource_window_ns": 8199098500,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5967872,
+                "peak_wset": 5967872,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5140480,
+                "peak_wset": 5140480,
+                "private": 888832
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5967872,
+                "peak_wset": 5967872,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5201920,
+                "peak_wset": 5201920,
+                "private": 901120
+              }
+            }
+          }
+        },
+        "current": {
+          "raw_sha256": "b11045efed9064f633018a9c5d7071105c7983467fe87e8355a6a4aff5eecad8",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 47400.0,
+            "p99_ns": 73400
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.375,
+              "total_seconds": 0.375,
+              "ns_per_verified_operation": 57164.634146341465
+            },
+            "server": {
+              "user_seconds": 0.03125,
+              "system_seconds": 0.125,
+              "total_seconds": 0.15625,
+              "ns_per_verified_operation": 23818.59756097561
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1183744000,
+              "cycles_per_verified_operation": 180448.78048780488
+            },
+            "server": {
+              "cycles": 639161240,
+              "cycles_per_verified_operation": 97433.11585365854
+            }
+          },
+          "rate": 800.0827207476402,
+          "elapsed_ns": 8199152200,
+          "missed": 3,
+          "late": 6560,
+          "maximum_lateness_ns": 1660400,
+          "resource_window_ns": 8199395800,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5898240,
+                "peak_wset": 5898240,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5136384,
+                "peak_wset": 5136384,
+                "private": 884736
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5898240,
+                "peak_wset": 5898240,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5197824,
+                "peak_wset": 5197824,
+                "private": 897024
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -800.0,
+        "p99_ns": 0
+      },
+      "relative_rate_delta": 3.960165540051186e-05,
+      "gates": {
+        "pacing": false,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 0.6666666666666666,
+        "client": 1.263157894736842
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9712753722328599,
+        "client": 0.9931234983414188
+      }
+    },
+    "r2-unprotected-64": {
+      "label_order": [
+        "current",
+        "original"
+      ],
+      "windows": {
+        "current": {
+          "raw_sha256": "3d7985b0cd18f927e89e7f548921f895a1b91c8476ce206855dfdcca1cf11569",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 48000.0,
+            "p99_ns": 103200
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.34375,
+              "total_seconds": 0.34375,
+              "ns_per_verified_operation": 52400.91463414634
+            },
+            "server": {
+              "user_seconds": 0.03125,
+              "system_seconds": 0.125,
+              "total_seconds": 0.15625,
+              "ns_per_verified_operation": 23818.59756097561
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1222897040,
+              "cycles_per_verified_operation": 186417.23170731709
+            },
+            "server": {
+              "cycles": 656256440,
+              "cycles_per_verified_operation": 100039.09146341463
+            }
+          },
+          "rate": 800.0732457299475,
+          "elapsed_ns": 8199249300,
+          "missed": 3,
+          "late": 6560,
+          "maximum_lateness_ns": 1542500,
+          "resource_window_ns": 8199515700,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5898240,
+                "peak_wset": 5898240,
+                "private": 1048576
+              },
+              "client": {
+                "rss": 5140480,
+                "peak_wset": 5140480,
+                "private": 880640
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5898240,
+                "peak_wset": 5898240,
+                "private": 1048576
+              },
+              "client": {
+                "rss": 5201920,
+                "peak_wset": 5201920,
+                "private": 892928
+              }
+            }
+          }
+        },
+        "original": {
+          "raw_sha256": "6ffee83ff9c744a65b3f15c33912aa36a0a8bc15145d368a5506ad24f7eee5b8",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 48300.0,
+            "p99_ns": 75800
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.4375,
+              "total_seconds": 0.4375,
+              "ns_per_verified_operation": 66692.0731707317
+            },
+            "server": {
+              "user_seconds": 0.046875,
+              "system_seconds": 0.203125,
+              "total_seconds": 0.25,
+              "ns_per_verified_operation": 38109.756097560974
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1198328640,
+              "cycles_per_verified_operation": 182672.0487804878
+            },
+            "server": {
+              "cycles": 677667600,
+              "cycles_per_verified_operation": 103302.98780487805
+            }
+          },
+          "rate": 800.0882536372458,
+          "elapsed_ns": 8199095500,
+          "missed": 9,
+          "late": 6560,
+          "maximum_lateness_ns": 4506400,
+          "resource_window_ns": 8199366100,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5971968,
+                "peak_wset": 5971968,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5140480,
+                "peak_wset": 5140480,
+                "private": 892928
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5971968,
+                "peak_wset": 5971968,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5193728,
+                "peak_wset": 5193728,
+                "private": 892928
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -300.0,
+        "p99_ns": 27400
+      },
+      "relative_rate_delta": 1.875781481608385e-05,
+      "gates": {
+        "pacing": false,
+        "median": true,
+        "p99": false,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 0.625,
+        "client": 0.7857142857142857
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9684046278736065,
+        "client": 1.0205022221616935
+      }
+    },
+    "r1-unprotected-1024": {
+      "label_order": [
+        "original",
+        "current"
+      ],
+      "windows": {
+        "original": {
+          "raw_sha256": "0a363463909ffb262da09df7d664e67e7d2863ae4570066b31dc5566d2b3d783",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 49600.0,
+            "p99_ns": 81500
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.234375,
+              "total_seconds": 0.234375,
+              "ns_per_verified_operation": 35727.89634146341
+            },
+            "server": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.09375,
+              "total_seconds": 0.109375,
+              "ns_per_verified_operation": 16673.018292682926
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1238923280,
+              "cycles_per_verified_operation": 188860.25609756098
+            },
+            "server": {
+              "cycles": 691622220,
+              "cycles_per_verified_operation": 105430.21646341463
+            }
+          },
+          "rate": 800.0783198618724,
+          "elapsed_ns": 8199197300,
+          "missed": 3,
+          "late": 6560,
+          "maximum_lateness_ns": 1550100,
+          "resource_window_ns": 8199438100,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5971968,
+                "peak_wset": 5971968,
+                "private": 1060864
+              },
+              "client": {
+                "rss": 5144576,
+                "peak_wset": 5144576,
+                "private": 888832
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5971968,
+                "peak_wset": 5971968,
+                "private": 1060864
+              },
+              "client": {
+                "rss": 5201920,
+                "peak_wset": 5201920,
+                "private": 901120
+              }
+            }
+          }
+        },
+        "current": {
+          "raw_sha256": "06b9385b013dd6ec28b46c0e9ef821194672d7714a39d279e1f6a1f1d515f678",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 49200.0,
+            "p99_ns": 88500
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.453125,
+              "total_seconds": 0.453125,
+              "ns_per_verified_operation": 69073.93292682926
+            },
+            "server": {
+              "user_seconds": 0.0625,
+              "system_seconds": 0.234375,
+              "total_seconds": 0.296875,
+              "ns_per_verified_operation": 45255.33536585366
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1256478840,
+              "cycles_per_verified_operation": 191536.40853658537
+            },
+            "server": {
+              "cycles": 690796700,
+              "cycles_per_verified_operation": 105304.375
+            }
+          },
+          "rate": 800.1143187726676,
+          "elapsed_ns": 8198828400,
+          "missed": 8,
+          "late": 6560,
+          "maximum_lateness_ns": 2691200,
+          "resource_window_ns": 8199071000,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5902336,
+                "peak_wset": 5902336,
+                "private": 1056768
+              },
+              "client": {
+                "rss": 5140480,
+                "peak_wset": 5140480,
+                "private": 888832
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5902336,
+                "peak_wset": 5902336,
+                "private": 1056768
+              },
+              "client": {
+                "rss": 5193728,
+                "peak_wset": 5193728,
+                "private": 888832
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -400.0,
+        "p99_ns": 7000
+      },
+      "relative_rate_delta": 4.4994233566297837e-05,
+      "gates": {
+        "pacing": false,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 2.7142857142857144,
+        "client": 1.9333333333333333
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9988064004074363,
+        "client": 1.0141700138203877
+      }
+    },
+    "r2-unprotected-1024": {
+      "label_order": [
+        "current",
+        "original"
+      ],
+      "windows": {
+        "current": {
+          "raw_sha256": "b6439f436a12b95d553ba6efa19fbb995ae9c4bcd70d1670f6d64db1e324393e",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 48100.0,
+            "p99_ns": 77900
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.375,
+              "total_seconds": 0.375,
+              "ns_per_verified_operation": 57164.634146341465
+            },
+            "server": {
+              "user_seconds": 0.078125,
+              "system_seconds": 0.125,
+              "total_seconds": 0.203125,
+              "ns_per_verified_operation": 30964.176829268294
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1208758140,
+              "cycles_per_verified_operation": 184261.91158536586
+            },
+            "server": {
+              "cycles": 654422820,
+              "cycles_per_verified_operation": 99759.5762195122
+            }
+          },
+          "rate": 800.0698109694815,
+          "elapsed_ns": 8199284500,
+          "missed": 0,
+          "late": 6560,
+          "maximum_lateness_ns": 1012200,
+          "resource_window_ns": 8199553400,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5902336,
+                "peak_wset": 5902336,
+                "private": 1048576
+              },
+              "client": {
+                "rss": 5140480,
+                "peak_wset": 5140480,
+                "private": 884736
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5902336,
+                "peak_wset": 5902336,
+                "private": 1048576
+              },
+              "client": {
+                "rss": 5201920,
+                "peak_wset": 5201920,
+                "private": 897024
+              }
+            }
+          }
+        },
+        "original": {
+          "raw_sha256": "e3c2510724fc117d36c56e16dc799d98fad7193bc9e40be3a106a910b03c6788",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 48800.0,
+            "p99_ns": 74200
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.453125,
+              "total_seconds": 0.46875,
+              "ns_per_verified_operation": 71455.79268292683
+            },
+            "server": {
+              "user_seconds": 0.078125,
+              "system_seconds": 0.140625,
+              "total_seconds": 0.21875,
+              "ns_per_verified_operation": 33346.03658536585
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1206522640,
+              "cycles_per_verified_operation": 183921.13414634147
+            },
+            "server": {
+              "cycles": 669385540,
+              "cycles_per_verified_operation": 102040.47865853658
+            }
+          },
+          "rate": 800.0698987896942,
+          "elapsed_ns": 8199283600,
+          "missed": 3,
+          "late": 6560,
+          "maximum_lateness_ns": 1756000,
+          "resource_window_ns": 8199559500,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5967872,
+                "peak_wset": 5967872,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5148672,
+                "peak_wset": 5148672,
+                "private": 892928
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5967872,
+                "peak_wset": 5967872,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5201920,
+                "peak_wset": 5201920,
+                "private": 892928
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -700.0,
+        "p99_ns": 3700
+      },
+      "relative_rate_delta": 1.097656752158116e-07,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 0.9285714285714286,
+        "client": 0.8
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9776470821284846,
+        "client": 1.0018528454633888
+      }
+    },
+    "r1-unprotected-4096": {
+      "label_order": [
+        "original",
+        "current"
+      ],
+      "windows": {
+        "original": {
+          "raw_sha256": "c62316baf2af7387d39d20df3f6c0a4fb74ad31be9fab31605a7364b889b74de",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 120900.0,
+            "p99_ns": 263200
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.734375,
+              "total_seconds": 0.734375,
+              "ns_per_verified_operation": 111947.40853658537
+            },
+            "server": {
+              "user_seconds": 0.046875,
+              "system_seconds": 0.4375,
+              "total_seconds": 0.484375,
+              "ns_per_verified_operation": 73837.65243902439
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 3017024000,
+              "cycles_per_verified_operation": 459912.1951219512
+            },
+            "server": {
+              "cycles": 2046892480,
+              "cycles_per_verified_operation": 312026.2926829268
+            }
+          },
+          "rate": 800.0655858642461,
+          "elapsed_ns": 8199327800,
+          "missed": 0,
+          "late": 6560,
+          "maximum_lateness_ns": 1226500,
+          "resource_window_ns": 8199570600,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6000640,
+                "peak_wset": 6000640,
+                "private": 1085440
+              },
+              "client": {
+                "rss": 5177344,
+                "peak_wset": 5177344,
+                "private": 872448
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6000640,
+                "peak_wset": 6000640,
+                "private": 1085440
+              },
+              "client": {
+                "rss": 5230592,
+                "peak_wset": 5230592,
+                "private": 872448
+              }
+            }
+          }
+        },
+        "current": {
+          "raw_sha256": "0eb63ab2bd86ce88584de9e1089e7e7dbac5bab1b8a07185e55753b2664fd34a",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 117200.0,
+            "p99_ns": 307600
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 1.296875,
+              "total_seconds": 1.296875,
+              "ns_per_verified_operation": 197694.35975609755
+            },
+            "server": {
+              "user_seconds": 0.125,
+              "system_seconds": 0.859375,
+              "total_seconds": 0.984375,
+              "ns_per_verified_operation": 150057.16463414635
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 2939734520,
+              "cycles_per_verified_operation": 448130.26219512196
+            },
+            "server": {
+              "cycles": 1931840220,
+              "cycles_per_verified_operation": 294487.83841463417
+            }
+          },
+          "rate": 800.1021105925287,
+          "elapsed_ns": 8198953500,
+          "missed": 1,
+          "late": 6560,
+          "maximum_lateness_ns": 1311200,
+          "resource_window_ns": 8199237300,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5926912,
+                "peak_wset": 5926912,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5197824,
+                "peak_wset": 5197824,
+                "private": 917504
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5926912,
+                "peak_wset": 5926912,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5251072,
+                "peak_wset": 5251072,
+                "private": 917504
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -3700.0,
+        "p99_ns": 44400
+      },
+      "relative_rate_delta": 4.565216768215308e-05,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": false,
+        "both_twenty_observed_quanta": true
+      },
+      "raw_cpu_time_ratios": {
+        "server": 2.032258064516129,
+        "client": 1.7659574468085106
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9437917423000157,
+        "client": 0.9743822124053372
+      }
+    },
+    "r2-unprotected-4096": {
+      "label_order": [
+        "current",
+        "original"
+      ],
+      "windows": {
+        "current": {
+          "raw_sha256": "6e776eb6ece90e8d0e588c0f34d1cda2a1ac77d1b934aabe792f73a920b11f52",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 118900.0,
+            "p99_ns": 321900
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.703125,
+              "total_seconds": 0.71875,
+              "ns_per_verified_operation": 109565.5487804878
+            },
+            "server": {
+              "user_seconds": 0.109375,
+              "system_seconds": 0.40625,
+              "total_seconds": 0.515625,
+              "ns_per_verified_operation": 78601.37195121951
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 3015813260,
+              "cycles_per_verified_operation": 459727.631097561
+            },
+            "server": {
+              "cycles": 1993211240,
+              "cycles_per_verified_operation": 303843.1768292683
+            }
+          },
+          "rate": 800.0790029230081,
+          "elapsed_ns": 8199190300,
+          "missed": 3,
+          "late": 6560,
+          "maximum_lateness_ns": 1678600,
+          "resource_window_ns": 8199422100,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5931008,
+                "peak_wset": 5931008,
+                "private": 1069056
+              },
+              "client": {
+                "rss": 5197824,
+                "peak_wset": 5197824,
+                "private": 909312
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5931008,
+                "peak_wset": 5931008,
+                "private": 1069056
+              },
+              "client": {
+                "rss": 5251072,
+                "peak_wset": 5251072,
+                "private": 909312
+              }
+            }
+          }
+        },
+        "original": {
+          "raw_sha256": "c88caf1a0efbfde0a38f799a44ecb396366aa66ab232cd315c7f023e53dbf6d1",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 119300.0,
+            "p99_ns": 298800
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.65625,
+              "total_seconds": 0.65625,
+              "ns_per_verified_operation": 100038.10975609756
+            },
+            "server": {
+              "user_seconds": 0.078125,
+              "system_seconds": 0.359375,
+              "total_seconds": 0.4375,
+              "ns_per_verified_operation": 66692.0731707317
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 2959654100,
+              "cycles_per_verified_operation": 451166.78353658534
+            },
+            "server": {
+              "cycles": 1988072820,
+              "cycles_per_verified_operation": 303059.881097561
+            }
+          },
+          "rate": 800.0760852843055,
+          "elapsed_ns": 8199220200,
+          "missed": 1,
+          "late": 6560,
+          "maximum_lateness_ns": 1796700,
+          "resource_window_ns": 8199455800,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 5996544,
+                "peak_wset": 5996544,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5197824,
+                "peak_wset": 5197824,
+                "private": 909312
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 5996544,
+                "peak_wset": 5996544,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5259264,
+                "peak_wset": 5259264,
+                "private": 921600
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -400.0,
+        "p99_ns": 23100
+      },
+      "relative_rate_delta": 3.6467015529506597e-06,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": false,
+        "both_twenty_observed_quanta": true
+      },
+      "raw_cpu_time_ratios": {
+        "server": 1.1785714285714286,
+        "client": 1.0952380952380953
+      },
+      "raw_cycle_ratios": {
+        "server": 1.0025846236356675,
+        "client": 1.0189749065608715
+      }
+    },
+    "r1-oscore-64": {
+      "label_order": [
+        "original",
+        "current"
+      ],
+      "windows": {
+        "original": {
+          "raw_sha256": "5fda35d65e70f0efaf8ecc58744a9182d0e63e7d7768812a15f8bd1245e4c375",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 54000.0,
+            "p99_ns": 92900
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.296875,
+              "system_seconds": 0.3125,
+              "total_seconds": 0.609375,
+              "ns_per_verified_operation": 92892.53048780488
+            },
+            "server": {
+              "user_seconds": 0.078125,
+              "system_seconds": 0.359375,
+              "total_seconds": 0.4375,
+              "ns_per_verified_operation": 66692.0731707317
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1338458960,
+              "cycles_per_verified_operation": 204033.3780487805
+            },
+            "server": {
+              "cycles": 726933940,
+              "cycles_per_verified_operation": 110813.1006097561
+            }
+          },
+          "rate": 800.0957285267388,
+          "elapsed_ns": 8199018900,
+          "missed": 1,
+          "late": 6560,
+          "maximum_lateness_ns": 1364800,
+          "resource_window_ns": 8199282500,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6070272,
+                "peak_wset": 6070272,
+                "private": 1069056
+              },
+              "client": {
+                "rss": 5226496,
+                "peak_wset": 5226496,
+                "private": 888832
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6070272,
+                "peak_wset": 6070272,
+                "private": 1069056
+              },
+              "client": {
+                "rss": 5287936,
+                "peak_wset": 5287936,
+                "private": 901120
+              }
+            }
+          }
+        },
+        "current": {
+          "raw_sha256": "2f55a49152ca5aac77149003310b05b3eab4955ec4f3e2bcb73e06d407b70728",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 52200.0,
+            "p99_ns": 78900
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.109375,
+              "system_seconds": 0.328125,
+              "total_seconds": 0.4375,
+              "ns_per_verified_operation": 66692.0731707317
+            },
+            "server": {
+              "user_seconds": 0.0625,
+              "system_seconds": 0.21875,
+              "total_seconds": 0.28125,
+              "ns_per_verified_operation": 42873.4756097561
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1295558780,
+              "cycles_per_verified_operation": 197493.71646341463
+            },
+            "server": {
+              "cycles": 687886980,
+              "cycles_per_verified_operation": 104860.82012195123
+            }
+          },
+          "rate": 800.0722211534265,
+          "elapsed_ns": 8199259800,
+          "missed": 2,
+          "late": 6560,
+          "maximum_lateness_ns": 1710300,
+          "resource_window_ns": 8199528800,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6029312,
+                "peak_wset": 6029312,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5222400,
+                "peak_wset": 5222400,
+                "private": 884736
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6029312,
+                "peak_wset": 6029312,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5275648,
+                "peak_wset": 5275648,
+                "private": 884736
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -1800.0,
+        "p99_ns": -14000
+      },
+      "relative_rate_delta": 2.9380700926284753e-05,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 0.6428571428571429,
+        "client": 0.717948717948718
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9462854079973209,
+        "client": 0.967948079633312
+      }
+    },
+    "r2-oscore-64": {
+      "label_order": [
+        "current",
+        "original"
+      ],
+      "windows": {
+        "current": {
+          "raw_sha256": "90fe6fbac63645e9045efa42fdca8ec8c992c202e6da9f8a679b93267bc9ab5e",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 52900.0,
+            "p99_ns": 137500
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.15625,
+              "total_seconds": 0.15625,
+              "ns_per_verified_operation": 23818.59756097561
+            },
+            "server": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.0625,
+              "total_seconds": 0.0625,
+              "ns_per_verified_operation": 9527.439024390244
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1330407760,
+              "cycles_per_verified_operation": 202806.06097560975
+            },
+            "server": {
+              "cycles": 702086740,
+              "cycles_per_verified_operation": 107025.41768292683
+            }
+          },
+          "rate": 800.0992513363975,
+          "elapsed_ns": 8198982800,
+          "missed": 7,
+          "late": 6560,
+          "maximum_lateness_ns": 1768900,
+          "resource_window_ns": 8199251000,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6029312,
+                "peak_wset": 6029312,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5226496,
+                "peak_wset": 5226496,
+                "private": 888832
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6029312,
+                "peak_wset": 6029312,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5279744,
+                "peak_wset": 5279744,
+                "private": 888832
+              }
+            }
+          }
+        },
+        "original": {
+          "raw_sha256": "e748d9735509fd3a156451c58ee1d21e300b1ed59ce644d8c5051e2f3a9c60c6",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 53700.0,
+            "p99_ns": 95000
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.109375,
+              "total_seconds": 0.109375,
+              "ns_per_verified_operation": 16673.018292682926
+            },
+            "server": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.078125,
+              "total_seconds": 0.078125,
+              "ns_per_verified_operation": 11909.298780487805
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1334316400,
+              "cycles_per_verified_operation": 203401.89024390245
+            },
+            "server": {
+              "cycles": 728075660,
+              "cycles_per_verified_operation": 110987.14329268293
+            }
+          },
+          "rate": 800.1000027430258,
+          "elapsed_ns": 8198975100,
+          "missed": 1,
+          "late": 6560,
+          "maximum_lateness_ns": 1278100,
+          "resource_window_ns": 8199250100,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6074368,
+                "peak_wset": 6074368,
+                "private": 1069056
+              },
+              "client": {
+                "rss": 5226496,
+                "peak_wset": 5226496,
+                "private": 888832
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6074368,
+                "peak_wset": 6074368,
+                "private": 1069056
+              },
+              "client": {
+                "rss": 5287936,
+                "peak_wset": 5287936,
+                "private": 901120
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -800.0,
+        "p99_ns": 42500
+      },
+      "relative_rate_delta": 9.391408894998676e-07,
+      "gates": {
+        "pacing": false,
+        "median": true,
+        "p99": false,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 0.8,
+        "client": 1.4285714285714286
+      },
+      "raw_cycle_ratios": {
+        "server": 0.964304643833307,
+        "client": 0.9970706797877925
+      }
+    },
+    "r1-oscore-1024": {
+      "label_order": [
+        "original",
+        "current"
+      ],
+      "windows": {
+        "original": {
+          "raw_sha256": "17652d68acec2c8ee003156ce0b6135c628f79a44d546340757d53c2dd3ae64f",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 55500.0,
+            "p99_ns": 84900
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0625,
+              "system_seconds": 0.21875,
+              "total_seconds": 0.28125,
+              "ns_per_verified_operation": 42873.4756097561
+            },
+            "server": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.140625,
+              "total_seconds": 0.15625,
+              "ns_per_verified_operation": 23818.59756097561
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1371941480,
+              "cycles_per_verified_operation": 209137.42073170733
+            },
+            "server": {
+              "cycles": 746737920,
+              "cycles_per_verified_operation": 113832.0
+            }
+          },
+          "rate": 800.099924674739,
+          "elapsed_ns": 8198975900,
+          "missed": 3,
+          "late": 6560,
+          "maximum_lateness_ns": 1634500,
+          "resource_window_ns": 8199207500,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6070272,
+                "peak_wset": 6070272,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5230592,
+                "peak_wset": 5230592,
+                "private": 884736
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6070272,
+                "peak_wset": 6070272,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5292032,
+                "peak_wset": 5292032,
+                "private": 892928
+              }
+            }
+          }
+        },
+        "current": {
+          "raw_sha256": "fbad48dc60479752e6ef83d2f470c949e9277467a7e87cb9cffb325868db8a46",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 55100.0,
+            "p99_ns": 94800
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.359375,
+              "total_seconds": 0.375,
+              "ns_per_verified_operation": 57164.634146341465
+            },
+            "server": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.21875,
+              "total_seconds": 0.21875,
+              "ns_per_verified_operation": 33346.03658536585
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1383096880,
+              "cycles_per_verified_operation": 210837.93902439025
+            },
+            "server": {
+              "cycles": 743404900,
+              "cycles_per_verified_operation": 113323.91768292683
+            }
+          },
+          "rate": 800.0813448557568,
+          "elapsed_ns": 8199166300,
+          "missed": 7,
+          "late": 6560,
+          "maximum_lateness_ns": 1615200,
+          "resource_window_ns": 8199433100,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6037504,
+                "peak_wset": 6037504,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5230592,
+                "peak_wset": 5230592,
+                "private": 892928
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6037504,
+                "peak_wset": 6037504,
+                "private": 1064960
+              },
+              "client": {
+                "rss": 5283840,
+                "peak_wset": 5283840,
+                "private": 892928
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -400.0,
+        "p99_ns": 9900
+      },
+      "relative_rate_delta": 2.3221873180045982e-05,
+      "gates": {
+        "pacing": false,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 1.4,
+        "client": 1.3333333333333333
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9955365598682868,
+        "client": 1.008131104834005
+      }
+    },
+    "r2-oscore-1024": {
+      "label_order": [
+        "current",
+        "original"
+      ],
+      "windows": {
+        "current": {
+          "raw_sha256": "97ced9a758bf190bf07b21aa8df4797e64d4d0a081289285741b69995acb950a",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 54900.0,
+            "p99_ns": 91400
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.421875,
+              "total_seconds": 0.421875,
+              "ns_per_verified_operation": 64310.21341463415
+            },
+            "server": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.234375,
+              "total_seconds": 0.25,
+              "ns_per_verified_operation": 38109.756097560974
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1381845340,
+              "cycles_per_verified_operation": 210647.15548780488
+            },
+            "server": {
+              "cycles": 743234220,
+              "cycles_per_verified_operation": 113297.8993902439
+            }
+          },
+          "rate": 800.0918251727646,
+          "elapsed_ns": 8199058900,
+          "missed": 4,
+          "late": 6560,
+          "maximum_lateness_ns": 1840700,
+          "resource_window_ns": 8199299700,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6029312,
+                "peak_wset": 6029312,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5222400,
+                "peak_wset": 5222400,
+                "private": 884736
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6029312,
+                "peak_wset": 6029312,
+                "private": 1052672
+              },
+              "client": {
+                "rss": 5283840,
+                "peak_wset": 5283840,
+                "private": 897024
+              }
+            }
+          }
+        },
+        "original": {
+          "raw_sha256": "557073a613226d1342a62030ac261750023369a334a09a476e2a7e7b46f740e6",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 56200.0,
+            "p99_ns": 91500
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.015625,
+              "system_seconds": 0.296875,
+              "total_seconds": 0.3125,
+              "ns_per_verified_operation": 47637.19512195122
+            },
+            "server": {
+              "user_seconds": 0.03125,
+              "system_seconds": 0.140625,
+              "total_seconds": 0.171875,
+              "ns_per_verified_operation": 26200.45731707317
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 1388739520,
+              "cycles_per_verified_operation": 211698.0975609756
+            },
+            "server": {
+              "cycles": 759921760,
+              "cycles_per_verified_operation": 115841.73170731707
+            }
+          },
+          "rate": 800.0922155064482,
+          "elapsed_ns": 8199054900,
+          "missed": 6,
+          "late": 6560,
+          "maximum_lateness_ns": 2792700,
+          "resource_window_ns": 8199291500,
+          "sent_datagrams": 6560,
+          "received_datagrams": 6560,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6074368,
+                "peak_wset": 6074368,
+                "private": 1073152
+              },
+              "client": {
+                "rss": 5226496,
+                "peak_wset": 5226496,
+                "private": 892928
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6074368,
+                "peak_wset": 6074368,
+                "private": 1073152
+              },
+              "client": {
+                "rss": 5287936,
+                "peak_wset": 5287936,
+                "private": 905216
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -1300.0,
+        "p99_ns": -100
+      },
+      "relative_rate_delta": 4.87860869036183e-07,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": false
+      },
+      "raw_cpu_time_ratios": {
+        "server": 1.4545454545454546,
+        "client": 1.35
+      },
+      "raw_cycle_ratios": {
+        "server": 0.978040449848416,
+        "client": 0.9950356565067004
+      }
+    },
+    "r1-oscore-4096": {
+      "label_order": [
+        "original",
+        "current"
+      ],
+      "windows": {
+        "original": {
+          "raw_sha256": "8dd0f64c0c068ac7b87ef0e24f4ca9fc374c6f58b9677328ab795358061d650c",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 142350.0,
+            "p99_ns": 349300
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.796875,
+              "total_seconds": 0.796875,
+              "ns_per_verified_operation": 121474.84756097561
+            },
+            "server": {
+              "user_seconds": 0.046875,
+              "system_seconds": 0.5625,
+              "total_seconds": 0.609375,
+              "ns_per_verified_operation": 92892.53048780488
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 3583040700,
+              "cycles_per_verified_operation": 546195.2286585366
+            },
+            "server": {
+              "cycles": 2368257760,
+              "cycles_per_verified_operation": 361014.9024390244
+            }
+          },
+          "rate": 799.9640016199271,
+          "elapsed_ns": 8200369000,
+          "missed": 4,
+          "late": 6560,
+          "maximum_lateness_ns": 1538800,
+          "resource_window_ns": 8200596000,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6098944,
+                "peak_wset": 6098944,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5279744,
+                "peak_wset": 5279744,
+                "private": 913408
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6098944,
+                "peak_wset": 6098944,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5341184,
+                "peak_wset": 5341184,
+                "private": 925696
+              }
+            }
+          }
+        },
+        "current": {
+          "raw_sha256": "9c55faa522ccddcd1e0a403c42929b21a6ad5343730e444bfeafdc5f988902e4",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 138900.0,
+            "p99_ns": 330300
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 1.015625,
+              "total_seconds": 1.015625,
+              "ns_per_verified_operation": 154820.88414634147
+            },
+            "server": {
+              "user_seconds": 0.046875,
+              "system_seconds": 0.625,
+              "total_seconds": 0.671875,
+              "ns_per_verified_operation": 102419.96951219512
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 3508353240,
+              "cycles_per_verified_operation": 534809.9451219512
+            },
+            "server": {
+              "cycles": 2272166280,
+              "cycles_per_verified_operation": 346366.81097560975
+            }
+          },
+          "rate": 800.0850919766723,
+          "elapsed_ns": 8199127900,
+          "missed": 2,
+          "late": 6560,
+          "maximum_lateness_ns": 1461100,
+          "resource_window_ns": 8199363100,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6066176,
+                "peak_wset": 6066176,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5279744,
+                "peak_wset": 5279744,
+                "private": 909312
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6066176,
+                "peak_wset": 6066176,
+                "private": 1077248
+              },
+              "client": {
+                "rss": 5341184,
+                "peak_wset": 5341184,
+                "private": 921600
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -3450.0,
+        "p99_ns": -19000
+      },
+      "relative_rate_delta": 0.00015136975726415258,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": true
+      },
+      "raw_cpu_time_ratios": {
+        "server": 1.1025641025641026,
+        "client": 1.2745098039215685
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9594252443196892,
+        "client": 0.9791552856209532
+      }
+    },
+    "r2-oscore-4096": {
+      "label_order": [
+        "current",
+        "original"
+      ],
+      "windows": {
+        "current": {
+          "raw_sha256": "e23d66ef842628d809bfb3a0cce7c37c41919bf797bd0c184d12f61ecd3c1d4a",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 137000.0,
+            "p99_ns": 302100
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.78125,
+              "total_seconds": 0.78125,
+              "ns_per_verified_operation": 119092.98780487805
+            },
+            "server": {
+              "user_seconds": 0.0,
+              "system_seconds": 0.484375,
+              "total_seconds": 0.484375,
+              "ns_per_verified_operation": 73837.65243902439
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 3442637360,
+              "cycles_per_verified_operation": 524792.2804878049
+            },
+            "server": {
+              "cycles": 2220653900,
+              "cycles_per_verified_operation": 338514.31402439025
+            }
+          },
+          "rate": 800.0894636621015,
+          "elapsed_ns": 8199083100,
+          "missed": 0,
+          "late": 6560,
+          "maximum_lateness_ns": 1086500,
+          "resource_window_ns": 8199321500,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6070272,
+                "peak_wset": 6070272,
+                "private": 1081344
+              },
+              "client": {
+                "rss": 5279744,
+                "peak_wset": 5279744,
+                "private": 913408
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6070272,
+                "peak_wset": 6070272,
+                "private": 1081344
+              },
+              "client": {
+                "rss": 5341184,
+                "peak_wset": 5341184,
+                "private": 925696
+              }
+            }
+          }
+        },
+        "original": {
+          "raw_sha256": "7b504a269404a7889e45bc8b9ac1eb8f2fb8835abb5521be715342cea66d3c6e",
+          "completions": 6560,
+          "warmup": 32,
+          "latency": {
+            "median_ns": 145000.0,
+            "p99_ns": 382800
+          },
+          "cpu_time": {
+            "client": {
+              "user_seconds": 0.046875,
+              "system_seconds": 1.265625,
+              "total_seconds": 1.3125,
+              "ns_per_verified_operation": 200076.21951219512
+            },
+            "server": {
+              "user_seconds": 0.140625,
+              "system_seconds": 0.75,
+              "total_seconds": 0.890625,
+              "ns_per_verified_operation": 135766.00609756098
+            }
+          },
+          "process_cycles": {
+            "client": {
+              "cycles": 3701462020,
+              "cycles_per_verified_operation": 564247.2591463415
+            },
+            "server": {
+              "cycles": 2443813920,
+              "cycles_per_verified_operation": 372532.60975609755
+            }
+          },
+          "rate": 800.0848089897529,
+          "elapsed_ns": 8199130800,
+          "missed": 4,
+          "late": 6560,
+          "maximum_lateness_ns": 1668600,
+          "resource_window_ns": 8199362100,
+          "sent_datagrams": 26240,
+          "received_datagrams": 26240,
+          "memory_snapshots": {
+            "before": {
+              "server": {
+                "rss": 6103040,
+                "peak_wset": 6103040,
+                "private": 1085440
+              },
+              "client": {
+                "rss": 5279744,
+                "peak_wset": 5279744,
+                "private": 901120
+              }
+            },
+            "after": {
+              "server": {
+                "rss": 6103040,
+                "peak_wset": 6103040,
+                "private": 1085440
+              },
+              "client": {
+                "rss": 5337088,
+                "peak_wset": 5337088,
+                "private": 913408
+              }
+            }
+          }
+        }
+      },
+      "latency_delta": {
+        "median_ns": -8000.0,
+        "p99_ns": -80700
+      },
+      "relative_rate_delta": 5.817723691681209e-06,
+      "gates": {
+        "pacing": true,
+        "median": true,
+        "p99": true,
+        "both_twenty_observed_quanta": true
+      },
+      "raw_cpu_time_ratios": {
+        "server": 0.543859649122807,
+        "client": 0.5952380952380952
+      },
+      "raw_cycle_ratios": {
+        "server": 0.9086837102556483,
+        "client": 0.9300750193838272
+      }
+    }
+  },
+  "pooled_latency": {
+    "unprotected-64": {
+      "latency": {
+        "original": {
+          "median_ns": 48300.0,
+          "p99_ns": 74500
+        },
+        "current": {
+          "median_ns": 47700.0,
+          "p99_ns": 81800
+        }
+      },
+      "latency_delta": {
+        "median_ns": -600.0,
+        "p99_ns": 7300
+      },
+      "latency_guard": true,
+      "pairs_within_screen_gates": 0
+    },
+    "unprotected-1024": {
+      "latency": {
+        "original": {
+          "median_ns": 49200.0,
+          "p99_ns": 76700
+        },
+        "current": {
+          "median_ns": 48600.0,
+          "p99_ns": 85100
+        }
+      },
+      "latency_delta": {
+        "median_ns": -600.0,
+        "p99_ns": 8400
+      },
+      "latency_guard": true,
+      "pairs_within_screen_gates": 0
+    },
+    "unprotected-4096": {
+      "latency": {
+        "original": {
+          "median_ns": 120100.0,
+          "p99_ns": 267800
+        },
+        "current": {
+          "median_ns": 117900.0,
+          "p99_ns": 317200
+        }
+      },
+      "latency_delta": {
+        "median_ns": -2200.0,
+        "p99_ns": 49400
+      },
+      "latency_guard": false,
+      "pairs_within_screen_gates": 0
+    },
+    "oscore-64": {
+      "latency": {
+        "original": {
+          "median_ns": 53800.0,
+          "p99_ns": 93600
+        },
+        "current": {
+          "median_ns": 52500.0,
+          "p99_ns": 87400
+        }
+      },
+      "latency_delta": {
+        "median_ns": -1300.0,
+        "p99_ns": -6200
+      },
+      "latency_guard": true,
+      "pairs_within_screen_gates": 0
+    },
+    "oscore-1024": {
+      "latency": {
+        "original": {
+          "median_ns": 55900.0,
+          "p99_ns": 88900
+        },
+        "current": {
+          "median_ns": 55000.0,
+          "p99_ns": 93100
+        }
+      },
+      "latency_delta": {
+        "median_ns": -900.0,
+        "p99_ns": 4200
+      },
+      "latency_guard": true,
+      "pairs_within_screen_gates": 0
+    },
+    "oscore-4096": {
+      "latency": {
+        "original": {
+          "median_ns": 143700.0,
+          "p99_ns": 372600
+        },
+        "current": {
+          "median_ns": 137900.0,
+          "p99_ns": 312700
+        }
+      },
+      "latency_delta": {
+        "median_ns": -5800.0,
+        "p99_ns": -59900
+      },
+      "latency_guard": true,
+      "pairs_within_screen_gates": 2
+    }
+  },
+  "preflights": {
+    "preflight-unprotected-64-original.json": {
+      "raw_sha256": "0b6f984f05f1c0741b7556297d7096d7aaab520eda9b4b4e25d36a2b79c99cd3",
+      "completions": 400,
+      "warmup": 32,
+      "latency": {
+        "median_ns": 48750.0,
+        "p99_ns": 96500
+      },
+      "cpu_time": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.03125,
+          "total_seconds": 0.03125,
+          "ns_per_verified_operation": 78125.0
+        },
+        "server": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.015625,
+          "total_seconds": 0.015625,
+          "ns_per_verified_operation": 39062.5
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 75637760,
+          "cycles_per_verified_operation": 189094.4
+        },
+        "server": {
+          "cycles": 41484760,
+          "cycles_per_verified_operation": 103711.9
+        }
+      },
+      "rate": 801.0965409452458,
+      "elapsed_ns": 499315600,
+      "missed": 0,
+      "late": 400,
+      "maximum_lateness_ns": 783500,
+      "resource_window_ns": 499554000,
+      "sent_datagrams": 400,
+      "received_datagrams": 400,
+      "memory_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6471680,
+            "peak_wset": 6471680,
+            "private": 1097728
+          },
+          "client": {
+            "rss": 5165056,
+            "peak_wset": 5165056,
+            "private": 868352
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 11051008,
+            "peak_wset": 11051008,
+            "private": 1097728
+          },
+          "client": {
+            "rss": 5173248,
+            "peak_wset": 5173248,
+            "private": 868352
+          }
+        }
+      }
+    },
+    "preflight-oscore-4096-current.json": {
+      "raw_sha256": "ed2860c3f16bfea5c446ce47310e616ff12f097a6ba002ca8faa63995fb4007b",
+      "completions": 400,
+      "warmup": 32,
+      "latency": {
+        "median_ns": 136300.0,
+        "p99_ns": 271400
+      },
+      "cpu_time": {
+        "client": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.03125,
+          "total_seconds": 0.046875,
+          "ns_per_verified_operation": 117187.5
+        },
+        "server": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.03125,
+          "total_seconds": 0.046875,
+          "ns_per_verified_operation": 117187.5
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 209465500,
+          "cycles_per_verified_operation": 523663.75
+        },
+        "server": {
+          "cycles": 133994000,
+          "cycles_per_verified_operation": 334985.0
+        }
+      },
+      "rate": 801.1934577747012,
+      "elapsed_ns": 499255200,
+      "missed": 0,
+      "late": 400,
+      "maximum_lateness_ns": 750200,
+      "resource_window_ns": 499496100,
+      "sent_datagrams": 1600,
+      "received_datagrams": 1600,
+      "memory_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6561792,
+            "peak_wset": 6561792,
+            "private": 1101824
+          },
+          "client": {
+            "rss": 5275648,
+            "peak_wset": 5275648,
+            "private": 864256
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 11038720,
+            "peak_wset": 11038720,
+            "private": 1101824
+          },
+          "client": {
+            "rss": 5279744,
+            "peak_wset": 5279744,
+            "private": 864256
+          }
+        }
+      }
+    }
+  }
+}

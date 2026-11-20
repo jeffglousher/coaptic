@@ -108,10 +108,14 @@ for actual stop or transfer conditions.
 5. The [standalone async-io screen](architecture/requirements/WINDOWS-HOST-ADAPTERS-20261119.md)
    passes selected small-read cycle pairs and misses the blockwise gates.
    Both adapters now report oversized receives as InvalidData on Windows
-   and prove same-socket reuse. Continue with a source-matched comparison
-   against the original #650 baseline using one common Mio fixture.
-   Preserve previous separate cohorts, both protection modes and the
-   original acceptance matrix.
+   and prove same-socket reuse.
+6. The [common Mio screen](architecture/requirements/WINDOWS-ORIGINAL-MIO-20261119.md)
+   compares current core with the original #650 source. Both protected
+   4,096-byte pairs reduce server cycles, with inconsistent CPU-time
+   ratios. The unprotected 4,096-byte pairs fail the p99 guard. Keep
+   the original matrix and both targets open. Check whether the
+   synchronous standard UDP transport can expose the same oversized
+   refusal as the async host adapters while preserving App progress.
 
 ## Blocked and deferred work
 

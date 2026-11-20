@@ -25,6 +25,14 @@ four rotated pairs. Run `39924741885` retains 16 pacing failures in 32 windows;
 all four CPU ratios are withheld. Two pair latency failures remain. This cohort
 must not be replaced by a passing rerun or a lower offered load.
 
+The separate [Windows common-Mio screen](WINDOWS-ORIGINAL-MIO-20261119.md)
+uses that same original core and historical fixture against accepted
+`da486b0`. It completes 157,440 reads at 800/s over 24 windows.
+The protected 4,096-byte pairs pass the screen's guards with fewer server
+cycles and inconsistent CPU time. The unprotected 4,096-byte pairs fail
+the p99 guard. This screen leaves both CPU targets and the retained
+historical cohort open.
+
 The separately declared SmallDevice 32-byte/C1 CON/1,000/s stratum in
 [run 40054024038](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
 compares that original baseline with accepted `d23f93c`, same Mio, companion
