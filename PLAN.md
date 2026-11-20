@@ -190,6 +190,18 @@ for actual stop or transfer conditions.
     verifies all 96,000 socket-free reads. Fixed Service has a lower
     16 KiB poll-wall median in each pair. Keep both backends and use
     separate measurements for Linux sockets and process CPU time.
+23. The [Linux identical-binary control](architecture/requirements/LINUX-ALLOCATED-SAME-BINARY-20261120.md)
+    verifies 28,800 reads and clears every accounting floor. The median
+    and p99 guards still fail on identical code. Preserve the original
+    comparisons and establish repeatable matched conditions before
+    qualifying more long-window CPU deltas.
+24. The [Windows thread-dispatch probe](architecture/requirements/WINDOWS-THREAD-DISPATCH-20261120.md)
+    verifies 314,880 reads. Tokio switches contexts less often for
+    blockwise replies and still records more cycles per send. Check
+    a single-reader readiness alternative within the Tokio sync path.
+25. The [Tokio single-reader screen](architecture/requirements/WINDOWS-TOKIO-SINGLE-READER-WAIT-20261120.md)
+    verifies all 209,920 reads. None of the 16 pairs meets the
+    advancement gate. Keep the existing readiness wait.
 
 ## Blocked and deferred work
 
