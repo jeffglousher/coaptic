@@ -6,6 +6,7 @@ use coaptic::{
     oscore::{BoundedSecurityContext, DeriveParams},
     platform::AsyncTimer,
     resources::SmallDevice,
+    storage::BodyTag,
 };
 use core::{
     future::{Future, pending, poll_fn},
@@ -365,19 +366,157 @@ fn blockwise_exchange<const DATAGRAMS: usize, const CALLS: usize, const BINDINGS
     });
 }
 
+struct TestTimer(u64);
+impl AsyncTimer for TestTimer {
+    async fn wait_until(&mut self, deadline_ms: u64) {
+        if deadline_ms > self.0 {
+            pending().await
+        }
+    }
+}
+
+#[test]
+fn occupied_block1_body_refuses_another_upload_then_accepts_reuse() {
+    const UPLOADS: [[u8; 2000]; 3] = [[0x35; 2000], [0x58; 2000], [0x63; 2000]];
+    // Deliver the second upload's first block while the first upload's tail
+    // waits in its relay. The third upload reuses the original relay and slot.
+    let schedule = [
+        (0, None, 1, [0, 0, 0]),
+        (1, Some(Code::REQUEST_ENTITY_INCOMPLETE), 1, [0, 0, 0]),
+        (0, Some(Code::CONTENT), 0, [1, 0, 0]),
+        (2, None, 1, [1, 0, 0]),
+        (2, Some(Code::CONTENT), 0, [1, 0, 1]),
+    ];
+    for protected in [false, true] {
+        run(async {
+            let mut relays = [socket::<1153>(), socket::<1153>()];
+            let server =
+                App::with_resources(SmallDevice::new().block_wise::<true>().rx_body::<1, 2048>())
+                    .deterministic_for_tests();
+            let client = App::with_resources(
+                SmallDevice::new()
+                    .block_wise::<true>()
+                    .tx_body::<2, 2048>()
+                    .rx_datagram::<4, 1152>()
+                    .tx_datagram::<4, 1152>()
+                    .client_calls::<2>(),
+            )
+            .deterministic_for_tests();
+            let mut server = if protected {
+                server.oscore(context(&[2], &[1]))
+            } else {
+                server.allow_unprotected()
+            }
+            .bind(socket::<1153>())
+            .unwrap();
+            let mut client = if protected {
+                client.oscore(context(&[1], &[2]))
+            } else {
+                client.allow_unprotected()
+            }
+            .bind(socket::<1153>())
+            .unwrap();
+            let server_endpoint = server.transport().local_endpoint().unwrap();
+            let client_endpoint = client.transport().local_endpoint().unwrap();
+            let mut effects = [0; 3];
+            let mut calls = [None; 3];
+
+            for (step, (operation, completed, occupied, expected_effects)) in
+                schedule.into_iter().enumerate()
+            {
+                let now = 1 + step as u64 * 10;
+                let relay = &mut relays[operation % 2];
+                let tag = BodyTag::new(&[operation as u8]).unwrap();
+                if calls[operation].is_none() {
+                    calls[operation] = Some(
+                        client
+                            .post("upload")
+                            .to(relay.local_endpoint().unwrap())
+                            .request_tag(tag)
+                            .content_format(ContentFormat::OCTET_STREAM)
+                            .payload(&UPLOADS[operation])
+                            .send_async(now, || Ok::<_, io::Error>(now), &mut TestTimer(now))
+                            .await
+                            .unwrap(),
+                    );
+                }
+                let call = calls[operation].unwrap();
+                let mut wire = [0; 1152];
+                let (len, from) = relay.recv(&mut wire).await.unwrap();
+                assert_eq!(from, client_endpoint);
+                relay.send(server_endpoint, &wire[..len]).await.unwrap();
+                server
+                    .wait_async(now, &mut TestTimer(now), pending())
+                    .await
+                    .unwrap();
+                server
+                    .progress_with_async(
+                        now,
+                        &mut || Ok::<_, io::Error>(now),
+                        &mut TestTimer(now),
+                        now + 1000,
+                        |request, _| {
+                            assert_eq!(request.code(), Code::POST);
+                            assert_eq!(request.path(), ["upload"]);
+                            assert_eq!(request.request_tag().next(), tag.as_slice());
+                            assert_eq!(request.body().unwrap(), UPLOADS[operation]);
+                            effects[operation] += 1;
+                            Response::content(b"stored")
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(effects, expected_effects);
+                assert_eq!(
+                    server.resource_usage().storage.rx_body.unwrap().occupied,
+                    occupied
+                );
+
+                let (len, from) = relay.recv(&mut wire).await.unwrap();
+                assert_eq!(from, server_endpoint);
+                relay.send(client_endpoint, &wire[..len]).await.unwrap();
+                client
+                    .wait_async(now, &mut TestTimer(now), pending())
+                    .await
+                    .unwrap();
+                client
+                    .progress_async(
+                        now,
+                        &mut || Ok::<_, io::Error>(now),
+                        &mut TestTimer(now),
+                        now + 1000,
+                    )
+                    .await
+                    .unwrap();
+                match completed {
+                    Some(code) => {
+                        let response = client.take_response(call).unwrap().unwrap();
+                        assert_eq!(response.code(), code);
+                        if code == Code::CONTENT {
+                            assert_eq!(response.payload(), b"stored");
+                        }
+                    }
+                    None => assert!(client.take_response(call).is_none()),
+                }
+                let usage = client.resource_usage();
+                assert_eq!(usage.client_requests.occupied, occupied);
+                assert_eq!(usage.storage.tx_body.unwrap().occupied, occupied);
+                assert_eq!(
+                    client
+                        .oscore()
+                        .and_then(|context| context.lookup(call.token()))
+                        .is_some(),
+                    protected && completed.is_none(),
+                );
+            }
+        });
+    }
+}
+
 #[test]
 fn lost_mutating_reply_replays_without_reapplying_the_effect() {
     // Drive the App's protocol clock explicitly. UDP and Tokio readiness
     // remain real, and no retry depends on sleeping for a wall-clock RTO.
-    struct TestTimer(u64);
-    impl AsyncTimer for TestTimer {
-        async fn wait_until(&mut self, deadline_ms: u64) {
-            if deadline_ms > self.0 {
-                pending().await
-            }
-        }
-    }
-
     for protected in [false, true] {
         run(async {
             let mut relay = socket::<1153>();
