@@ -96,13 +96,19 @@ for actual stop or transfer conditions.
 3. The [matched peer screen](architecture/requirements/WINDOWS-PACED-PEERS-20261119.md)
    establishes a protected median latency advantage in these Windows cells
    and a 600/s eligible rung for protected blockwise C1. The 800/s rung
-   misses the pacing guard. Next, extend matched loading to two independent
-   endpoints with verified overlap and a fixed burst shape. Keep the original
-   #650 baseline, both 50% targets and physical prerequisites.
+   misses the pacing guard. The [paired-start follow-up](architecture/requirements/WINDOWS-PAIRED-PEERS-20261119.md)
+   verifies overlapping 4,096-byte operations across two endpoints and
+   passes the protected 800/s rung. The 1,000/s rung misses pace in the
+   libcoap arms. Keep the original #650 baseline, both 50% targets and
+   physical prerequisites.
 4. The [Tokio loopback tests](tools/coaptic-tokio/README.md) exercise body
    refusal and reuse, Call refusal and established OSCORE binding refusal.
    Keep #130 open for the remaining runtime/security cells and device
    qualification. Reuse settled recovery evidence where it applies.
+5. Compare the existing standalone async-io adapter with Tokio at matched
+   App capacities, payload, protection and load. Account for both runtimes'
+   worker and reactor costs. Preserve Tokio for caller-owned Tokio runtimes
+   and require a fresh measured and functional gate for any adapter change.
 
 ## Blocked and deferred work
 
