@@ -1,0 +1,2563 @@
+{
+  "schema": 1,
+  "source": {
+    "original_commit": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+    "current_commit": "da486b0f88b12a1b72ada12901da7d2af4eb000c",
+    "original_tree": "f5aeb6cb9a1198928ab8aa01c60ef0b17fe223b2",
+    "current_tree": "e27175152ca44db2eea7ec251f638d7596689ef9",
+    "fixture_commit": "eea0374b60c93098a7f0dcf24a999e49d753d624",
+    "runner_commit": "9019751b09d53d0ef3f9fbed7b3a6f4bd5832c88",
+    "runner_sha256": "723b554505312dd7a33b265edd35fb21a95fb63403705433544c1bbac8bddd86",
+    "stock_wrapper_sha256": "9a98cdc154b64bb8028df7194286b7e0058d8776a8671f52b7b0992aafd482ec",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "windows": "10.0.26200",
+    "cpu": "AMD Ryzen 7 5800X3D",
+    "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+    "original_lock_sha256": "aecd3e37a4a762ef0a0831ad047979536b9ddb5ab7c3bcf83ca40405b691191f",
+    "current_lock_sha256": "b96a064a900695f3189c7e4e2cb4833ba2623e6aacbd0183cc71259def1f188d",
+    "files_sha256": {
+      "build.py": "8a039861e660156a58a19e0f5ac096be9d3136373f8abd2c63d37e7ae09f2cb3",
+      "observe.py": "4265f9c62dc840550a6852815560e418b6e80c7aa1608fa9d5a34f825dd61686",
+      "assess.py": "35e575f81d95523e7f2853dfd288e851e7e07c3fb8c3991d79ce687557ceb599",
+      "tail.rs": "c79239da79170b9cc3c6925140c45b7de779308b409805ad3ef91509f89166e8",
+      "original-metadata.json": "a5c9b08ff7c6fe4ebdb474fc342affe63f9ba744eb0a6cfacba19121143176c0",
+      "current-metadata.json": "f296c57fe57438bf6af5cf73c4c64860aa27c02c9759fbad6ce45e743d4e46da",
+      "fixture/tools/benchmark/native/servers/src/main.rs": "6885d8c2159f0bfbaf5632f255d590d0413cb7dcda2b844788b2014838c455bb"
+    },
+    "servers": {
+      "frozen": {
+        "original": "8d0bd04f70ca14af007e07af8ed166a637e272ac4500fe2bd9fd0a1e2674c3da",
+        "current": "27b317b58cea724f1222bc4582eb4a88e132011874a23df40f23ffd74f0d5610"
+      },
+      "disabled": {
+        "original": "1e36db2b8de9fb67be03eafb79d7a9ec855265d044c0fb949832183cb2ef517f",
+        "current": "04f6dfaf8d401f1959800a0dfcb87f9d78da11022617583ab2fa1dbc253543fd"
+      },
+      "timed": {
+        "original": "1e36db2b8de9fb67be03eafb79d7a9ec855265d044c0fb949832183cb2ef517f",
+        "current": "04f6dfaf8d401f1959800a0dfcb87f9d78da11022617583ab2fa1dbc253543fd"
+      }
+    }
+  },
+  "sample": {
+    "first_successful_send": 1025,
+    "last_successful_send": 9216,
+    "flush_after": 12288,
+    "first_client_operation_zero_based": 224,
+    "final_client_operation_zero_based": 2271,
+    "phases": [
+      "poll_to_receive",
+      "guarded_receive",
+      "receive_to_send",
+      "send",
+      "send_to_poll_exit"
+    ]
+  },
+  "workload": {
+    "operations": 6560,
+    "warmup": 32,
+    "offered": 800,
+    "representation_bytes": 4096,
+    "concurrency": 1,
+    "message": "CON",
+    "caps": "historical Default/AllocMemory",
+    "host_output_cap_bytes": 25165824
+  },
+  "preflight": {
+    "raw_sha256": "31f08421e62bced11a427477178c568311b7626ea267efbe31223a9cd0a17124",
+    "count": 3200,
+    "warmup": 32,
+    "achieved_rate": 800.104973772559,
+    "period_misses": 3,
+    "latency": {
+      "p50_ns": 115900.0,
+      "p99_ns": 202600
+    },
+    "cpu_time": {
+      "client": {
+        "user_seconds": 0.015625,
+        "system_seconds": 0.421875,
+        "total_seconds": 0.4375,
+        "ns_per_verified_operation": 136718.75
+      },
+      "server": {
+        "user_seconds": 0.015625,
+        "system_seconds": 0.203125,
+        "total_seconds": 0.21875,
+        "ns_per_verified_operation": 68359.375
+      }
+    },
+    "process_cycles": {
+      "client": {
+        "cycles": 1384554800,
+        "cycles_per_verified_operation": 432673.375
+      },
+      "server": {
+        "cycles": 918494700,
+        "cycles_per_verified_operation": 287029.59375
+      }
+    },
+    "datagrams_per_direction": 12800,
+    "resource_window_ns": 3999741800,
+    "memory": {
+      "before": {
+        "server": {
+          "rss": 6529024,
+          "private": 1269760,
+          "peak_wset": 6529024
+        },
+        "client": {
+          "rss": 5193728,
+          "private": 872448,
+          "peak_wset": 5193728
+        }
+      },
+      "after": {
+        "server": {
+          "rss": 11214848,
+          "private": 1269760,
+          "peak_wset": 11214848
+        },
+        "client": {
+          "rss": 5230592,
+          "private": 884736,
+          "peak_wset": 5230592
+        }
+      }
+    },
+    "sample": {
+      "raw_sha256": "82419b45bfb97f99f8be487c5802e8cfc31b15663f050704ba94fdf175de8273",
+      "operations": 2048,
+      "client_latency": {
+        "p50_ns": 116100.0,
+        "p99_ns": 213300
+      },
+      "per_datagram": {
+        "poll_to_receive": {
+          "p50_ns": 200.0,
+          "p99_ns": 900
+        },
+        "guarded_receive": {
+          "p50_ns": 1400.0,
+          "p99_ns": 4100
+        },
+        "receive_to_send": {
+          "p50_ns": 1900.0,
+          "p99_ns": 6000
+        },
+        "send": {
+          "p50_ns": 8300.0,
+          "p99_ns": 23100
+        },
+        "send_to_poll_exit": {
+          "p50_ns": 200.0,
+          "p99_ns": 800
+        }
+      },
+      "spans_summed_per_operation": {
+        "poll_to_receive": {
+          "p50_ns": 1200.0,
+          "p99_ns": 2900
+        },
+        "guarded_receive": {
+          "p50_ns": 6700.0,
+          "p99_ns": 13400
+        },
+        "receive_to_send": {
+          "p50_ns": 9100.0,
+          "p99_ns": 20100
+        },
+        "send": {
+          "p50_ns": 36800.0,
+          "p99_ns": 78400
+        },
+        "send_to_poll_exit": {
+          "p50_ns": 1100.0,
+          "p99_ns": 2700
+        }
+      },
+      "client_top_one_percent": {
+        "operations": 21,
+        "min_client_ns": 213300,
+        "median_client_ns": 232400,
+        "median_sum_phase_ns": {
+          "poll_to_receive": 2800,
+          "guarded_receive": 13200,
+          "receive_to_send": 19000,
+          "send": 73100,
+          "send_to_poll_exit": 2600
+        }
+      }
+    }
+  },
+  "results": {
+    "r1-unprotected": {
+      "rows": {
+        "frozen": {
+          "original": {
+            "raw_sha256": "f74d93fafe751e0a2d34b9cd71d2ebbb231464928e1afc33b4f50d58c6907493",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0900198844323,
+            "period_misses": 0,
+            "latency": {
+              "p50_ns": 120200.0,
+              "p99_ns": 222200
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.015625,
+                "system_seconds": 0.8125,
+                "total_seconds": 0.828125,
+                "ns_per_verified_operation": 126238.56707317074
+              },
+              "server": {
+                "user_seconds": 0.109375,
+                "system_seconds": 0.421875,
+                "total_seconds": 0.53125,
+                "ns_per_verified_operation": 80983.23170731707
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2960160020,
+                "cycles_per_verified_operation": 451243.9054878049
+              },
+              "server": {
+                "cycles": 2000715040,
+                "cycles_per_verified_operation": 304987.0487804878
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199313400,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6000640,
+                  "private": 1081344,
+                  "peak_wset": 6000640
+                },
+                "client": {
+                  "rss": 5189632,
+                  "private": 905216,
+                  "peak_wset": 5189632
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6000640,
+                  "private": 1081344,
+                  "peak_wset": 6000640
+                },
+                "client": {
+                  "rss": 5251072,
+                  "private": 917504,
+                  "peak_wset": 5251072
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "0bbc2c00458a0714878baadb22f44befc35d5eacc6a7512910898f8bdf12edb9",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0468710386399,
+            "period_misses": 1,
+            "latency": {
+              "p50_ns": 116000.0,
+              "p99_ns": 244700
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.46875,
+                "system_seconds": 0.46875,
+                "total_seconds": 0.9375,
+                "ns_per_verified_operation": 142911.58536585365
+              },
+              "server": {
+                "user_seconds": 0.125,
+                "system_seconds": 0.390625,
+                "total_seconds": 0.515625,
+                "ns_per_verified_operation": 78601.37195121951
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2884910540,
+                "cycles_per_verified_operation": 439772.9481707317
+              },
+              "server": {
+                "cycles": 1875736140,
+                "cycles_per_verified_operation": 285935.38719512196
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199754500,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 5931008,
+                  "private": 1064960,
+                  "peak_wset": 5931008
+                },
+                "client": {
+                  "rss": 5189632,
+                  "private": 905216,
+                  "peak_wset": 5189632
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 5931008,
+                  "private": 1064960,
+                  "peak_wset": 5931008
+                },
+                "client": {
+                  "rss": 5251072,
+                  "private": 917504,
+                  "peak_wset": 5251072
+                }
+              }
+            }
+          }
+        },
+        "disabled": {
+          "original": {
+            "raw_sha256": "ad7b1fd918cf85a5c522bc8d037e75c971ec1f602448b530374362b45a88ce0b",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0625317166557,
+            "period_misses": 0,
+            "latency": {
+              "p50_ns": 122200.0,
+              "p99_ns": 236400
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.390625,
+                "system_seconds": 0.46875,
+                "total_seconds": 0.859375,
+                "ns_per_verified_operation": 131002.28658536586
+              },
+              "server": {
+                "user_seconds": 0.09375,
+                "system_seconds": 0.421875,
+                "total_seconds": 0.515625,
+                "ns_per_verified_operation": 78601.37195121951
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3006956940,
+                "cycles_per_verified_operation": 458377.5823170732
+              },
+              "server": {
+                "cycles": 2040132600,
+                "cycles_per_verified_operation": 310995.8231707317
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199636300,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6537216,
+                  "private": 1122304,
+                  "peak_wset": 6537216
+                },
+                "client": {
+                  "rss": 5197824,
+                  "private": 913408,
+                  "peak_wset": 5197824
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 11087872,
+                  "private": 1122304,
+                  "peak_wset": 11087872
+                },
+                "client": {
+                  "rss": 5251072,
+                  "private": 913408,
+                  "peak_wset": 5251072
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "49b78a31cadf062db2b7c72bd1cb2b6ed4c6dbdc64c837133cd3aa80588edae2",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0582481431879,
+            "period_misses": 9,
+            "latency": {
+              "p50_ns": 117000.0,
+              "p99_ns": 219700
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.859375,
+                "total_seconds": 0.859375,
+                "ns_per_verified_operation": 131002.28658536586
+              },
+              "server": {
+                "user_seconds": 0.125,
+                "system_seconds": 0.53125,
+                "total_seconds": 0.65625,
+                "ns_per_verified_operation": 100038.10975609756
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2855505300,
+                "cycles_per_verified_operation": 435290.44207317074
+              },
+              "server": {
+                "cycles": 1919626400,
+                "cycles_per_verified_operation": 292625.9756097561
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199707100,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 5984256,
+                  "private": 1060864,
+                  "peak_wset": 5984256
+                },
+                "client": {
+                  "rss": 5197824,
+                  "private": 905216,
+                  "peak_wset": 5197824
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 5984256,
+                  "private": 1060864,
+                  "peak_wset": 5984256
+                },
+                "client": {
+                  "rss": 5251072,
+                  "private": 905216,
+                  "peak_wset": 5251072
+                }
+              }
+            }
+          }
+        },
+        "timed": {
+          "original": {
+            "raw_sha256": "8d2d98fae70ed6e442489a245f60b72e37d124070e05a3bfd8aab3942c157b6f",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0969873665174,
+            "period_misses": 23,
+            "latency": {
+              "p50_ns": 112200.0,
+              "p99_ns": 282900
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.8125,
+                "total_seconds": 0.8125,
+                "ns_per_verified_operation": 123856.70731707317
+              },
+              "server": {
+                "user_seconds": 0.09375,
+                "system_seconds": 0.421875,
+                "total_seconds": 0.515625,
+                "ns_per_verified_operation": 78601.37195121951
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2881304160,
+                "cycles_per_verified_operation": 439223.1951219512
+              },
+              "server": {
+                "cycles": 1963565620,
+                "cycles_per_verified_operation": 299324.0274390244
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199245100,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6086656,
+                  "private": 1265664,
+                  "peak_wset": 6086656
+                },
+                "client": {
+                  "rss": 5197824,
+                  "private": 909312,
+                  "peak_wset": 5197824
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6246400,
+                  "private": 1265664,
+                  "peak_wset": 6246400
+                },
+                "client": {
+                  "rss": 5259264,
+                  "private": 921600,
+                  "peak_wset": 5259264
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "1d276d4cc7aa64a4bf723c08962cd326fb7b86e181c68605731228674f99d26b",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 104600.0,
+                "p99_ns": 195800
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 3700
+                },
+                "receive_to_send": {
+                  "p50_ns": 2700.0,
+                  "p99_ns": 6500
+                },
+                "send": {
+                  "p50_ns": 8300.0,
+                  "p99_ns": 19300
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 300.0,
+                  "p99_ns": 900
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 900.0,
+                  "p99_ns": 2600
+                },
+                "guarded_receive": {
+                  "p50_ns": 5800.0,
+                  "p99_ns": 11200
+                },
+                "receive_to_send": {
+                  "p50_ns": 10800.0,
+                  "p99_ns": 22200
+                },
+                "send": {
+                  "p50_ns": 33400.0,
+                  "p99_ns": 64500
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 2900
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 195800,
+                "median_client_ns": 228900,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 2600,
+                  "guarded_receive": 11400,
+                  "receive_to_send": 23800,
+                  "send": 67900,
+                  "send_to_poll_exit": 2800
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "21272ee5b6ac50fbd1e0bfda90db2d440d4d13e5a4f82e0add5698c67d3a2069",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0862629591563,
+            "period_misses": 2,
+            "latency": {
+              "p50_ns": 116050.0,
+              "p99_ns": 263000
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.96875,
+                "total_seconds": 0.96875,
+                "ns_per_verified_operation": 147675.30487804877
+              },
+              "server": {
+                "user_seconds": 0.046875,
+                "system_seconds": 0.515625,
+                "total_seconds": 0.5625,
+                "ns_per_verified_operation": 85746.9512195122
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2872018420,
+                "cycles_per_verified_operation": 437807.68597560975
+              },
+              "server": {
+                "cycles": 1900355880,
+                "cycles_per_verified_operation": 289688.39634146343
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199360400,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6029312,
+                  "private": 1236992,
+                  "peak_wset": 6029312
+                },
+                "client": {
+                  "rss": 5206016,
+                  "private": 921600,
+                  "peak_wset": 5206016
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6184960,
+                  "private": 1236992,
+                  "peak_wset": 6184960
+                },
+                "client": {
+                  "rss": 5255168,
+                  "private": 921600,
+                  "peak_wset": 5255168
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "6c5b7cce551a210e1743f582b0b2b2b3766b6a192006141bdba5055d5bd2b884",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 116200.0,
+                "p99_ns": 254300
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 1900.0,
+                  "p99_ns": 6000
+                },
+                "send": {
+                  "p50_ns": 8000.0,
+                  "p99_ns": 23000
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 800
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1200.0,
+                  "p99_ns": 2900
+                },
+                "guarded_receive": {
+                  "p50_ns": 6900.0,
+                  "p99_ns": 14000
+                },
+                "receive_to_send": {
+                  "p50_ns": 9200.0,
+                  "p99_ns": 20300
+                },
+                "send": {
+                  "p50_ns": 36500.0,
+                  "p99_ns": 79700
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1100.0,
+                  "p99_ns": 2900
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 254300,
+                "median_client_ns": 320100,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 2700,
+                  "guarded_receive": 12800,
+                  "receive_to_send": 19700,
+                  "send": 75400,
+                  "send_to_poll_exit": 2700
+                }
+              }
+            }
+          }
+        }
+      },
+      "source_comparison": {
+        "frozen": {
+          "median_delta_ns": -4200.0,
+          "p99_delta_ns": 22500,
+          "relative_rate_delta": 5.392998877629118e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.9375328832435827,
+            "client": 0.9745792526445918
+          }
+        },
+        "disabled": {
+          "median_delta_ns": -5200.0,
+          "p99_delta_ns": -16700,
+          "relative_rate_delta": 5.354048337458117e-06,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.940932172742105,
+            "client": 0.9496329202505973
+          }
+        },
+        "timed": {
+          "median_delta_ns": 3850.0,
+          "p99_delta_ns": -19900,
+          "relative_rate_delta": 1.3403884192020321e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.967808694878249,
+            "client": 0.9967772440935219
+          }
+        }
+      },
+      "disabled_effect": {
+        "original": {
+          "median_delta_ns": 2000.0,
+          "p99_delta_ns": 14200,
+          "relative_rate_delta": 3.435634377813024e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 1.0197017362352612,
+            "client": 1.0158089156274734
+          }
+        },
+        "current": {
+          "median_delta_ns": 1000.0,
+          "p99_delta_ns": -25000,
+          "relative_rate_delta": 1.4220547520205074e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 1.0233989520509,
+            "client": 0.9898072263966979
+          }
+        }
+      },
+      "enabled_effect": {
+        "original": {
+          "median_delta_ns": -10000.0,
+          "p99_delta_ns": 46500,
+          "relative_rate_delta": 4.306619607308271e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.9624696061422674,
+            "client": 0.9582126440427178
+          }
+        },
+        "current": {
+          "median_delta_ns": -950.0,
+          "p99_delta_ns": 43300,
+          "relative_rate_delta": 3.501597044142102e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.989961317473025,
+            "client": 1.0057829064439139
+          }
+        }
+      }
+    },
+    "r1-oscore": {
+      "rows": {
+        "frozen": {
+          "original": {
+            "raw_sha256": "05c0dfba9f35e0fba36f2075351748d39fe7e92e3e5ae0dcb884e1e765eab54a",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0994757823854,
+            "period_misses": 2,
+            "latency": {
+              "p50_ns": 141300.0,
+              "p99_ns": 338700
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.015625,
+                "system_seconds": 1.109375,
+                "total_seconds": 1.125,
+                "ns_per_verified_operation": 171493.9024390244
+              },
+              "server": {
+                "user_seconds": 0.0625,
+                "system_seconds": 0.75,
+                "total_seconds": 0.8125,
+                "ns_per_verified_operation": 123856.70731707317
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3550522420,
+                "cycles_per_verified_operation": 541238.1737804879
+              },
+              "server": {
+                "cycles": 2352883300,
+                "cycles_per_verified_operation": 358671.23475609755
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199239500,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6098944,
+                  "private": 1081344,
+                  "peak_wset": 6098944
+                },
+                "client": {
+                  "rss": 5275648,
+                  "private": 905216,
+                  "peak_wset": 5275648
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6098944,
+                  "private": 1081344,
+                  "peak_wset": 6098944
+                },
+                "client": {
+                  "rss": 5337088,
+                  "private": 917504,
+                  "peak_wset": 5337088
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "6fe470c691df22e214e921f18d628444903ef32f866663db4d99158ac6531dc4",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.1051650423027,
+            "period_misses": 1,
+            "latency": {
+              "p50_ns": 136500.0,
+              "p99_ns": 344500
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.625,
+                "total_seconds": 0.625,
+                "ns_per_verified_operation": 95274.39024390244
+              },
+              "server": {
+                "user_seconds": 0.0625,
+                "system_seconds": 0.4375,
+                "total_seconds": 0.5,
+                "ns_per_verified_operation": 76219.51219512195
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3434238680,
+                "cycles_per_verified_operation": 523511.993902439
+              },
+              "server": {
+                "cycles": 2213737280,
+                "cycles_per_verified_operation": 337459.9512195122
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199160000,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6066176,
+                  "private": 1069056,
+                  "peak_wset": 6066176
+                },
+                "client": {
+                  "rss": 5279744,
+                  "private": 905216,
+                  "peak_wset": 5279744
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6066176,
+                  "private": 1069056,
+                  "peak_wset": 6066176
+                },
+                "client": {
+                  "rss": 5341184,
+                  "private": 917504,
+                  "peak_wset": 5341184
+                }
+              }
+            }
+          }
+        },
+        "disabled": {
+          "original": {
+            "raw_sha256": "3d05d9d762cc2434557afb06606bb57504007ced0e5cd9380921ac85a743d5be",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0514569680981,
+            "period_misses": 2,
+            "latency": {
+              "p50_ns": 143900.0,
+              "p99_ns": 340300
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 1.125,
+                "total_seconds": 1.125,
+                "ns_per_verified_operation": 171493.9024390244
+              },
+              "server": {
+                "user_seconds": 0.125,
+                "system_seconds": 0.71875,
+                "total_seconds": 0.84375,
+                "ns_per_verified_operation": 128620.4268292683
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3612510880,
+                "cycles_per_verified_operation": 550687.6341463415
+              },
+              "server": {
+                "cycles": 2395089200,
+                "cycles_per_verified_operation": 365105.06097560975
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199707100,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6131712,
+                  "private": 1089536,
+                  "peak_wset": 6131712
+                },
+                "client": {
+                  "rss": 5279744,
+                  "private": 909312,
+                  "peak_wset": 5279744
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6131712,
+                  "private": 1089536,
+                  "peak_wset": 6131712
+                },
+                "client": {
+                  "rss": 5341184,
+                  "private": 921600,
+                  "peak_wset": 5341184
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "b48f3c50089862d2fb6b0eca924406b3864fb9115b8162be0079cf7744792b70",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0687668862075,
+            "period_misses": 4,
+            "latency": {
+              "p50_ns": 136500.0,
+              "p99_ns": 340300
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.015625,
+                "system_seconds": 1.4375,
+                "total_seconds": 1.453125,
+                "ns_per_verified_operation": 221512.95731707316
+              },
+              "server": {
+                "user_seconds": 0.125,
+                "system_seconds": 0.984375,
+                "total_seconds": 1.109375,
+                "ns_per_verified_operation": 169112.04268292684
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3432290140,
+                "cycles_per_verified_operation": 523214.9603658537
+              },
+              "server": {
+                "cycles": 2214903820,
+                "cycles_per_verified_operation": 337637.7774390244
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199527700,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6086656,
+                  "private": 1073152,
+                  "peak_wset": 6086656
+                },
+                "client": {
+                  "rss": 5275648,
+                  "private": 901120,
+                  "peak_wset": 5275648
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6086656,
+                  "private": 1073152,
+                  "peak_wset": 6086656
+                },
+                "client": {
+                  "rss": 5337088,
+                  "private": 913408,
+                  "peak_wset": 5337088
+                }
+              }
+            }
+          }
+        },
+        "timed": {
+          "original": {
+            "raw_sha256": "a26e7ce7c5fe77983bdd1ddb536c14b81bd9200816d11dd7b18717e04a93f5e4",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0896197946075,
+            "period_misses": 6,
+            "latency": {
+              "p50_ns": 142900.0,
+              "p99_ns": 367500
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 1.0,
+                "total_seconds": 1.0,
+                "ns_per_verified_operation": 152439.0243902439
+              },
+              "server": {
+                "user_seconds": 0.03125,
+                "system_seconds": 0.5625,
+                "total_seconds": 0.59375,
+                "ns_per_verified_operation": 90510.67073170732
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3592771160,
+                "cycles_per_verified_operation": 547678.5304878049
+              },
+              "server": {
+                "cycles": 2388766900,
+                "cycles_per_verified_operation": 364141.2957317073
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199311500,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6139904,
+                  "private": 1245184,
+                  "peak_wset": 6139904
+                },
+                "client": {
+                  "rss": 5275648,
+                  "private": 901120,
+                  "peak_wset": 5275648
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6299648,
+                  "private": 1245184,
+                  "peak_wset": 6299648
+                },
+                "client": {
+                  "rss": 5328896,
+                  "private": 901120,
+                  "peak_wset": 5328896
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "90caffbb65d7889d23158de5cc124fbfb0ff8132df42ee95e68d6ef16e371431",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 141100.0,
+                "p99_ns": 271800
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 5700.0,
+                  "p99_ns": 12900
+                },
+                "send": {
+                  "p50_ns": 8700.0,
+                  "p99_ns": 22900
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 300.0,
+                  "p99_ns": 1000
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1300.0,
+                  "p99_ns": 3500
+                },
+                "guarded_receive": {
+                  "p50_ns": 7000.0,
+                  "p99_ns": 15300
+                },
+                "receive_to_send": {
+                  "p50_ns": 23300.0,
+                  "p99_ns": 46200
+                },
+                "send": {
+                  "p50_ns": 38100.0,
+                  "p99_ns": 81200
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1500.0,
+                  "p99_ns": 3500
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 271800,
+                "median_client_ns": 353000,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 3100,
+                  "guarded_receive": 13900,
+                  "receive_to_send": 43700,
+                  "send": 76300,
+                  "send_to_poll_exit": 3200
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "4cec6edc0c03484dfb25ea9183ae453bd4c8b94b1874d466dc110b9c9dba3bc1",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0908005486574,
+            "period_misses": 1,
+            "latency": {
+              "p50_ns": 138300.0,
+              "p99_ns": 341500
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.40625,
+                "system_seconds": 0.5,
+                "total_seconds": 0.90625,
+                "ns_per_verified_operation": 138147.86585365853
+              },
+              "server": {
+                "user_seconds": 0.09375,
+                "system_seconds": 0.53125,
+                "total_seconds": 0.625,
+                "ns_per_verified_operation": 95274.39024390244
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3506940880,
+                "cycles_per_verified_operation": 534594.6463414634
+              },
+              "server": {
+                "cycles": 2258086880,
+                "cycles_per_verified_operation": 344220.56097560975
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199319300,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6090752,
+                  "private": 1241088,
+                  "peak_wset": 6090752
+                },
+                "client": {
+                  "rss": 5275648,
+                  "private": 909312,
+                  "peak_wset": 5275648
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6246400,
+                  "private": 1241088,
+                  "peak_wset": 6246400
+                },
+                "client": {
+                  "rss": 5337088,
+                  "private": 921600,
+                  "peak_wset": 5337088
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "dc5df1b4c038a6645954646274dfae2ad399a9520bfe6053e907ed1c368c2a09",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 138800.0,
+                "p99_ns": 333400
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 4700.0,
+                  "p99_ns": 11100
+                },
+                "send": {
+                  "p50_ns": 8400.0,
+                  "p99_ns": 23700
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1300.0,
+                  "p99_ns": 3300
+                },
+                "guarded_receive": {
+                  "p50_ns": 7000.0,
+                  "p99_ns": 15500
+                },
+                "receive_to_send": {
+                  "p50_ns": 19900.0,
+                  "p99_ns": 40300
+                },
+                "send": {
+                  "p50_ns": 37900.0,
+                  "p99_ns": 85400
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1200.0,
+                  "p99_ns": 3000
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 333400,
+                "median_client_ns": 391700,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 2900,
+                  "guarded_receive": 13200,
+                  "receive_to_send": 35300,
+                  "send": 75900,
+                  "send_to_poll_exit": 2600
+                }
+              }
+            }
+          }
+        }
+      },
+      "source_comparison": {
+        "frozen": {
+          "median_delta_ns": -4800.0,
+          "p99_delta_ns": 5800,
+          "relative_rate_delta": 7.110690719791535e-06,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9408614868404226,
+            "client": 0.9672488365810685
+          }
+        },
+        "disabled": {
+          "median_delta_ns": -7400.0,
+          "p99_delta_ns": 0,
+          "relative_rate_delta": 2.1636005982594853e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9247688228062654,
+            "client": 0.9501120561331016
+          }
+        },
+        "timed": {
+          "median_delta_ns": -4600.0,
+          "p99_delta_ns": -26000,
+          "relative_rate_delta": 1.4757772388573898e-06,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.945293942242753,
+            "client": 0.976110284741876
+          }
+        }
+      },
+      "disabled_effect": {
+        "original": {
+          "median_delta_ns": 2600.0,
+          "p99_delta_ns": 1600,
+          "relative_rate_delta": 6.0016055179024086e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 1.017937948728694,
+            "client": 1.0174589687564908
+          }
+        },
+        "current": {
+          "median_delta_ns": 0.0,
+          "p99_delta_ns": -4200,
+          "relative_rate_delta": 4.549171494627746e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 1.0005269550323515,
+            "client": 0.9994326136935828
+          }
+        }
+      },
+      "enabled_effect": {
+        "original": {
+          "median_delta_ns": -1000.0,
+          "p99_delta_ns": 27200,
+          "relative_rate_delta": 4.770046498503433e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.9973603070816737,
+            "client": 0.994535734104142
+          }
+        },
+        "current": {
+          "median_delta_ns": 1800.0,
+          "p99_delta_ns": 1200,
+          "relative_rate_delta": 2.753971078717221e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 1.019496584732063,
+            "client": 1.0217495424206766
+          }
+        }
+      }
+    },
+    "r2-unprotected": {
+      "rows": {
+        "frozen": {
+          "original": {
+            "raw_sha256": "2f06a979e9ed9e6019a5183298b1e5021bbc6cf9334035401456a2c8274fd05f",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0655565911553,
+            "period_misses": 3,
+            "latency": {
+              "p50_ns": 120500.0,
+              "p99_ns": 263900
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.03125,
+                "system_seconds": 0.65625,
+                "total_seconds": 0.6875,
+                "ns_per_verified_operation": 104801.82926829268
+              },
+              "server": {
+                "user_seconds": 0.0625,
+                "system_seconds": 0.390625,
+                "total_seconds": 0.453125,
+                "ns_per_verified_operation": 69073.93292682926
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2994170900,
+                "cycles_per_verified_operation": 456428.4908536585
+              },
+              "server": {
+                "cycles": 2033057540,
+                "cycles_per_verified_operation": 309917.30792682926
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199576800,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6008832,
+                  "private": 1089536,
+                  "peak_wset": 6008832
+                },
+                "client": {
+                  "rss": 5193728,
+                  "private": 909312,
+                  "peak_wset": 5193728
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6008832,
+                  "private": 1089536,
+                  "peak_wset": 6008832
+                },
+                "client": {
+                  "rss": 5246976,
+                  "private": 909312,
+                  "peak_wset": 5246976
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "68e2eae9e30d24afe89061ac4e29872b9714bc84bc76e1adcef8c38c070981f7",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0694987199925,
+            "period_misses": 4,
+            "latency": {
+              "p50_ns": 119000.0,
+              "p99_ns": 343500
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 1.1875,
+                "total_seconds": 1.1875,
+                "ns_per_verified_operation": 181021.34146341463
+              },
+              "server": {
+                "user_seconds": 0.03125,
+                "system_seconds": 0.78125,
+                "total_seconds": 0.8125,
+                "ns_per_verified_operation": 123856.70731707317
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3007921860,
+                "cycles_per_verified_operation": 458524.6737804878
+              },
+              "server": {
+                "cycles": 1972981240,
+                "cycles_per_verified_operation": 300759.3353658537
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199524000,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 5931008,
+                  "private": 1060864,
+                  "peak_wset": 5931008
+                },
+                "client": {
+                  "rss": 5197824,
+                  "private": 913408,
+                  "peak_wset": 5197824
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 5931008,
+                  "private": 1060864,
+                  "peak_wset": 5931008
+                },
+                "client": {
+                  "rss": 5251072,
+                  "private": 913408,
+                  "peak_wset": 5251072
+                }
+              }
+            }
+          }
+        },
+        "disabled": {
+          "original": {
+            "raw_sha256": "9bc6a77ac29ffb79c5f3e7cf0f0a7d262aef2cff911369163468955109ec65c0",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0811789684027,
+            "period_misses": 5,
+            "latency": {
+              "p50_ns": 120900.0,
+              "p99_ns": 308800
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.78125,
+                "total_seconds": 0.78125,
+                "ns_per_verified_operation": 119092.98780487805
+              },
+              "server": {
+                "user_seconds": 0.0625,
+                "system_seconds": 0.59375,
+                "total_seconds": 0.65625,
+                "ns_per_verified_operation": 100038.10975609756
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2995229660,
+                "cycles_per_verified_operation": 456589.88719512196
+              },
+              "server": {
+                "cycles": 2020210980,
+                "cycles_per_verified_operation": 307958.9908536585
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199399800,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6037504,
+                  "private": 1085440,
+                  "peak_wset": 6037504
+                },
+                "client": {
+                  "rss": 5193728,
+                  "private": 901120,
+                  "peak_wset": 5193728
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6037504,
+                  "private": 1085440,
+                  "peak_wset": 6037504
+                },
+                "client": {
+                  "rss": 5246976,
+                  "private": 901120,
+                  "peak_wset": 5246976
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "06e540b1ae0099ab7c595a39c102ac4a1acc8b1e9b4b0ca74ea353396dca9bec",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0918837227929,
+            "period_misses": 2,
+            "latency": {
+              "p50_ns": 119300.0,
+              "p99_ns": 306800
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.09375,
+                "system_seconds": 0.359375,
+                "total_seconds": 0.453125,
+                "ns_per_verified_operation": 69073.93292682926
+              },
+              "server": {
+                "user_seconds": 0.0625,
+                "system_seconds": 0.234375,
+                "total_seconds": 0.296875,
+                "ns_per_verified_operation": 45255.33536585366
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 2979587960,
+                "cycles_per_verified_operation": 454205.48170731706
+              },
+              "server": {
+                "cycles": 1962426620,
+                "cycles_per_verified_operation": 299150.3993902439
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199291200,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 5984256,
+                  "private": 1056768,
+                  "peak_wset": 5984256
+                },
+                "client": {
+                  "rss": 5197824,
+                  "private": 909312,
+                  "peak_wset": 5197824
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 5984256,
+                  "private": 1056768,
+                  "peak_wset": 5984256
+                },
+                "client": {
+                  "rss": 5251072,
+                  "private": 909312,
+                  "peak_wset": 5251072
+                }
+              }
+            }
+          }
+        },
+        "timed": {
+          "original": {
+            "raw_sha256": "4373c20ed3719f7af5634f7949a457014ce291196b8cfef4c330291b9269761c",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.1032328317483,
+            "period_misses": 3,
+            "latency": {
+              "p50_ns": 122200.0,
+              "p99_ns": 305900
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.296875,
+                "system_seconds": 0.34375,
+                "total_seconds": 0.640625,
+                "ns_per_verified_operation": 97656.25
+              },
+              "server": {
+                "user_seconds": 0.09375,
+                "system_seconds": 0.203125,
+                "total_seconds": 0.296875,
+                "ns_per_verified_operation": 45255.33536585366
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3035824980,
+                "cycles_per_verified_operation": 462778.1981707317
+              },
+              "server": {
+                "cycles": 2050748420,
+                "cycles_per_verified_operation": 312614.08841463417
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199180800,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6090752,
+                  "private": 1265664,
+                  "peak_wset": 6090752
+                },
+                "client": {
+                  "rss": 5197824,
+                  "private": 913408,
+                  "peak_wset": 5197824
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6250496,
+                  "private": 1265664,
+                  "peak_wset": 6250496
+                },
+                "client": {
+                  "rss": 5259264,
+                  "private": 925696,
+                  "peak_wset": 5259264
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "d53c04a6a3b681846a63cb7eec1be7f4a5cf7d809c0a019d9c149240b9f01e00",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 123200.0,
+                "p99_ns": 312700
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 3000.0,
+                  "p99_ns": 8100
+                },
+                "send": {
+                  "p50_ns": 8400.0,
+                  "p99_ns": 23300
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 300.0,
+                  "p99_ns": 1000
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1300.0,
+                  "p99_ns": 3300
+                },
+                "guarded_receive": {
+                  "p50_ns": 7000.0,
+                  "p99_ns": 14600
+                },
+                "receive_to_send": {
+                  "p50_ns": 13500.0,
+                  "p99_ns": 28500
+                },
+                "send": {
+                  "p50_ns": 38200.0,
+                  "p99_ns": 84000
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1600.0,
+                  "p99_ns": 3400
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 312700,
+                "median_client_ns": 342000,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 2400,
+                  "guarded_receive": 11200,
+                  "receive_to_send": 22800,
+                  "send": 66300,
+                  "send_to_poll_exit": 2800
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "261f15dcd2f1e76458b89f796f3d9e83a9ff0e527519e291caee793bf176745e",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0649125837002,
+            "period_misses": 4,
+            "latency": {
+              "p50_ns": 119500.0,
+              "p99_ns": 298200
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.265625,
+                "system_seconds": 0.640625,
+                "total_seconds": 0.90625,
+                "ns_per_verified_operation": 138147.86585365853
+              },
+              "server": {
+                "user_seconds": 0.078125,
+                "system_seconds": 0.515625,
+                "total_seconds": 0.59375,
+                "ns_per_verified_operation": 90510.67073170732
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3018750180,
+                "cycles_per_verified_operation": 460175.3323170732
+              },
+              "server": {
+                "cycles": 1999683820,
+                "cycles_per_verified_operation": 304829.8506097561
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199571500,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6029312,
+                  "private": 1232896,
+                  "peak_wset": 6029312
+                },
+                "client": {
+                  "rss": 5201920,
+                  "private": 905216,
+                  "peak_wset": 5201920
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6184960,
+                  "private": 1232896,
+                  "peak_wset": 6184960
+                },
+                "client": {
+                  "rss": 5263360,
+                  "private": 917504,
+                  "peak_wset": 5263360
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "7c13df1ddc0fa835075b645be579bb763c8277ddc034a1b3f70342a751b9df77",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 115300.0,
+                "p99_ns": 229300
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1300.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 1900.0,
+                  "p99_ns": 6000
+                },
+                "send": {
+                  "p50_ns": 7900.0,
+                  "p99_ns": 22800
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 800
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1200.0,
+                  "p99_ns": 3000
+                },
+                "guarded_receive": {
+                  "p50_ns": 6700.0,
+                  "p99_ns": 13800
+                },
+                "receive_to_send": {
+                  "p50_ns": 9000.0,
+                  "p99_ns": 20300
+                },
+                "send": {
+                  "p50_ns": 35900.0,
+                  "p99_ns": 78500
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1100.0,
+                  "p99_ns": 2900
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 229300,
+                "median_client_ns": 254000,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 3000,
+                  "guarded_receive": 14100,
+                  "receive_to_send": 19800,
+                  "send": 78900,
+                  "send_to_poll_exit": 2800
+                }
+              }
+            }
+          }
+        }
+      },
+      "source_comparison": {
+        "frozen": {
+          "median_delta_ns": -1500.0,
+          "p99_delta_ns": 79600,
+          "relative_rate_delta": 4.927257278630748e-06,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.9704502706795007,
+            "client": 1.0045925768632646
+          }
+        },
+        "disabled": {
+          "median_delta_ns": -1600.0,
+          "p99_delta_ns": -2000,
+          "relative_rate_delta": 1.3379585311668052e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9713968686577478,
+            "client": 0.9947777961039556
+          }
+        },
+        "timed": {
+          "median_delta_ns": -2700.0,
+          "p99_delta_ns": -7700,
+          "relative_rate_delta": 4.7894129751813175e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9750995297609445,
+            "client": 0.9943755650893946
+          }
+        }
+      },
+      "disabled_effect": {
+        "original": {
+          "median_delta_ns": 400.0,
+          "p99_delta_ns": 44900,
+          "relative_rate_delta": 1.9526371456191072e-05,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.9936811626098886,
+            "client": 1.0003536070703245
+          }
+        },
+        "current": {
+          "median_delta_ns": 300.0,
+          "p99_delta_ns": -36700,
+          "relative_rate_delta": 2.7978822884966448e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9946504204976627,
+            "client": 0.9905802406715446
+          }
+        }
+      },
+      "enabled_effect": {
+        "original": {
+          "median_delta_ns": 1300.0,
+          "p99_delta_ns": -2900,
+          "relative_rate_delta": 2.756453210661647e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 1.0151159657591802,
+            "client": 1.0135533246555792
+          }
+        },
+        "current": {
+          "median_delta_ns": 200.0,
+          "p99_delta_ns": -8600,
+          "relative_rate_delta": 3.371005210950351e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 1.0189852703893714,
+            "client": 1.0131435018954769
+          }
+        }
+      }
+    },
+    "r2-oscore": {
+      "rows": {
+        "frozen": {
+          "original": {
+            "raw_sha256": "1d5810f5c3f6131d351af91856c51d29177aa225c2dccafbe633e5e26ec08c10",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0777929297931,
+            "period_misses": 4,
+            "latency": {
+              "p50_ns": 145200.0,
+              "p99_ns": 373800
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.546875,
+                "total_seconds": 0.546875,
+                "ns_per_verified_operation": 83365.09146341463
+              },
+              "server": {
+                "user_seconds": 0.078125,
+                "system_seconds": 0.328125,
+                "total_seconds": 0.40625,
+                "ns_per_verified_operation": 61928.35365853659
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3665164980,
+                "cycles_per_verified_operation": 558714.1737804879
+              },
+              "server": {
+                "cycles": 2414371620,
+                "cycles_per_verified_operation": 368044.4542682927
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199452000,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6098944,
+                  "private": 1081344,
+                  "peak_wset": 6098944
+                },
+                "client": {
+                  "rss": 5279744,
+                  "private": 905216,
+                  "peak_wset": 5279744
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6098944,
+                  "private": 1081344,
+                  "peak_wset": 6098944
+                },
+                "client": {
+                  "rss": 5341184,
+                  "private": 917504,
+                  "peak_wset": 5341184
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "5d90507308d8b0424ba99c1703ca5cbe69e7210d89b5779e922997036e519d0b",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0869655502921,
+            "period_misses": 2,
+            "latency": {
+              "p50_ns": 138200.0,
+              "p99_ns": 334400
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.734375,
+                "total_seconds": 0.734375,
+                "ns_per_verified_operation": 111947.40853658537
+              },
+              "server": {
+                "user_seconds": 0.046875,
+                "system_seconds": 0.484375,
+                "total_seconds": 0.53125,
+                "ns_per_verified_operation": 80983.23170731707
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3475742140,
+                "cycles_per_verified_operation": 529838.7408536585
+              },
+              "server": {
+                "cycles": 2238989420,
+                "cycles_per_verified_operation": 341309.36280487804
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199341600,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6066176,
+                  "private": 1077248,
+                  "peak_wset": 6066176
+                },
+                "client": {
+                  "rss": 5279744,
+                  "private": 909312,
+                  "peak_wset": 5279744
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6066176,
+                  "private": 1077248,
+                  "peak_wset": 6066176
+                },
+                "client": {
+                  "rss": 5337088,
+                  "private": 921600,
+                  "peak_wset": 5337088
+                }
+              }
+            }
+          }
+        },
+        "disabled": {
+          "original": {
+            "raw_sha256": "7b4cefd7b0255d3e37484fc08d05a908d15c1fe632d48db41822158acb1c63bc",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0854335128761,
+            "period_misses": 4,
+            "latency": {
+              "p50_ns": 143000.0,
+              "p99_ns": 371700
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.015625,
+                "system_seconds": 0.546875,
+                "total_seconds": 0.5625,
+                "ns_per_verified_operation": 85746.9512195122
+              },
+              "server": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.296875,
+                "total_seconds": 0.296875,
+                "ns_per_verified_operation": 45255.33536585366
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3602988500,
+                "cycles_per_verified_operation": 549236.0518292683
+              },
+              "server": {
+                "cycles": 2379176860,
+                "cycles_per_verified_operation": 362679.3993902439
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199358500,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6131712,
+                  "private": 1089536,
+                  "peak_wset": 6131712
+                },
+                "client": {
+                  "rss": 5275648,
+                  "private": 913408,
+                  "peak_wset": 5275648
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6131712,
+                  "private": 1089536,
+                  "peak_wset": 6131712
+                },
+                "client": {
+                  "rss": 5337088,
+                  "private": 921600,
+                  "peak_wset": 5337088
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "4f71467dbd85d04193d35302a323496ed355e41574075018c3f4c3e1f8b23322",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0798909042284,
+            "period_misses": 3,
+            "latency": {
+              "p50_ns": 137000.0,
+              "p99_ns": 353600
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.734375,
+                "total_seconds": 0.734375,
+                "ns_per_verified_operation": 111947.40853658537
+              },
+              "server": {
+                "user_seconds": 0.0,
+                "system_seconds": 0.265625,
+                "total_seconds": 0.265625,
+                "ns_per_verified_operation": 40491.615853658535
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3439552200,
+                "cycles_per_verified_operation": 524321.981707317
+              },
+              "server": {
+                "cycles": 2207939940,
+                "cycles_per_verified_operation": 336576.2103658537
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199421300,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6082560,
+                  "private": 1069056,
+                  "peak_wset": 6082560
+                },
+                "client": {
+                  "rss": 5275648,
+                  "private": 905216,
+                  "peak_wset": 5275648
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6082560,
+                  "private": 1069056,
+                  "peak_wset": 6082560
+                },
+                "client": {
+                  "rss": 5328896,
+                  "private": 905216,
+                  "peak_wset": 5328896
+                }
+              }
+            }
+          }
+        },
+        "timed": {
+          "original": {
+            "raw_sha256": "fb4aabfbf2afd2a25278e5fb485fb7263c901385c9641b6500b440325af462a4",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0942842813294,
+            "period_misses": 2,
+            "latency": {
+              "p50_ns": 142000.0,
+              "p99_ns": 343700
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.015625,
+                "system_seconds": 0.703125,
+                "total_seconds": 0.71875,
+                "ns_per_verified_operation": 109565.5487804878
+              },
+              "server": {
+                "user_seconds": 0.0625,
+                "system_seconds": 0.5,
+                "total_seconds": 0.5625,
+                "ns_per_verified_operation": 85746.9512195122
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3560722760,
+                "cycles_per_verified_operation": 542793.1036585366
+              },
+              "server": {
+                "cycles": 2366767540,
+                "cycles_per_verified_operation": 360787.73475609755
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199306500,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6152192,
+                  "private": 1269760,
+                  "peak_wset": 6152192
+                },
+                "client": {
+                  "rss": 5279744,
+                  "private": 909312,
+                  "peak_wset": 5279744
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6307840,
+                  "private": 1269760,
+                  "peak_wset": 6307840
+                },
+                "client": {
+                  "rss": 5341184,
+                  "private": 921600,
+                  "peak_wset": 5341184
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "e94401eb52294fa798e846f957b64a3ba92a126b070b48b7756f06761c395afe",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 143550.0,
+                "p99_ns": 390700
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 1000
+                },
+                "guarded_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 5800.0,
+                  "p99_ns": 13200
+                },
+                "send": {
+                  "p50_ns": 8800.0,
+                  "p99_ns": 23900
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 300.0,
+                  "p99_ns": 1100
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1400.0,
+                  "p99_ns": 3600
+                },
+                "guarded_receive": {
+                  "p50_ns": 7000.0,
+                  "p99_ns": 15400
+                },
+                "receive_to_send": {
+                  "p50_ns": 24100.0,
+                  "p99_ns": 50800
+                },
+                "send": {
+                  "p50_ns": 39000.0,
+                  "p99_ns": 88800
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1600.0,
+                  "p99_ns": 3800
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 390700,
+                "median_client_ns": 464300,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 3300,
+                  "guarded_receive": 13700,
+                  "receive_to_send": 50800,
+                  "send": 84800,
+                  "send_to_poll_exit": 3600
+                }
+              }
+            }
+          },
+          "current": {
+            "raw_sha256": "a923d0f13e8785a16c437a0937fcac9009c0893c008c1d7abea48efbb7edf7ed",
+            "count": 6560,
+            "warmup": 32,
+            "achieved_rate": 800.0782027657947,
+            "period_misses": 3,
+            "latency": {
+              "p50_ns": 138100.0,
+              "p99_ns": 345000
+            },
+            "cpu_time": {
+              "client": {
+                "user_seconds": 0.0,
+                "system_seconds": 1.34375,
+                "total_seconds": 1.34375,
+                "ns_per_verified_operation": 204839.93902439025
+              },
+              "server": {
+                "user_seconds": 0.125,
+                "system_seconds": 0.765625,
+                "total_seconds": 0.890625,
+                "ns_per_verified_operation": 135766.00609756098
+              }
+            },
+            "process_cycles": {
+              "client": {
+                "cycles": 3492426280,
+                "cycles_per_verified_operation": 532382.0548780488
+              },
+              "server": {
+                "cycles": 2247251080,
+                "cycles_per_verified_operation": 342568.76219512196
+              }
+            },
+            "datagrams_per_direction": 26240,
+            "resource_window_ns": 8199458400,
+            "memory": {
+              "before": {
+                "server": {
+                  "rss": 6082560,
+                  "private": 1228800,
+                  "peak_wset": 6082560
+                },
+                "client": {
+                  "rss": 5271552,
+                  "private": 897024,
+                  "peak_wset": 5271552
+                }
+              },
+              "after": {
+                "server": {
+                  "rss": 6242304,
+                  "private": 1228800,
+                  "peak_wset": 6242304
+                },
+                "client": {
+                  "rss": 5324800,
+                  "private": 897024,
+                  "peak_wset": 5324800
+                }
+              }
+            },
+            "sample": {
+              "raw_sha256": "68b0d03a15fb5b8c755cf9520a26d4c1d421fbb4c94cf40012c323b8f8bf7b32",
+              "operations": 2048,
+              "client_latency": {
+                "p50_ns": 144200.0,
+                "p99_ns": 376100
+              },
+              "per_datagram": {
+                "poll_to_receive": {
+                  "p50_ns": 200.0,
+                  "p99_ns": 900
+                },
+                "guarded_receive": {
+                  "p50_ns": 1500.0,
+                  "p99_ns": 4200
+                },
+                "receive_to_send": {
+                  "p50_ns": 4800.0,
+                  "p99_ns": 11300
+                },
+                "send": {
+                  "p50_ns": 8700.0,
+                  "p99_ns": 24200
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 300.0,
+                  "p99_ns": 900
+                }
+              },
+              "spans_summed_per_operation": {
+                "poll_to_receive": {
+                  "p50_ns": 1300.0,
+                  "p99_ns": 3300
+                },
+                "guarded_receive": {
+                  "p50_ns": 7200.0,
+                  "p99_ns": 15400
+                },
+                "receive_to_send": {
+                  "p50_ns": 20500.0,
+                  "p99_ns": 42000
+                },
+                "send": {
+                  "p50_ns": 39400.0,
+                  "p99_ns": 91700
+                },
+                "send_to_poll_exit": {
+                  "p50_ns": 1300.0,
+                  "p99_ns": 3200
+                }
+              },
+              "client_top_one_percent": {
+                "operations": 21,
+                "min_client_ns": 376100,
+                "median_client_ns": 409500,
+                "median_sum_phase_ns": {
+                  "poll_to_receive": 2800,
+                  "guarded_receive": 13500,
+                  "receive_to_send": 34700,
+                  "send": 74400,
+                  "send_to_poll_exit": 2600
+                }
+              }
+            }
+          }
+        }
+      },
+      "source_comparison": {
+        "frozen": {
+          "median_delta_ns": -7000.0,
+          "p99_delta_ns": -39400,
+          "relative_rate_delta": 1.146466078694175e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9273590699347269,
+            "client": 0.9483180590686534
+          }
+        },
+        "disabled": {
+          "median_delta_ns": -6000.0,
+          "p99_delta_ns": -18100,
+          "relative_rate_delta": 6.927521006616644e-06,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9280268218479563,
+            "client": 0.9546386839702652
+          }
+        },
+        "timed": {
+          "median_delta_ns": -3900.0,
+          "p99_delta_ns": 1300,
+          "relative_rate_delta": 2.009952558168493e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9495022396665116,
+            "client": 0.9808194895802559
+          }
+        }
+      },
+      "disabled_effect": {
+        "original": {
+          "median_delta_ns": -2200.0,
+          "p99_delta_ns": -2100,
+          "relative_rate_delta": 9.549800220165494e-06,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9854228074466846,
+            "client": 0.9830358304907737
+          }
+        },
+        "current": {
+          "median_delta_ns": -1200.0,
+          "p99_delta_ns": 19200,
+          "relative_rate_delta": 8.842346355342201e-06,
+          "pacing_and_latency_guard": false,
+          "cycle_ratios": {
+            "server": 0.9861323685933272,
+            "client": 0.9895878524521384
+          }
+        }
+      },
+      "enabled_effect": {
+        "original": {
+          "median_delta_ns": -1000.0,
+          "p99_delta_ns": -28000,
+          "relative_rate_delta": 1.106227920488756e-05,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 0.9947841960769574,
+            "client": 0.9882692548144408
+          }
+        },
+        "current": {
+          "median_delta_ns": 1100.0,
+          "p99_delta_ns": -8600,
+          "relative_rate_delta": 2.109962333629589e-06,
+          "pacing_and_latency_guard": true,
+          "cycle_ratios": {
+            "server": 1.0178044426335255,
+            "client": 1.0153723731827649
+          }
+        }
+      }
+    }
+  }
+}
