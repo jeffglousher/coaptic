@@ -132,9 +132,12 @@ for actual stop or transfer conditions.
    [loss check](architecture/requirements/WINDOWS-PROTECTED-RESPONSE-RECOVERY-20261120.md)
    verifies exact retry and reply replay plus a fresh read across both
    runtimes, security modes and body sizes.
-9. Prepare an exact-source Linux CPU comparison at the original fixed
-   Service workload. Verify the historical AES lock selection and keep
-   optional profiling setup out of the clean CPU comparison.
+9. The [Linux C1 comparison](architecture/requirements/LINUX-SERVICE-CPU-20261120.md)
+   restores the historical AES lock and verifies all 24,000 fixed Service
+   reads. Both protections fail a pair's latency gate. Keep both CPU
+   ratios withheld. Companion #272 adds native group starts and #273
+   enforces latency guards in short runs. The separate fixed Service
+   C4 comparison uses the same sources, group overlap and the same guards.
 
 ## Blocked and deferred work
 
