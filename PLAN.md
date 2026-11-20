@@ -1,7 +1,7 @@
 # Project plan
 
-Updated 2026-11-19 after measuring accepted core `73093d8` and companion
-`76be9a0`. Production Rust remains `b875088`. Companion
+Updated 2026-11-19 after measuring accepted core `416ffc3` and companion
+`a5e49ed`. Production Rust remains `b875088`. Companion
 [#266](https://github.com/jeffglousher/coaptic-validation/pull/266) delivers the
 Windows process-cycle diagnostic.
 Current effort: **performance**, with reliability as an acceptance condition.
@@ -82,9 +82,12 @@ for actual stop or transfer conditions.
    in the pilot. Two independent endpoints also complete overlapping CON Calls
    in all selected cells. The Tokio path remains a priority after the
    same-runtime sync control. Existing staged receive does not earn adoption.
-2. Attribute the I/O and scheduling cost before choosing one adapter candidate.
-   Match runtime, capacities, payload, offered load and client. Keep CPU time,
-   cycles and latency separate. Require recovery, security and memory checks.
+2. The [Windows phase attribution](architecture/requirements/WINDOWS-UDP-PHASES-20261119.md)
+   records 282,080 verified reads and a further 256,000-read matched Windows
+   reactor screen. A smaller completion dequeue bound reduces small-read
+   server cycles. Four blockwise pairs miss the advancement gate, so retain
+   the default bound. Verify oversized receive refusal and same-process
+   reuse in the affected native fixtures before the next runtime screen.
 3. Reconcile peer speed and device evidence against that result. Keep the
    original #650 baseline and both 50% targets. For device work, separate live
    CPU attribution from end-to-end speed and preserve normal restoration.
