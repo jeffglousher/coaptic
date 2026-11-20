@@ -1,0 +1,3759 @@
+{
+  "schema": 1,
+  "core": "73093d875e089f10d43530e5ebef9895a75bf4e3",
+  "server_companion": "76be9a093c4c3282062bc1be509d1c2a7ca78d01",
+  "driver_companion": "9019751b09d53d0ef3f9fbed7b3a6f4bd5832c88",
+  "driver_tree": "e5fb800705da389271c48b608e57692808eedc52",
+  "files": {
+    "run_paced_peer.py": "9edba6cf607f136227d40d3bee713749b355d2a62962d472c953794252e2bbcd",
+    "run_paced_peer_reverse.py": "146ae14daff75a2f74d41d3c0a440ccaf8b08420922dce7eba379b990ce37f50",
+    "run_peer_ladder.py": "1526480769ca91856775d5d855d59077dc130d0e0140bfc704d6088c4e8bb133",
+    "peer-ladder-decision.txt": "123575ce03ce850e14f3abd67306ad149dc8fcb803f547644cb8c40f029e9738"
+  },
+  "windows": [
+    {
+      "window": "peer-paced-pilot-OSCORE-AES-CCM-16-64-128-4096-coaptic-async",
+      "raw_sha256": "f0e6cf38d1658af725fba353a173e8bd7c9f806eef640a2e36c9865c96882bfd",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-4096",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.14499253804615,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 714100,
+      "p50_ns": 1001800.0,
+      "p99_ns": 1533200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6533120,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 36344,
+              "created_seconds": 1795150660.8671727,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6533120,
+                "vms": 1208320,
+                "num_page_faults": 1650,
+                "peak_wset": 6533120,
+                "wset": 6533120,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.125,
+          "system_seconds": 0.1875,
+          "memory": {
+            "rss": 6537216,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 36344,
+              "created_seconds": 1795150660.8671727,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.125,
+              "system_seconds": 0.1875,
+              "memory": {
+                "rss": 6537216,
+                "vms": 1208320,
+                "num_page_faults": 1651,
+                "peak_wset": 6537216,
+                "wset": 6537216,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 9172,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.348224199959077,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-OSCORE-AES-CCM-16-64-128-4096-coaptic-mio",
+      "raw_sha256": "9306c02f8a8f5d69985fdeec0386f56fd285a30f8f38dc274c53a7c3242cbc76",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-4096",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.1471040791371,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 966100,
+      "p50_ns": 985600.0,
+      "p99_ns": 1542700,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6279168,
+            "vms": 1200128,
+            "private": 1200128
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 37344,
+              "created_seconds": 1795150656.0806696,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6279168,
+                "vms": 1200128,
+                "num_page_faults": 1585,
+                "peak_wset": 6279168,
+                "wset": 6279168,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1200128,
+                "peak_pagefile": 1220608,
+                "private": 1200128
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.09375,
+          "system_seconds": 0.15625,
+          "memory": {
+            "rss": 6279168,
+            "vms": 1200128,
+            "private": 1200128
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 37344,
+              "created_seconds": 1795150656.0806696,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.09375,
+              "system_seconds": 0.15625,
+              "memory": {
+                "rss": 6279168,
+                "vms": 1200128,
+                "num_page_faults": 1585,
+                "peak_wset": 6279168,
+                "wset": 6279168,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1200128,
+                "peak_pagefile": 1220608,
+                "private": 1200128
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.348084899946116,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-OSCORE-AES-CCM-16-64-128-4096-libcoap",
+      "raw_sha256": "e0c2d80459e001ff8ec5d2b87e4a0c24e55b1ba1cd71692741545c3094a26538",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-4096",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.0931416833839,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1007700,
+      "p50_ns": 1282900.0,
+      "p99_ns": 1767200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5799936,
+            "vms": 970752,
+            "private": 970752
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 33116,
+              "created_seconds": 1795150665.6219647,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5799936,
+                "vms": 970752,
+                "num_page_faults": 1485,
+                "peak_wset": 5804032,
+                "wset": 5799936,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 970752,
+                "peak_pagefile": 9445376,
+                "private": 970752
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.25,
+          "system_seconds": 0.296875,
+          "memory": {
+            "rss": 5844992,
+            "vms": 1015808,
+            "private": 1015808
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 33116,
+              "created_seconds": 1795150665.6219647,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.25,
+              "system_seconds": 0.296875,
+              "memory": {
+                "rss": 5844992,
+                "vms": 1015808,
+                "num_page_faults": 14432,
+                "peak_wset": 5849088,
+                "wset": 5844992,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 1015808,
+                "peak_pagefile": 9490432,
+                "private": 1015808
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.348491800017655,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-pilot-OSCORE-AES-CCM-16-64-128-64-coaptic-async",
+      "raw_sha256": "ea3e2b97397afd92581179ac8d536c43446de9c0cfbe85fbb014fe95970501d4",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-64",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2045245222571,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 634100,
+      "p50_ns": 251850.0,
+      "p99_ns": 492200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6479872,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 19548,
+              "created_seconds": 1795150651.3528056,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6479872,
+                "vms": 1208320,
+                "num_page_faults": 1637,
+                "peak_wset": 6479872,
+                "wset": 6479872,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6488064,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 19548,
+              "created_seconds": 1795150651.3528056,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6488064,
+                "vms": 1208320,
+                "num_page_faults": 1639,
+                "peak_wset": 6488064,
+                "wset": 6488064,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.330218899995089,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-OSCORE-AES-CCM-16-64-128-64-coaptic-mio",
+      "raw_sha256": "c61e48e4c2210298f89bd5f4891dda4e1ab13f82e1721ea7b1eab8f2501a693c",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-64",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2144048620447,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 657800,
+      "p50_ns": 240500.0,
+      "p99_ns": 362200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6246400,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 42788,
+              "created_seconds": 1795150646.6517646,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6246400,
+                "vms": 1204224,
+                "num_page_faults": 1580,
+                "peak_wset": 6246400,
+                "wset": 6246400,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.046875,
+          "memory": {
+            "rss": 6250496,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 42788,
+              "created_seconds": 1795150646.6517646,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.03125,
+              "system_seconds": 0.046875,
+              "memory": {
+                "rss": 6250496,
+                "vms": 1204224,
+                "num_page_faults": 1581,
+                "peak_wset": 6250496,
+                "wset": 6250496,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.306844500009902,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-OSCORE-AES-CCM-16-64-128-64-libcoap",
+      "raw_sha256": "52aebde47600f9441762fd8acc45147e30e698ddebb946bbb2cf31e8cafa1c5e",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-64",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2141946369697,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 698800,
+      "p50_ns": 317500.0,
+      "p99_ns": 488000,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 5775360,
+            "vms": 954368,
+            "private": 954368
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 44148,
+              "created_seconds": 1795150641.873485,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 5775360,
+                "vms": 954368,
+                "num_page_faults": 1469,
+                "peak_wset": 5779456,
+                "wset": 5775360,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 954368,
+                "peak_pagefile": 9424896,
+                "private": 954368
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.109375,
+          "system_seconds": 0.265625,
+          "memory": {
+            "rss": 5808128,
+            "vms": 987136,
+            "private": 987136
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 44148,
+              "created_seconds": 1795150641.873485,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.109375,
+              "system_seconds": 0.265625,
+              "memory": {
+                "rss": 5808128,
+                "vms": 987136,
+                "num_page_faults": 6328,
+                "peak_wset": 5812224,
+                "wset": 5808128,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 987136,
+                "peak_pagefile": 9465856,
+                "private": 987136
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.341548299998976,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-pilot-unprotected-4096-coaptic-async",
+      "raw_sha256": "5fabd27f0735e3fb983dac823eb7f3c14b6edfe3248dfb69c16638cc67485e93",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-unprotected-4096",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.19088104548666,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 631200,
+      "p50_ns": 422900.0,
+      "p99_ns": 686200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6402048,
+            "vms": 1212416,
+            "private": 1212416
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 42208,
+              "created_seconds": 1795150627.723007,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6402048,
+                "vms": 1212416,
+                "num_page_faults": 1619,
+                "peak_wset": 6402048,
+                "wset": 6402048,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1212416,
+                "peak_pagefile": 1232896,
+                "private": 1212416
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.046875,
+          "system_seconds": 0.03125,
+          "memory": {
+            "rss": 6406144,
+            "vms": 1212416,
+            "private": 1212416
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 42208,
+              "created_seconds": 1795150627.723007,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.046875,
+              "system_seconds": 0.03125,
+              "memory": {
+                "rss": 6406144,
+                "vms": 1212416,
+                "num_page_faults": 1620,
+                "peak_wset": 6406144,
+                "wset": 6406144,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1212416,
+                "peak_pagefile": 1232896,
+                "private": 1212416
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.321030699997209,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-unprotected-4096-coaptic-mio",
+      "raw_sha256": "c13bf43ddbfbc423b7432fbbe27b9348df206deae2269aacf5e3eb5c98efacb6",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-unprotected-4096",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.1801711175414,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 831800,
+      "p50_ns": 420150.0,
+      "p99_ns": 741800,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 6156288,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 36208,
+              "created_seconds": 1795150637.154528,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 6156288,
+                "vms": 1204224,
+                "num_page_faults": 1556,
+                "peak_wset": 6156288,
+                "wset": 6156288,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.125,
+          "system_seconds": 0.046875,
+          "memory": {
+            "rss": 6156288,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 36208,
+              "created_seconds": 1795150637.154528,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.125,
+              "system_seconds": 0.046875,
+              "memory": {
+                "rss": 6156288,
+                "vms": 1204224,
+                "num_page_faults": 1556,
+                "peak_wset": 6156288,
+                "wset": 6156288,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.31609789992217,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-unprotected-4096-libcoap",
+      "raw_sha256": "9a0e05b692d731fb9344d7472b34796f8c5a7153a3ef5790c49a4784ab9903bd",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-unprotected-4096",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.1972271984941,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 617200,
+      "p50_ns": 433200.0,
+      "p99_ns": 703000,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5660672,
+            "vms": 970752,
+            "private": 970752
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 15464,
+              "created_seconds": 1795150632.4365504,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5660672,
+                "vms": 970752,
+                "num_page_faults": 1433,
+                "peak_wset": 5660672,
+                "wset": 5660672,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 970752,
+                "peak_pagefile": 970752,
+                "private": 970752
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.046875,
+          "system_seconds": 0.046875,
+          "memory": {
+            "rss": 5693440,
+            "vms": 1011712,
+            "private": 1011712
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 15464,
+              "created_seconds": 1795150632.4365504,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.046875,
+              "system_seconds": 0.046875,
+              "memory": {
+                "rss": 5693440,
+                "vms": 1011712,
+                "num_page_faults": 1441,
+                "peak_wset": 5693440,
+                "wset": 5693440,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8496,
+                "nonpaged_pool": 8032,
+                "pagefile": 1011712,
+                "peak_pagefile": 1011712,
+                "private": 1011712
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.314206300070509,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-pilot-unprotected-64-coaptic-async",
+      "raw_sha256": "4dce1ab976f110dfa7c84b60a46e2bda381f3f8d54d0d86a70fc79845ef5ae27",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-unprotected-64",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.23178423204337,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 678300,
+      "p50_ns": 115700.0,
+      "p99_ns": 232400,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6361088,
+            "vms": 1212416,
+            "private": 1212416
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 17232,
+              "created_seconds": 1795150618.2230065,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6361088,
+                "vms": 1212416,
+                "num_page_faults": 1607,
+                "peak_wset": 6361088,
+                "wset": 6361088,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1212416,
+                "peak_pagefile": 1232896,
+                "private": 1212416
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.03125,
+          "memory": {
+            "rss": 6369280,
+            "vms": 1212416,
+            "private": 1212416
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 17232,
+              "created_seconds": 1795150618.2230065,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.03125,
+              "system_seconds": 0.03125,
+              "memory": {
+                "rss": 6369280,
+                "vms": 1212416,
+                "num_page_faults": 1609,
+                "peak_wset": 6369280,
+                "wset": 6369280,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1212416,
+                "peak_pagefile": 1232896,
+                "private": 1212416
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.331585200037807,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-unprotected-64-coaptic-mio",
+      "raw_sha256": "69b8c1338334f219d1af9c3e8b1aa5be37436570e49e4e84366d36a3a7e6e5e4",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-unprotected-64",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.23450740375057,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 628300,
+      "p50_ns": 112150.0,
+      "p99_ns": 256700,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 6111232,
+            "vms": 1187840,
+            "private": 1187840
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 14704,
+              "created_seconds": 1795150613.4923267,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 6111232,
+                "vms": 1187840,
+                "num_page_faults": 1546,
+                "peak_wset": 6111232,
+                "wset": 6111232,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1187840,
+                "peak_pagefile": 1208320,
+                "private": 1187840
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.078125,
+          "system_seconds": 0.078125,
+          "memory": {
+            "rss": 6115328,
+            "vms": 1187840,
+            "private": 1187840
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 14704,
+              "created_seconds": 1795150613.4923267,
+              "parent_pid": 10324,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.078125,
+              "system_seconds": 0.078125,
+              "memory": {
+                "rss": 6115328,
+                "vms": 1187840,
+                "num_page_faults": 1547,
+                "peak_wset": 6115328,
+                "wset": 6115328,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1187840,
+                "peak_pagefile": 1208320,
+                "private": 1187840
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.306393200065941,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-pilot-unprotected-64-libcoap",
+      "raw_sha256": "62319692a56280bbc282220bf1425db4a282d041a2eb4d75399489d9dbb03074",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-unprotected-64",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2348377910739,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 2156200,
+      "p50_ns": 115700.0,
+      "p99_ns": 168700,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 5644288,
+            "vms": 962560,
+            "private": 962560
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 16528,
+              "created_seconds": 1795150622.9637873,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 5644288,
+                "vms": 962560,
+                "num_page_faults": 1429,
+                "peak_wset": 5644288,
+                "wset": 5644288,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 962560,
+                "peak_pagefile": 962560,
+                "private": 962560
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 5656576,
+            "vms": 962560,
+            "private": 962560
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 16528,
+              "created_seconds": 1795150622.9637873,
+              "parent_pid": 10324,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 5656576,
+                "vms": 962560,
+                "num_page_faults": 1432,
+                "peak_wset": 5656576,
+                "wset": 5656576,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 962560,
+                "peak_pagefile": 962560,
+                "private": 962560
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.333873600000516,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-repeat-OSCORE-AES-CCM-16-64-128-4096-coaptic-async",
+      "raw_sha256": "bbbdec7a00c7e53dc96324c9a4bb1c66ccb41db736353cb77ba1f6ac7ca6396b",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-4096",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.0799659832009,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 653500,
+      "p50_ns": 972800.0,
+      "p99_ns": 1347000,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6533120,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 12340,
+              "created_seconds": 1795150755.8036213,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6533120,
+                "vms": 1208320,
+                "num_page_faults": 1649,
+                "peak_wset": 6533120,
+                "wset": 6533120,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.125,
+          "memory": {
+            "rss": 6537216,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 12340,
+              "created_seconds": 1795150755.8036213,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.03125,
+              "system_seconds": 0.125,
+              "memory": {
+                "rss": 6537216,
+                "vms": 1208320,
+                "num_page_faults": 1650,
+                "peak_wset": 6537216,
+                "wset": 6537216,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.324891899945214,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-OSCORE-AES-CCM-16-64-128-4096-coaptic-mio",
+      "raw_sha256": "17c53dc7d98d1a64e2cce1d2d2723671a2d5f1479052fa3a8d9de637a61a9335",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-4096",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.1470740570697,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1535800,
+      "p50_ns": 973900.0,
+      "p99_ns": 1462300,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6287360,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 15032,
+              "created_seconds": 1795150760.5192318,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6287360,
+                "vms": 1216512,
+                "num_page_faults": 1589,
+                "peak_wset": 6287360,
+                "wset": 6287360,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.046875,
+          "system_seconds": 0.0625,
+          "memory": {
+            "rss": 6287360,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 15032,
+              "created_seconds": 1795150760.5192318,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.046875,
+              "system_seconds": 0.0625,
+              "memory": {
+                "rss": 6287360,
+                "vms": 1216512,
+                "num_page_faults": 1589,
+                "peak_wset": 6287360,
+                "wset": 6287360,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.320764799951576,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-OSCORE-AES-CCM-16-64-128-4096-libcoap",
+      "raw_sha256": "f9819ecbf7b345a92155b712458a442dcf6545ae312a4cf752c0d9cd0e1cd6b5",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-4096",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.133984864832,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1344900,
+      "p50_ns": 1261400.0,
+      "p99_ns": 1661000,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 5795840,
+            "vms": 962560,
+            "private": 962560
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 9116,
+              "created_seconds": 1795150751.0768902,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 5795840,
+                "vms": 962560,
+                "num_page_faults": 1483,
+                "peak_wset": 5799936,
+                "wset": 5795840,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 962560,
+                "peak_pagefile": 9428992,
+                "private": 962560
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.171875,
+          "system_seconds": 0.390625,
+          "memory": {
+            "rss": 5853184,
+            "vms": 1024000,
+            "private": 1024000
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 9116,
+              "created_seconds": 1795150751.0768902,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.171875,
+              "system_seconds": 0.390625,
+              "memory": {
+                "rss": 5853184,
+                "vms": 1024000,
+                "num_page_faults": 14433,
+                "peak_wset": 5857280,
+                "wset": 5853184,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 9708,
+                "nonpaged_pool": 8032,
+                "pagefile": 1024000,
+                "peak_pagefile": 9498624,
+                "private": 1024000
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.336185400024988,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-repeat-OSCORE-AES-CCM-16-64-128-64-coaptic-async",
+      "raw_sha256": "d839093321946fdd45a886fdf21c3e28abc9f6cfe1c4379653bb08ef96022581",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-64",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.20941958403284,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 679000,
+      "p50_ns": 246950.0,
+      "p99_ns": 469500,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6483968,
+            "vms": 1200128,
+            "private": 1200128
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 7072,
+              "created_seconds": 1795150765.2280147,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6483968,
+                "vms": 1200128,
+                "num_page_faults": 1635,
+                "peak_wset": 6483968,
+                "wset": 6483968,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1200128,
+                "peak_pagefile": 1220608,
+                "private": 1200128
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6492160,
+            "vms": 1200128,
+            "private": 1200128
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 7072,
+              "created_seconds": 1795150765.2280147,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6492160,
+                "vms": 1200128,
+                "num_page_faults": 1637,
+                "peak_wset": 6492160,
+                "wset": 6492160,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1200128,
+                "peak_pagefile": 1220608,
+                "private": 1200128
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.309336000005715,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-OSCORE-AES-CCM-16-64-128-64-coaptic-mio",
+      "raw_sha256": "26e0e0225b721925428699739e665e09308962c8971f4a896b4a6e5285b606c7",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-64",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2154159476338,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 674900,
+      "p50_ns": 242350.0,
+      "p99_ns": 423200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6242304,
+            "vms": 1187840,
+            "private": 1187840
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 19788,
+              "created_seconds": 1795150769.9483235,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6242304,
+                "vms": 1187840,
+                "num_page_faults": 1578,
+                "peak_wset": 6242304,
+                "wset": 6242304,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1187840,
+                "peak_pagefile": 1208320,
+                "private": 1187840
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.0625,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 6246400,
+            "vms": 1187840,
+            "private": 1187840
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 19788,
+              "created_seconds": 1795150769.9483235,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0625,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 6246400,
+                "vms": 1187840,
+                "num_page_faults": 1579,
+                "peak_wset": 6246400,
+                "wset": 6246400,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1187840,
+                "peak_pagefile": 1208320,
+                "private": 1187840
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.3169476999901235,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-OSCORE-AES-CCM-16-64-128-64-libcoap",
+      "raw_sha256": "701f8bab9d77df3d6296466e0cafbe02cca9d0f4dc1586252ab0e31b7f1c4283",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-OSCORE-AES-CCM-16-64-128-64",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.20151146606094,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 789000,
+      "p50_ns": 326000.0,
+      "p99_ns": 593100,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5775360,
+            "vms": 958464,
+            "private": 958464
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 17356,
+              "created_seconds": 1795150774.668861,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5775360,
+                "vms": 958464,
+                "num_page_faults": 1468,
+                "peak_wset": 5779456,
+                "wset": 5775360,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 958464,
+                "peak_pagefile": 9424896,
+                "private": 958464
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.15625,
+          "system_seconds": 0.09375,
+          "memory": {
+            "rss": 5808128,
+            "vms": 991232,
+            "private": 991232
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 17356,
+              "created_seconds": 1795150774.668861,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.15625,
+              "system_seconds": 0.09375,
+              "memory": {
+                "rss": 5808128,
+                "vms": 991232,
+                "num_page_faults": 4710,
+                "peak_wset": 5812224,
+                "wset": 5808128,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 991232,
+                "peak_pagefile": 9465856,
+                "private": 991232
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.342917500063777,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-repeat-unprotected-4096-coaptic-async",
+      "raw_sha256": "84d727d843aa27c77d99632e02fb3c848f474a8ffc2150c5ef62a927d2659da1",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-unprotected-4096",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2050050138183,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 633000,
+      "p50_ns": 427150.0,
+      "p99_ns": 794900,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6406144,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 26892,
+              "created_seconds": 1795150788.9018047,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6406144,
+                "vms": 1216512,
+                "num_page_faults": 1620,
+                "peak_wset": 6406144,
+                "wset": 6406144,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.15625,
+          "system_seconds": 0.25,
+          "memory": {
+            "rss": 6410240,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 26892,
+              "created_seconds": 1795150788.9018047,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.15625,
+              "system_seconds": 0.25,
+              "memory": {
+                "rss": 6410240,
+                "vms": 1216512,
+                "num_page_faults": 1621,
+                "peak_wset": 6410240,
+                "wset": 6410240,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.340949899982661,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-unprotected-4096-coaptic-mio",
+      "raw_sha256": "39eba0943804f1946b9f83720cb6d40b940ba9055889163c0502c1a2c8c47df9",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-unprotected-4096",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.14709407178077,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 602400,
+      "p50_ns": 411000.0,
+      "p99_ns": 685300,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6144000,
+            "vms": 1191936,
+            "private": 1191936
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 41712,
+              "created_seconds": 1795150779.4758968,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6144000,
+                "vms": 1191936,
+                "num_page_faults": 1553,
+                "peak_wset": 6144000,
+                "wset": 6144000,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1191936,
+                "peak_pagefile": 1212416,
+                "private": 1191936
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.078125,
+          "system_seconds": 0.03125,
+          "memory": {
+            "rss": 6144000,
+            "vms": 1191936,
+            "private": 1191936
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 41712,
+              "created_seconds": 1795150779.4758968,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.078125,
+              "system_seconds": 0.03125,
+              "memory": {
+                "rss": 6144000,
+                "vms": 1191936,
+                "num_page_faults": 1553,
+                "peak_wset": 6144000,
+                "wset": 6144000,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1191936,
+                "peak_pagefile": 1212416,
+                "private": 1191936
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.316355000017211,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-unprotected-4096-libcoap",
+      "raw_sha256": "cc0111448fefba6f8bbf58f2f9aa1c3f360c87f84bd376fd77cde00df53bc66b",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-unprotected-4096",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.2058158459442,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 770100,
+      "p50_ns": 454700.0,
+      "p99_ns": 782800,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5660672,
+            "vms": 962560,
+            "private": 962560
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 41380,
+              "created_seconds": 1795150784.1827002,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5660672,
+                "vms": 962560,
+                "num_page_faults": 1431,
+                "peak_wset": 5660672,
+                "wset": 5660672,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 962560,
+                "peak_pagefile": 962560,
+                "private": 962560
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.171875,
+          "system_seconds": 0.125,
+          "memory": {
+            "rss": 5693440,
+            "vms": 995328,
+            "private": 995328
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 41380,
+              "created_seconds": 1795150784.1827002,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.171875,
+              "system_seconds": 0.125,
+              "memory": {
+                "rss": 5693440,
+                "vms": 995328,
+                "num_page_faults": 1439,
+                "peak_wset": 5693440,
+                "wset": 5693440,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 995328,
+                "peak_pagefile": 995328,
+                "private": 995328
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.320676599978469,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-paced-repeat-unprotected-64-coaptic-async",
+      "raw_sha256": "2a6bc535aaf738199451f07a774a22dc3230c6ed3cb77db5285256be9d9893af",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "paced-unprotected-64",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.234397274764,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 634700,
+      "p50_ns": 116850.0,
+      "p99_ns": 317000,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6352896,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 38048,
+              "created_seconds": 1795150798.3817368,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6352896,
+                "vms": 1204224,
+                "num_page_faults": 1605,
+                "peak_wset": 6352896,
+                "wset": 6352896,
+                "peak_paged_pool": 65720,
+                "paged_pool": 65624,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6361088,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 38048,
+              "created_seconds": 1795150798.3817368,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6361088,
+                "vms": 1204224,
+                "num_page_faults": 1607,
+                "peak_wset": 6361088,
+                "wset": 6361088,
+                "peak_paged_pool": 65720,
+                "paged_pool": 65624,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.329466300085187,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-unprotected-64-coaptic-mio",
+      "raw_sha256": "c1408becf92b61568085d50332d6ffcdfb219af7d07e8f2260c16bf73570bf23",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "paced-unprotected-64",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.23420705211174,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 632600,
+      "p50_ns": 110000.0,
+      "p99_ns": 167600,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6123520,
+            "vms": 1196032,
+            "private": 1196032
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 3628,
+              "created_seconds": 1795150803.1237063,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6123520,
+                "vms": 1196032,
+                "num_page_faults": 1548,
+                "peak_wset": 6123520,
+                "wset": 6123520,
+                "peak_paged_pool": 65720,
+                "paged_pool": 65624,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1196032,
+                "peak_pagefile": 1216512,
+                "private": 1196032
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6127616,
+            "vms": 1196032,
+            "private": 1196032
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 3628,
+              "created_seconds": 1795150803.1237063,
+              "parent_pid": 42636,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6127616,
+                "vms": 1196032,
+                "num_page_faults": 1549,
+                "peak_wset": 6127616,
+                "wset": 6127616,
+                "peak_paged_pool": 65720,
+                "paged_pool": 65624,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1196032,
+                "peak_pagefile": 1216512,
+                "private": 1196032
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.316350899985991,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-paced-repeat-unprotected-64-libcoap",
+      "raw_sha256": "56da9ef0b4db85451b3a78289d21b927a028f52f8ffcee8a92d0a699c8d0297c",
+      "peer": "libcoap",
+      "case": {
+        "id": "paced-unprotected-64",
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 64,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 400,
+      "achieved_rate": 400.23375652549873,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1213500,
+      "p50_ns": 113350.0,
+      "p99_ns": 165200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5644288,
+            "vms": 962560,
+            "private": 962560
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 17664,
+              "created_seconds": 1795150793.6603997,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5644288,
+                "vms": 962560,
+                "num_page_faults": 1428,
+                "peak_wset": 5644288,
+                "wset": 5644288,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 962560,
+                "peak_pagefile": 962560,
+                "private": 962560
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5644288,
+            "vms": 962560,
+            "private": 962560
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 17664,
+              "created_seconds": 1795150793.6603997,
+              "parent_pid": 42636,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5644288,
+                "vms": 962560,
+                "num_page_faults": 1428,
+                "peak_wset": 5644288,
+                "wset": 5644288,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 962560,
+                "peak_pagefile": 962560,
+                "private": 962560
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 4.325306799961254,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-ladder-600-1-coaptic-async",
+      "raw_sha256": "9fcbad7533d9182624f241de66fe2b39be05affacbe8193cda6454f79d04888e",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "protected-blockwise-600",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 600,
+      "achieved_rate": 600.1109605165996,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1065567,
+      "p50_ns": 931900.0,
+      "p99_ns": 1395400,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 6533120,
+            "vms": 1200128,
+            "private": 1200128
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 21672,
+              "created_seconds": 1795150938.5288584,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.03125,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 6533120,
+                "vms": 1200128,
+                "num_page_faults": 1648,
+                "peak_wset": 6533120,
+                "wset": 6533120,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1200128,
+                "peak_pagefile": 1220608,
+                "private": 1200128
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.1875,
+          "system_seconds": 0.15625,
+          "memory": {
+            "rss": 6537216,
+            "vms": 1200128,
+            "private": 1200128
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 21672,
+              "created_seconds": 1795150938.5288584,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.1875,
+              "system_seconds": 0.15625,
+              "memory": {
+                "rss": 6537216,
+                "vms": 1200128,
+                "num_page_faults": 1649,
+                "peak_wset": 6537216,
+                "wset": 6537216,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 9172,
+                "nonpaged_pool": 8392,
+                "pagefile": 1200128,
+                "peak_pagefile": 1220608,
+                "private": 1200128
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 3.0111294999951497,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-600-1-coaptic-mio",
+      "raw_sha256": "9ccc94a8f9cae5d0a3838f1c4c613b593d2de29316d405d0f6fa25e63cf7c4e8",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "protected-blockwise-600",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 600,
+      "achieved_rate": 600.1869807515159,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 747167,
+      "p50_ns": 882300.0,
+      "p99_ns": 1295600,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6279168,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 44240,
+              "created_seconds": 1795150935.123533,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6279168,
+                "vms": 1208320,
+                "num_page_faults": 1587,
+                "peak_wset": 6279168,
+                "wset": 6279168,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.09375,
+          "system_seconds": 0.109375,
+          "memory": {
+            "rss": 6279168,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 44240,
+              "created_seconds": 1795150935.123533,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.09375,
+              "system_seconds": 0.109375,
+              "memory": {
+                "rss": 6279168,
+                "vms": 1208320,
+                "num_page_faults": 1587,
+                "peak_wset": 6279168,
+                "wset": 6279168,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 10068,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.990755399921909,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-600-1-libcoap",
+      "raw_sha256": "038fc1742736eb1900b5b7f9e624d9569fbdce0ade389811da06507d112de48f",
+      "peer": "libcoap",
+      "case": {
+        "id": "protected-blockwise-600",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 600,
+      "achieved_rate": 600.1330870137089,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 912767,
+      "p50_ns": 1153300.0,
+      "p99_ns": 1597000,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5799936,
+            "vms": 970752,
+            "private": 970752
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 15464,
+              "created_seconds": 1795150941.9548428,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5799936,
+                "vms": 970752,
+                "num_page_faults": 1485,
+                "peak_wset": 5804032,
+                "wset": 5799936,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 970752,
+                "peak_pagefile": 9445376,
+                "private": 970752
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.171875,
+          "system_seconds": 0.375,
+          "memory": {
+            "rss": 5849088,
+            "vms": 1024000,
+            "private": 1024000
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 15464,
+              "created_seconds": 1795150941.9548428,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.171875,
+              "system_seconds": 0.375,
+              "memory": {
+                "rss": 5849088,
+                "vms": 1024000,
+                "num_page_faults": 14433,
+                "peak_wset": 5853184,
+                "wset": 5849088,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 1024000,
+                "peak_pagefile": 9498624,
+                "private": 1024000
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.9981516000116244,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-ladder-600-2-coaptic-async",
+      "raw_sha256": "646ae80f9b8db2479d6dbb541d5ed2e0dd64b020c5060b7f24a21c36137b218c",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "protected-blockwise-600",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 600,
+      "achieved_rate": 600.1804517550759,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 809534,
+      "p50_ns": 889600.0,
+      "p99_ns": 1385400,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.015625,
+          "memory": {
+            "rss": 6541312,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 31048,
+              "created_seconds": 1795150948.7487996,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.015625,
+              "memory": {
+                "rss": 6541312,
+                "vms": 1216512,
+                "num_page_faults": 1650,
+                "peak_wset": 6541312,
+                "wset": 6541312,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8840,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.078125,
+          "system_seconds": 0.078125,
+          "memory": {
+            "rss": 6545408,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 31048,
+              "created_seconds": 1795150948.7487996,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.078125,
+              "system_seconds": 0.078125,
+              "memory": {
+                "rss": 6545408,
+                "vms": 1216512,
+                "num_page_faults": 1651,
+                "peak_wset": 6545408,
+                "wset": 6545408,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.9916337999748066,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-600-2-coaptic-mio",
+      "raw_sha256": "c6d778d60b95167eb70b3d092a387dc243101a015827c204589a2d370735a3c8",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "protected-blockwise-600",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 600,
+      "achieved_rate": 600.1321190860168,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 892934,
+      "p50_ns": 892900.0,
+      "p99_ns": 1307800,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6275072,
+            "vms": 1196032,
+            "private": 1196032
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 7568,
+              "created_seconds": 1795150952.1735332,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6275072,
+                "vms": 1196032,
+                "num_page_faults": 1586,
+                "peak_wset": 6275072,
+                "wset": 6275072,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1196032,
+                "peak_pagefile": 1216512,
+                "private": 1196032
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.125,
+          "system_seconds": 0.046875,
+          "memory": {
+            "rss": 6275072,
+            "vms": 1196032,
+            "private": 1196032
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 7568,
+              "created_seconds": 1795150952.1735332,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.125,
+              "system_seconds": 0.046875,
+              "memory": {
+                "rss": 6275072,
+                "vms": 1196032,
+                "num_page_faults": 1586,
+                "peak_wset": 6275072,
+                "wset": 6275072,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 9172,
+                "nonpaged_pool": 8392,
+                "pagefile": 1196032,
+                "peak_pagefile": 1216512,
+                "private": 1196032
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.992765499977395,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-600-2-libcoap",
+      "raw_sha256": "78cf075d74c87ae81472de533e3637856c130ebad7bdf012a48959676d1535e1",
+      "peer": "libcoap",
+      "case": {
+        "id": "protected-blockwise-600",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 600,
+      "achieved_rate": 600.1184558817104,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 992000,
+      "p50_ns": 1188300.0,
+      "p99_ns": 1687100,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5791744,
+            "vms": 966656,
+            "private": 966656
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 30168,
+              "created_seconds": 1795150945.3503573,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5791744,
+                "vms": 966656,
+                "num_page_faults": 1483,
+                "peak_wset": 5795840,
+                "wset": 5791744,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 966656,
+                "peak_pagefile": 9441280,
+                "private": 966656
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.09375,
+          "system_seconds": 0.328125,
+          "memory": {
+            "rss": 5844992,
+            "vms": 1019904,
+            "private": 1019904
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 30168,
+              "created_seconds": 1795150945.3503573,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.09375,
+              "system_seconds": 0.328125,
+              "memory": {
+                "rss": 5844992,
+                "vms": 1019904,
+                "num_page_faults": 14432,
+                "peak_wset": 5849088,
+                "wset": 5844992,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 1019904,
+                "peak_pagefile": 9494528,
+                "private": 1019904
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.996102200006135,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-ladder-800-1-coaptic-async",
+      "raw_sha256": "36bbca3974b50a25070466ec2572243013349455da1ec94bf3d1266972cac90c",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "protected-blockwise-800",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 800,
+      "achieved_rate": 800.0081200824188,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1106600,
+      "p50_ns": 864400.0,
+      "p99_ns": 1247100,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6537216,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 21108,
+              "created_seconds": 1795150958.3609707,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6537216,
+                "vms": 1216512,
+                "num_page_faults": 1651,
+                "peak_wset": 6537216,
+                "wset": 6537216,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.171875,
+          "system_seconds": 0.203125,
+          "memory": {
+            "rss": 6541312,
+            "vms": 1216512,
+            "private": 1216512
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 21108,
+              "created_seconds": 1795150958.3609707,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.171875,
+              "system_seconds": 0.203125,
+              "memory": {
+                "rss": 6541312,
+                "vms": 1216512,
+                "num_page_faults": 1652,
+                "peak_wset": 6541312,
+                "wset": 6541312,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 9172,
+                "nonpaged_pool": 8392,
+                "pagefile": 1216512,
+                "peak_pagefile": 1236992,
+                "private": 1216512
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.3194783000508323,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-800-1-coaptic-mio",
+      "raw_sha256": "1a28cda32d7592e83b4e5952ca78f21da4beb750a9f9a2c499299ef4f0facd55",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "protected-blockwise-800",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 800,
+      "achieved_rate": 800.1750783071336,
+      "completed": 1600,
+      "pacing_missed": 3,
+      "maximum_lateness_ns": 2035000,
+      "p50_ns": 843800.0,
+      "p99_ns": 1187100,
+      "eligible": false,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6283264,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 42084,
+              "created_seconds": 1795150955.6141243,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6283264,
+                "vms": 1208320,
+                "num_page_faults": 1588,
+                "peak_wset": 6283264,
+                "wset": 6283264,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.078125,
+          "system_seconds": 0.109375,
+          "memory": {
+            "rss": 6283264,
+            "vms": 1208320,
+            "private": 1208320
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 42084,
+              "created_seconds": 1795150955.6141243,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.078125,
+              "system_seconds": 0.109375,
+              "memory": {
+                "rss": 6283264,
+                "vms": 1208320,
+                "num_page_faults": 1588,
+                "peak_wset": 6283264,
+                "wset": 6283264,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 9172,
+                "nonpaged_pool": 8392,
+                "pagefile": 1208320,
+                "peak_pagefile": 1228800,
+                "private": 1208320
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.3341998000396416,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-800-1-libcoap",
+      "raw_sha256": "63ef544539c143ea34297f26365e1e665b992c55a2d7b1e39186347dccbdb57c",
+      "peer": "libcoap",
+      "case": {
+        "id": "protected-blockwise-800",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 800,
+      "achieved_rate": 799.9151290048126,
+      "completed": 1600,
+      "pacing_missed": 141,
+      "maximum_lateness_ns": 3443600,
+      "p50_ns": 1130500.0,
+      "p99_ns": 1688600,
+      "eligible": false,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5791744,
+            "vms": 966656,
+            "private": 966656
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 45180,
+              "created_seconds": 1795150961.0774078,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.015625,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5791744,
+                "vms": 966656,
+                "num_page_faults": 1492,
+                "peak_wset": 5795840,
+                "wset": 5791744,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 966656,
+                "peak_pagefile": 9445376,
+                "private": 966656
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.1875,
+          "system_seconds": 0.3125,
+          "memory": {
+            "rss": 5840896,
+            "vms": 1015808,
+            "private": 1015808
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 45180,
+              "created_seconds": 1795150961.0774078,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.1875,
+              "system_seconds": 0.3125,
+              "memory": {
+                "rss": 5840896,
+                "vms": 1015808,
+                "num_page_faults": 20908,
+                "peak_wset": 5844992,
+                "wset": 5840896,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8812,
+                "nonpaged_pool": 8032,
+                "pagefile": 1015808,
+                "peak_pagefile": 9494528,
+                "private": 1015808
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.326333799981512,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    },
+    {
+      "window": "peer-ladder-800-2-coaptic-async",
+      "raw_sha256": "16f491e3ec7e446568c89b9f2d77a9882fbf6d5c76981737a236981f1ce7c7b2",
+      "peer": "coaptic-async",
+      "case": {
+        "id": "protected-blockwise-800",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 800,
+      "achieved_rate": 800.0561239370942,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 1151200,
+      "p50_ns": 894450.0,
+      "p99_ns": 1275200,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6529024,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 41632,
+              "created_seconds": 1795150966.5789123,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6529024,
+                "vms": 1204224,
+                "num_page_faults": 1647,
+                "peak_wset": 6529024,
+                "wset": 6529024,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.0625,
+          "system_seconds": 0.125,
+          "memory": {
+            "rss": 6533120,
+            "vms": 1204224,
+            "private": 1204224
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 41632,
+              "created_seconds": 1795150966.5789123,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0625,
+              "system_seconds": 0.125,
+              "memory": {
+                "rss": 6533120,
+                "vms": 1204224,
+                "num_page_faults": 1648,
+                "peak_wset": 6533120,
+                "wset": 6533120,
+                "peak_paged_pool": 57528,
+                "paged_pool": 57432,
+                "peak_nonpaged_pool": 8856,
+                "nonpaged_pool": 8392,
+                "pagefile": 1204224,
+                "peak_pagefile": 1224704,
+                "private": 1204224
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.3245346000185236,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-800-2-coaptic-mio",
+      "raw_sha256": "fde0b84d431d8350cc706d52676aa9b69e008f2c8504b501200a6cdc0de90fda",
+      "peer": "coaptic-mio",
+      "case": {
+        "id": "protected-blockwise-800",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 800,
+      "achieved_rate": 800.0093601095133,
+      "completed": 1600,
+      "pacing_missed": 0,
+      "maximum_lateness_ns": 857200,
+      "p50_ns": 934750.0,
+      "p99_ns": 1447500,
+      "eligible": true,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 6270976,
+            "vms": 1196032,
+            "private": 1196032
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 39596,
+              "created_seconds": 1795150969.301242,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 6270976,
+                "vms": 1196032,
+                "num_page_faults": 1585,
+                "peak_wset": 6270976,
+                "wset": 6270976,
+                "peak_paged_pool": 65720,
+                "paged_pool": 65624,
+                "peak_nonpaged_pool": 8392,
+                "nonpaged_pool": 8392,
+                "pagefile": 1196032,
+                "peak_pagefile": 1216512,
+                "private": 1196032
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.078125,
+          "system_seconds": 0.09375,
+          "memory": {
+            "rss": 6270976,
+            "vms": 1196032,
+            "private": 1196032
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 39596,
+              "created_seconds": 1795150969.301242,
+              "parent_pid": 24900,
+              "name": "baseline-bench-rust-server.exe",
+              "user_seconds": 0.078125,
+              "system_seconds": 0.09375,
+              "memory": {
+                "rss": 6270976,
+                "vms": 1196032,
+                "num_page_faults": 1585,
+                "peak_wset": 6270976,
+                "wset": 6270976,
+                "peak_paged_pool": 65720,
+                "paged_pool": 65624,
+                "peak_nonpaged_pool": 9172,
+                "nonpaged_pool": 8392,
+                "pagefile": 1196032,
+                "peak_pagefile": 1216512,
+                "private": 1196032
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.3563496000133455,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c"
+    },
+    {
+      "window": "peer-ladder-800-2-libcoap",
+      "raw_sha256": "324e579cadf34a49c53f2b37dafe75a3876c77ad181e948bb51ec7cc2d8c7c8b",
+      "peer": "libcoap",
+      "case": {
+        "id": "protected-blockwise-800",
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 4096,
+        "concurrency": 1,
+        "operations": 1600,
+        "warmup": 16,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "offered_rate": 800,
+      "achieved_rate": 800.0668455849486,
+      "completed": 1600,
+      "pacing_missed": 599,
+      "maximum_lateness_ns": 14039400,
+      "p50_ns": 1150550.0,
+      "p99_ns": 1723200,
+      "eligible": false,
+      "server_resources": {
+        "before": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.0,
+          "memory": {
+            "rss": 5799936,
+            "vms": 970752,
+            "private": 970752
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 8848,
+              "created_seconds": 1795150963.8074143,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.0,
+              "system_seconds": 0.0,
+              "memory": {
+                "rss": 5799936,
+                "vms": 970752,
+                "num_page_faults": 1484,
+                "peak_wset": 5804032,
+                "wset": 5799936,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 970752,
+                "peak_pagefile": 9437184,
+                "private": 970752
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "after": {
+          "user_seconds": 0.15625,
+          "system_seconds": 0.28125,
+          "memory": {
+            "rss": 5840896,
+            "vms": 1011712,
+            "private": 1011712
+          },
+          "threads": 4,
+          "processes": [
+            {
+              "pid": 8848,
+              "created_seconds": 1795150963.8074143,
+              "parent_pid": 24900,
+              "name": "bench-libcoap.exe",
+              "user_seconds": 0.15625,
+              "system_seconds": 0.28125,
+              "memory": {
+                "rss": 5840896,
+                "vms": 1011712,
+                "num_page_faults": 14430,
+                "peak_wset": 5844992,
+                "wset": 5840896,
+                "peak_paged_pool": 41432,
+                "paged_pool": 41392,
+                "peak_nonpaged_pool": 8032,
+                "nonpaged_pool": 8032,
+                "pagefile": 1011712,
+                "peak_pagefile": 9486336,
+                "private": 1011712
+              },
+              "threads": 4
+            }
+          ],
+          "scope": "root plus descendants, maximum 8; sequential snapshots with stable membership at both boundaries; short-lived processes between snapshots are unmeasured",
+          "memory_aggregation": "sum of current per-process rss/vms/private where available; shared pages may overlap; not simultaneous tree/system peak; individual peak fields retained only per process"
+        },
+        "driver_process_wall_seconds": 2.351621799985878,
+        "scope": "server process-tree CPU over driver startup, warmup, measured requests and driver exit; memory is before/after sequential process-tree snapshots, shared pages may overlap; per-process peak fields include startup and are not summed into a tree/system peak; platform granularity applies"
+      },
+      "driver_sha256": "f725ef18b93b5490fd70f1a02df7b1c3d437c22cc6345ec5f01d909a21b75a0d",
+      "server_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c"
+    }
+  ]
+}
