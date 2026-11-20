@@ -113,13 +113,18 @@ for actual stop or transfer conditions.
    compares current core with the original #650 source. Both protected
    4,096-byte pairs reduce server cycles, with inconsistent CPU-time
    ratios. The unprotected 4,096-byte pairs fail the p99 guard. Keep
-   the original matrix and both targets open. Compare per-datagram
-   App and send spans in the historical Mio fixture to localize the
-   unprotected blockwise tail before choosing another optimization.
+   the original matrix and both targets open. The
+   [tail follow-up](architecture/requirements/WINDOWS-MIO-TAIL-20261119.md)
+   reproduces the clean failure. The probe changes the tail and its
+   phase timings leave the cause open. Keep the current runtime settings.
 7. The synchronous standard UDP transport now reports oversized
    receives as InvalidData. The same App completes a 2,000-byte Block2
    read after that refusal. Preserve the fixed and allocated host
    recovery evidence with the async adapter proofs.
+8. Exercise 16 KiB blockwise reads from four independent endpoints at
+   the fixed Service pool bounds. Verify simultaneous client I/O
+   intervals, per-endpoint progress, matched protection and explicit
+   pacing before comparing latency or advancing the offered load.
 
 ## Blocked and deferred work
 
