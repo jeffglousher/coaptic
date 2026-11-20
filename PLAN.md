@@ -1,7 +1,7 @@
 # Project plan
 
-Updated 2026-11-19 after measuring accepted core `7c93123` and companion
-`3fbce2d`. Production Rust remains `b875088`. Companion
+Updated 2026-11-19 after measuring accepted core `c172c44` and companion
+`9019751`. Production Rust remains `b875088`. Companion
 [#266](https://github.com/jeffglousher/coaptic-validation/pull/266) delivers the
 Windows process-cycle diagnostic.
 Current effort: **performance**, with reliability as an acceptance condition.
@@ -91,13 +91,14 @@ for actual stop or transfer conditions.
    candidate on complete operations. Companion
    [#268](https://github.com/jeffglousher/coaptic-validation/pull/268)
    proves same-process oversized receive recovery in 12 Windows cells.
-   Next, test the async fixture's explicit yield after App waits that
-   already suspended. Keep the busy-loop budget, capacities and deadline
-   priority. Require measured improvement at matched load and retain
-   blockwise latency and recovery guards.
-3. Reconcile peer speed and device evidence against that result. Keep the
-   original #650 baseline and both 50% targets. For device work, separate live
-   CPU attribution from end-to-end speed and preserve normal restoration.
+   Resetting the async burst budget after a pending wait also misses the
+   gate. Retain the current Tokio scheduling policy.
+3. The [matched peer screen](architecture/requirements/WINDOWS-PACED-PEERS-20261119.md)
+   establishes a protected median latency advantage in these Windows cells
+   and a 600/s eligible rung for protected blockwise C1. The 800/s rung
+   misses the pacing guard. Next, extend matched loading to two independent
+   endpoints with verified overlap and a fixed burst shape. Keep the original
+   #650 baseline, both 50% targets and physical prerequisites.
 4. The [Tokio loopback tests](tools/coaptic-tokio/README.md) exercise body
    refusal and reuse, Call refusal and established OSCORE binding refusal.
    Keep #130 open for the remaining runtime/security cells and device

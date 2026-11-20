@@ -66,12 +66,22 @@ The receipt preserves raw time and cycle samples and all empty gate controls.
 The different workload and boundaries prevent computing a network residual
 or treating this check as the original #650 comparison.
 
-Keep both rejected cohorts and their guards. Further queue-bound tuning
-requires evidence of a distinct mechanism. The async fixture's extra root
-poll every 32 passes is directly observed. A bounded follow-up can test
-whether explicit yielding still costs cycles when the preceding App wait
-has already returned Pending. Keep the work budget for continuously ready
-ingress and recheck complete operations and recovery before adoption.
+## Async burst follow-up
+
+The phase probe observed one additional root poll every 32 replies. A private
+same-binary follow-up compares the fixed 32-pass counter with a counter reset
+after an App wait returns Pending. Both arms use the same future wrapper.
+Continuously ready passes still count toward a yield, including invalid
+datagram refusals. The selector leaves protocol and I/O capacity unchanged.
+
+Core main `c172c44` and companion `3fbce2d` supply the accepted source.
+Two reversed passes verify all 104,960 operations across both security modes
+and 64/4,096-byte responses at 800 offered starts/s. There are 58 missed start
+periods. All eight pairs miss the advancement gate. Unprotected server cycles
+increase by 2.4–10.1%. Protected server cycles range from 8.2% fewer to 2.9%
+more, with the largest reduction paired with +18.4 µs p99. The receipt keeps
+each pair and the distinct CPU, cycle, memory and latency measurements.
+Retain the fixed burst policy and both earlier queue-bound rejections.
 
 The original #650 CPU-time baseline, both 50% targets, peer speed and hardware
 gates remain open.
