@@ -42,6 +42,8 @@ impl coaptic::platform::AsyncTimer for Clock {
 ///
 /// Scratch needs one byte more than the largest Engine RX slot. Received bytes
 /// are copied once into that slot; there is no packet queue or growing buffer.
+/// Oversized datagrams are consumed with [`io::ErrorKind::InvalidData`] before
+/// copying any prefix.
 pub struct Udp<S> {
     socket: Async<UdpSocket>,
     scratch: S,
@@ -104,10 +106,20 @@ impl<S: AsMut<[u8]>> AsyncDatagramIo for Udp<S> {
             .as_mut()
             .get_mut(..required)
             .ok_or(io::ErrorKind::InvalidInput)?;
-        let (len, peer) = self
+        let received = self
             .socket
             .read_with(|socket| socket.recv_from(scratch))
-            .await?;
+            .await;
+        #[cfg(windows)]
+        let received = received.map_err(|error| {
+            const WSAEMSGSIZE: i32 = 10040;
+            // Winsock consumes datagrams larger than the guard buffer.
+            if error.raw_os_error() == Some(WSAEMSGSIZE) {
+                return io::ErrorKind::InvalidData.into();
+            }
+            error
+        });
+        let (len, peer) = received?;
         if len > buf.len() {
             return Err(io::ErrorKind::InvalidData.into());
         }
@@ -128,7 +140,9 @@ mod app_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use coaptic::storage::{Engine, EngineBuilder, Memory, MemoryProfile, profiles};
+    use coaptic::storage::{
+        DatagramIoError, Engine, EngineBuilder, Memory, MemoryProfile, profiles,
+    };
     use core::{future::Future, pin::pin, task::Poll};
     use std::time::Duration;
 
@@ -268,9 +282,19 @@ mod tests {
                 .await;
             }
             assert_eq!(engine.rx_occupied(), 0);
-            sender.send(destination, &[0; RX_BYTES + 1]).await.unwrap();
-            assert!(engine.recv_from_async(&mut receiver).await.is_err());
-            assert_eq!(engine.rx_occupied(), 0);
+            for size in [RX_BYTES + 1, RX_BYTES + 8] {
+                sender
+                    .send(destination, &[0; RX_BYTES + 8][..size])
+                    .await
+                    .unwrap();
+                let result = engine.recv_from_async(&mut receiver).await;
+                assert!(
+                    matches!(&result, Err(DatagramIoError::Io(error))
+                        if error.kind() == io::ErrorKind::InvalidData),
+                    "{result:?}"
+                );
+                assert_eq!(engine.rx_occupied(), 0);
+            }
             sender.send(destination, &[42; RX_BYTES]).await.unwrap();
             let rx = engine.recv_from_async(&mut receiver).await.unwrap();
             assert_eq!(engine.access_rx(rx).unwrap().as_bytes(), &[42; RX_BYTES]);

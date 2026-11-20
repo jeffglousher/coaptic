@@ -1,0 +1,2171 @@
+{
+  "schema": 1,
+  "accepted_core": "05fd7fbcfa9c1fe0c90b256203c6d86b2eafbd89",
+  "companion": "9019751b09d53d0ef3f9fbed7b3a6f4bd5832c88",
+  "server_core_rust": "b8750885f8bd10d2f5dd73c92807df00c7f2f0a8",
+  "runner_sha256": "723b554505312dd7a33b265edd35fb21a95fb63403705433544c1bbac8bddd86",
+  "source_sha256": {
+    "server.rs": "45ab5c1d761f8c73f5f0f58dbf4ec25ec2649f443c6ffd0846ffbcad3551d93a",
+    "server.toml": "bb13aa05733accac5035179126d991b6fd605231288778d9b57da04cdcac6399",
+    "prepare.py": "efb12e1aff91bd1174c2a8ce9ef1ca5ba19adced81fdf93c34455708ace7c8a0",
+    "run.py": "0d79b49c515786acfb4e04e6b4aa00c849f274b3e29b14178ea7816d6a46b990",
+    "native-before.lock": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+    "experiment.lock": "dfed73f350a28210f24c3872c974f1c325649ad28b329470681d4acb0a2e120b",
+    "accepted-async-host.lock": "3d9efa78ce6fcffbea5c09f45be2997dc8ab40afd5d8c949371b30b9d10d65eb"
+  },
+  "added_resolution": [
+    [
+      "async-io",
+      "2.6.0",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "456b8a8feb6f42d237746d4b3e9a178494627745c3c56c6ea55d92ba50d026fc"
+    ],
+    [
+      "coaptic-async-host",
+      "0.0.0",
+      null,
+      null
+    ],
+    [
+      "concurrent-queue",
+      "2.5.0",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
+    ],
+    [
+      "crossbeam-utils",
+      "0.8.23",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
+    ],
+    [
+      "fastrand",
+      "2.5.0",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+    ],
+    [
+      "futures-lite",
+      "2.6.1",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
+    ],
+    [
+      "hermit-abi",
+      "0.5.3",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
+    ],
+    [
+      "parking",
+      "2.2.1",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
+    ],
+    [
+      "polling",
+      "3.11.0",
+      "registry+https://github.com/rust-lang/crates.io-index",
+      "5d0e4f59085d47d8241c88ead0f274e8a0cb551f3625263c05eb8dd897c34218"
+    ]
+  ],
+  "gate": {
+    "server_cycle_ratio": 0.95,
+    "p50_delta_ns": 2000,
+    "p99_delta_ns": 10000,
+    "maximum_misses_per_window": 6,
+    "maximum_rate_delta": 0.005
+  },
+  "scores": {
+    "oscore-64-1": {
+      "advance": false,
+      "cycle_ratios": {
+        "server": 0.9413683776457308,
+        "client": 0.9831076099754645
+      },
+      "p50_delta_ns": -800.0,
+      "p99_delta_ns": -6600,
+      "misses": [
+        1,
+        9
+      ],
+      "rate_delta": 1.9538150324072134e-05,
+      "accounting": true
+    },
+    "oscore-64-2": {
+      "advance": true,
+      "cycle_ratios": {
+        "server": 0.9362720133729137,
+        "client": 0.9920221099366555
+      },
+      "p50_delta_ns": -100.0,
+      "p99_delta_ns": -1800,
+      "misses": [
+        1,
+        3
+      ],
+      "rate_delta": 2.9454619365543167e-05,
+      "accounting": true
+    },
+    "oscore-4096-1": {
+      "advance": false,
+      "cycle_ratios": {
+        "server": 1.114888333041677,
+        "client": 1.197594668950338
+      },
+      "p50_delta_ns": 25900.0,
+      "p99_delta_ns": 141700,
+      "misses": [
+        7,
+        6
+      ],
+      "rate_delta": 5.744138719232517e-06,
+      "accounting": true
+    },
+    "oscore-4096-2": {
+      "advance": false,
+      "cycle_ratios": {
+        "server": 1.052356498457063,
+        "client": 1.1180792972336067
+      },
+      "p50_delta_ns": 15200.0,
+      "p99_delta_ns": 16100,
+      "misses": [
+        1,
+        1
+      ],
+      "rate_delta": 1.4513443632124812e-05,
+      "accounting": true
+    },
+    "unprotected-64-1": {
+      "advance": true,
+      "cycle_ratios": {
+        "server": 0.9281463040503387,
+        "client": 0.9838421820746921
+      },
+      "p50_delta_ns": -300.0,
+      "p99_delta_ns": -3400,
+      "misses": [
+        4,
+        1
+      ],
+      "rate_delta": 2.8612757645651854e-05,
+      "accounting": true
+    },
+    "unprotected-64-2": {
+      "advance": true,
+      "cycle_ratios": {
+        "server": 0.9053750115633875,
+        "client": 0.9659835298641211
+      },
+      "p50_delta_ns": -700.0,
+      "p99_delta_ns": -24300,
+      "misses": [
+        3,
+        1
+      ],
+      "rate_delta": 4.015094266351937e-05,
+      "accounting": true
+    },
+    "unprotected-4096-1": {
+      "advance": false,
+      "cycle_ratios": {
+        "server": 0.9796465739932305,
+        "client": 1.0212391131094931
+      },
+      "p50_delta_ns": 200.0,
+      "p99_delta_ns": 30900,
+      "misses": [
+        1,
+        2
+      ],
+      "rate_delta": 1.4696683922066356e-05,
+      "accounting": true
+    },
+    "unprotected-4096-2": {
+      "advance": false,
+      "cycle_ratios": {
+        "server": 0.9994979804589412,
+        "client": 1.0452340472029995
+      },
+      "p50_delta_ns": 1300.0,
+      "p99_delta_ns": 37000,
+      "misses": [
+        3,
+        2
+      ],
+      "rate_delta": 5.544528970813367e-05,
+      "accounting": true
+    }
+  },
+  "windows": [
+    {
+      "window": "reactor-1-coaptic-async-oscore-4096-async-io",
+      "raw_sha256": "3532f86f0ebcb62dce4ed96e9074f2bff86b223404dc44a15bae51d068435cdf",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 4096,
+      "mode": "async-io",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199662700,
+      "achieved_ops_per_second": 800.0329086707433,
+      "requested_operations_per_second": 800,
+      "missed": 6,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 161700.0,
+      "p99_ns": 444200,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 1.125,
+          "total_seconds": 1.125,
+          "ns_per_verified_operation": 171493.9024390244
+        },
+        "server": {
+          "user_seconds": 0.21875,
+          "system_seconds": 0.765625,
+          "total_seconds": 0.984375,
+          "ns_per_verified_operation": 150057.16463414635
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 4095705960,
+          "cycles_per_verified_operation": 624345.4207317074
+        },
+        "server": {
+          "cycles": 3208061500,
+          "cycles_per_verified_operation": 489033.76524390245
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6651904,
+            "vms": 1388544,
+            "num_page_faults": 1679,
+            "peak_wset": 6651904,
+            "wset": 6651904,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1388544,
+            "peak_pagefile": 1404928,
+            "private": 1388544
+          },
+          "client": {
+            "rss": 5275648,
+            "vms": 913408,
+            "num_page_faults": 1334,
+            "peak_wset": 5275648,
+            "wset": 5275648,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 913408,
+            "peak_pagefile": 917504,
+            "private": 913408
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6660096,
+            "vms": 1396736,
+            "num_page_faults": 1681,
+            "peak_wset": 6660096,
+            "wset": 6660096,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 10204,
+            "nonpaged_pool": 8528,
+            "pagefile": 1396736,
+            "peak_pagefile": 1404928,
+            "private": 1396736
+          },
+          "client": {
+            "rss": 5337088,
+            "vms": 925696,
+            "num_page_faults": 1349,
+            "peak_wset": 5337088,
+            "wset": 5337088,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 925696,
+            "peak_pagefile": 925696,
+            "private": 925696
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-oscore-4096-tokio",
+      "raw_sha256": "38df56a639e1535ca7c0362763344da3d19e24dc863ecbb2ba5fd58681ab5c25",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 4096,
+      "mode": "tokio",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199615600,
+      "achieved_ops_per_second": 800.037504197148,
+      "requested_operations_per_second": 800,
+      "missed": 7,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 135800.0,
+      "p99_ns": 302500,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 1.375,
+          "total_seconds": 1.375,
+          "ns_per_verified_operation": 209603.65853658537
+        },
+        "server": {
+          "user_seconds": 0.328125,
+          "system_seconds": 0.90625,
+          "total_seconds": 1.234375,
+          "ns_per_verified_operation": 188166.92073170733
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 3419943380,
+          "cycles_per_verified_operation": 521332.8323170732
+        },
+        "server": {
+          "cycles": 2877473380,
+          "cycles_per_verified_operation": 438639.23475609755
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6582272,
+            "vms": 1261568,
+            "num_page_faults": 1662,
+            "peak_wset": 6582272,
+            "wset": 6582272,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1261568,
+            "peak_pagefile": 1282048,
+            "private": 1261568
+          },
+          "client": {
+            "rss": 5275648,
+            "vms": 905216,
+            "num_page_faults": 1333,
+            "peak_wset": 5275648,
+            "wset": 5275648,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 909312,
+            "private": 905216
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6582272,
+            "vms": 1261568,
+            "num_page_faults": 1662,
+            "peak_wset": 6582272,
+            "wset": 6582272,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 10068,
+            "nonpaged_pool": 8392,
+            "pagefile": 1261568,
+            "peak_pagefile": 1282048,
+            "private": 1261568
+          },
+          "client": {
+            "rss": 5328896,
+            "vms": 905216,
+            "num_page_faults": 1346,
+            "peak_wset": 5328896,
+            "wset": 5328896,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 909312,
+            "private": 905216
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-oscore-64-async-io",
+      "raw_sha256": "35a4c1464517358d2b4ea24ae4823b436157d6732a154b97622c8c4a44dff2bd",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 64,
+      "mode": "async-io",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199343200,
+      "achieved_ops_per_second": 800.064083181687,
+      "requested_operations_per_second": 800,
+      "missed": 9,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 56600.0,
+      "p99_ns": 84000,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.359375,
+          "total_seconds": 0.359375,
+          "ns_per_verified_operation": 54782.7743902439
+        },
+        "server": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.21875,
+          "total_seconds": 0.25,
+          "ns_per_verified_operation": 38109.756097560974
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1398712400,
+          "cycles_per_verified_operation": 213218.3536585366
+        },
+        "server": {
+          "cycles": 946925840,
+          "cycles_per_verified_operation": 144348.4512195122
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6615040,
+            "vms": 1384448,
+            "num_page_faults": 1672,
+            "peak_wset": 6615040,
+            "wset": 6615040,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1384448,
+            "peak_pagefile": 1404928,
+            "private": 1384448
+          },
+          "client": {
+            "rss": 5222400,
+            "vms": 876544,
+            "num_page_faults": 1318,
+            "peak_wset": 5222400,
+            "wset": 5222400,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 876544,
+            "peak_pagefile": 880640,
+            "private": 876544
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6623232,
+            "vms": 1392640,
+            "num_page_faults": 1674,
+            "peak_wset": 6623232,
+            "wset": 6623232,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1392640,
+            "peak_pagefile": 1404928,
+            "private": 1392640
+          },
+          "client": {
+            "rss": 5283840,
+            "vms": 888832,
+            "num_page_faults": 1333,
+            "peak_wset": 5283840,
+            "wset": 5283840,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 888832,
+            "peak_pagefile": 888832,
+            "private": 888832
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-oscore-64-tokio",
+      "raw_sha256": "76123a1f42bd4dc358f5855313451f0a2db2f71befcae6d02eae38a63a968c36",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 64,
+      "mode": "tokio",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199183000,
+      "achieved_ops_per_second": 800.079715259435,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 57400.0,
+      "p99_ns": 90600,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.109375,
+          "total_seconds": 0.109375,
+          "ns_per_verified_operation": 16673.018292682926
+        },
+        "server": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.109375,
+          "total_seconds": 0.125,
+          "ns_per_verified_operation": 19054.878048780487
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1422745980,
+          "cycles_per_verified_operation": 216882.00914634147
+        },
+        "server": {
+          "cycles": 1005903600,
+          "cycles_per_verified_operation": 153338.96341463414
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6545408,
+            "vms": 1261568,
+            "num_page_faults": 1654,
+            "peak_wset": 6545408,
+            "wset": 6545408,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1261568,
+            "peak_pagefile": 1282048,
+            "private": 1261568
+          },
+          "client": {
+            "rss": 5222400,
+            "vms": 880640,
+            "num_page_faults": 1319,
+            "peak_wset": 5222400,
+            "wset": 5222400,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 880640,
+            "peak_pagefile": 884736,
+            "private": 880640
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6545408,
+            "vms": 1261568,
+            "num_page_faults": 1654,
+            "peak_wset": 6545408,
+            "wset": 6545408,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 9172,
+            "nonpaged_pool": 8392,
+            "pagefile": 1261568,
+            "peak_pagefile": 1282048,
+            "private": 1261568
+          },
+          "client": {
+            "rss": 5287936,
+            "vms": 892928,
+            "num_page_faults": 1335,
+            "peak_wset": 5287936,
+            "wset": 5287936,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 7148,
+            "nonpaged_pool": 6368,
+            "pagefile": 892928,
+            "peak_pagefile": 892928,
+            "private": 892928
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-unprotected-4096-async-io",
+      "raw_sha256": "7ab3a958243d6f7ba453956682fc0e4dd6cc31112ff35f6b74dafd1ad042243b",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 4096,
+      "mode": "async-io",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199128500,
+      "achieved_ops_per_second": 800.0850334276381,
+      "requested_operations_per_second": 800,
+      "missed": 2,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 117700.0,
+      "p99_ns": 330600,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 1.171875,
+          "total_seconds": 1.171875,
+          "ns_per_verified_operation": 178639.48170731709
+        },
+        "server": {
+          "user_seconds": 0.203125,
+          "system_seconds": 0.703125,
+          "total_seconds": 0.90625,
+          "ns_per_verified_operation": 138147.86585365853
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 2980489640,
+          "cycles_per_verified_operation": 454342.93292682926
+        },
+        "server": {
+          "cycles": 2397640220,
+          "cycles_per_verified_operation": 365493.93597560975
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6533120,
+            "vms": 1376256,
+            "num_page_faults": 1649,
+            "peak_wset": 6533120,
+            "wset": 6533120,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1376256,
+            "peak_pagefile": 1396736,
+            "private": 1376256
+          },
+          "client": {
+            "rss": 5193728,
+            "vms": 909312,
+            "num_page_faults": 1313,
+            "peak_wset": 5193728,
+            "wset": 5193728,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 909312,
+            "peak_pagefile": 913408,
+            "private": 909312
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6541312,
+            "vms": 1384448,
+            "num_page_faults": 1651,
+            "peak_wset": 6541312,
+            "wset": 6541312,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 10204,
+            "nonpaged_pool": 8528,
+            "pagefile": 1384448,
+            "peak_pagefile": 1396736,
+            "private": 1384448
+          },
+          "client": {
+            "rss": 5255168,
+            "vms": 921600,
+            "num_page_faults": 1328,
+            "peak_wset": 5255168,
+            "wset": 5255168,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 921600,
+            "peak_pagefile": 921600,
+            "private": 921600
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-unprotected-4096-tokio",
+      "raw_sha256": "430f3b63782aad4e20364465c08e64cb4ac481ef46dd37838eb8d8e84d63e125",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 4096,
+      "mode": "tokio",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199249000,
+      "achieved_ops_per_second": 800.0732750036009,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 117500.0,
+      "p99_ns": 299700,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.921875,
+          "total_seconds": 0.953125,
+          "ns_per_verified_operation": 145293.44512195123
+        },
+        "server": {
+          "user_seconds": 0.359375,
+          "system_seconds": 0.5625,
+          "total_seconds": 0.921875,
+          "ns_per_verified_operation": 140529.7256097561
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 2918503220,
+          "cycles_per_verified_operation": 444893.78353658534
+        },
+        "server": {
+          "cycles": 2447454300,
+          "cycles_per_verified_operation": 373087.5457317073
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6467584,
+            "vms": 1253376,
+            "num_page_faults": 1633,
+            "peak_wset": 6467584,
+            "wset": 6467584,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1253376,
+            "peak_pagefile": 1273856,
+            "private": 1253376
+          },
+          "client": {
+            "rss": 5201920,
+            "vms": 909312,
+            "num_page_faults": 1314,
+            "peak_wset": 5201920,
+            "wset": 5201920,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 909312,
+            "peak_pagefile": 913408,
+            "private": 909312
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6467584,
+            "vms": 1253376,
+            "num_page_faults": 1633,
+            "peak_wset": 6467584,
+            "wset": 6467584,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 10068,
+            "nonpaged_pool": 8392,
+            "pagefile": 1253376,
+            "peak_pagefile": 1273856,
+            "private": 1253376
+          },
+          "client": {
+            "rss": 5263360,
+            "vms": 921600,
+            "num_page_faults": 1329,
+            "peak_wset": 5263360,
+            "wset": 5263360,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 921600,
+            "peak_pagefile": 921600,
+            "private": 921600
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-unprotected-64-async-io",
+      "raw_sha256": "36debbd0f23c24e0f6c58a2da7265571720f6f9881e187a18e8c90affb18802b",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 64,
+      "mode": "async-io",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199139800,
+      "achieved_ops_per_second": 800.0839307557605,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 52400.0,
+      "p99_ns": 83200,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.390625,
+          "total_seconds": 0.390625,
+          "ns_per_verified_operation": 59546.493902439026
+        },
+        "server": {
+          "user_seconds": 0.09375,
+          "system_seconds": 0.28125,
+          "total_seconds": 0.375,
+          "ns_per_verified_operation": 57164.634146341465
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1293633700,
+          "cycles_per_verified_operation": 197200.25914634147
+        },
+        "server": {
+          "cycles": 886676820,
+          "cycles_per_verified_operation": 135164.1493902439
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6483968,
+            "vms": 1363968,
+            "num_page_faults": 1639,
+            "peak_wset": 6483968,
+            "wset": 6483968,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1363968,
+            "peak_pagefile": 1384448,
+            "private": 1363968
+          },
+          "client": {
+            "rss": 5136384,
+            "vms": 880640,
+            "num_page_faults": 1299,
+            "peak_wset": 5136384,
+            "wset": 5136384,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 880640,
+            "peak_pagefile": 884736,
+            "private": 880640
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6492160,
+            "vms": 1372160,
+            "num_page_faults": 1641,
+            "peak_wset": 6492160,
+            "wset": 6492160,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1372160,
+            "peak_pagefile": 1384448,
+            "private": 1372160
+          },
+          "client": {
+            "rss": 5197824,
+            "vms": 892928,
+            "num_page_faults": 1314,
+            "peak_wset": 5197824,
+            "wset": 5197824,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 892928,
+            "peak_pagefile": 892928,
+            "private": 892928
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-1-coaptic-async-unprotected-64-tokio",
+      "raw_sha256": "ed2d6fbe38e14ca12b3e263014cafd44ded627a030f818479c9addd1ec07748f",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 64,
+      "mode": "tokio",
+      "round": "1",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199374400,
+      "achieved_ops_per_second": 800.0610388031555,
+      "requested_operations_per_second": 800,
+      "missed": 4,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 52700.0,
+      "p99_ns": 86600,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.15625,
+          "system_seconds": 0.109375,
+          "total_seconds": 0.265625,
+          "ns_per_verified_operation": 40491.615853658535
+        },
+        "server": {
+          "user_seconds": 0.078125,
+          "system_seconds": 0.1875,
+          "total_seconds": 0.265625,
+          "ns_per_verified_operation": 40491.615853658535
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1314879280,
+          "cycles_per_verified_operation": 200438.91463414635
+        },
+        "server": {
+          "cycles": 955320100,
+          "cycles_per_verified_operation": 145628.06402439025
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6430720,
+            "vms": 1249280,
+            "num_page_faults": 1625,
+            "peak_wset": 6430720,
+            "wset": 6430720,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1249280,
+            "peak_pagefile": 1269760,
+            "private": 1249280
+          },
+          "client": {
+            "rss": 5144576,
+            "vms": 892928,
+            "num_page_faults": 1301,
+            "peak_wset": 5144576,
+            "wset": 5144576,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 892928,
+            "peak_pagefile": 897024,
+            "private": 892928
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6430720,
+            "vms": 1249280,
+            "num_page_faults": 1625,
+            "peak_wset": 6430720,
+            "wset": 6430720,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 9172,
+            "nonpaged_pool": 8392,
+            "pagefile": 1249280,
+            "peak_pagefile": 1269760,
+            "private": 1249280
+          },
+          "client": {
+            "rss": 5206016,
+            "vms": 905216,
+            "num_page_faults": 1316,
+            "peak_wset": 5206016,
+            "wset": 5206016,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 7148,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 905216,
+            "private": 905216
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-oscore-4096-async-io",
+      "raw_sha256": "55cce2e793d330ac6752a920533a4d1df108c3150c7d1fbbf4b908a26c49f4ef",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 4096,
+      "mode": "async-io",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199294600,
+      "achieved_ops_per_second": 800.068825432861,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 159200.0,
+      "p99_ns": 390900,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.046875,
+          "system_seconds": 1.21875,
+          "total_seconds": 1.265625,
+          "ns_per_verified_operation": 192930.64024390245
+        },
+        "server": {
+          "user_seconds": 0.203125,
+          "system_seconds": 0.703125,
+          "total_seconds": 0.90625,
+          "ns_per_verified_operation": 138147.86585365853
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 4017071100,
+          "cycles_per_verified_operation": 612358.3993902439
+        },
+        "server": {
+          "cycles": 3150193840,
+          "cycles_per_verified_operation": 480212.4756097561
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6656000,
+            "vms": 1396736,
+            "num_page_faults": 1681,
+            "peak_wset": 6656000,
+            "wset": 6656000,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1396736,
+            "peak_pagefile": 1417216,
+            "private": 1396736
+          },
+          "client": {
+            "rss": 5275648,
+            "vms": 905216,
+            "num_page_faults": 1333,
+            "peak_wset": 5275648,
+            "wset": 5275648,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 909312,
+            "private": 905216
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6664192,
+            "vms": 1404928,
+            "num_page_faults": 1683,
+            "peak_wset": 6664192,
+            "wset": 6664192,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1404928,
+            "peak_pagefile": 1417216,
+            "private": 1404928
+          },
+          "client": {
+            "rss": 5337088,
+            "vms": 917504,
+            "num_page_faults": 1348,
+            "peak_wset": 5337088,
+            "wset": 5337088,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 917504,
+            "peak_pagefile": 917504,
+            "private": 917504
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-oscore-4096-tokio",
+      "raw_sha256": "066886e5eff689ddd94c89f08299a0bb3eec98f742e9222b8c5fd84f64f95e2c",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 4096,
+      "mode": "tokio",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199175600,
+      "achieved_ops_per_second": 800.0804373551897,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 144000.0,
+      "p99_ns": 374800,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.6875,
+          "total_seconds": 0.71875,
+          "ns_per_verified_operation": 109565.5487804878
+        },
+        "server": {
+          "user_seconds": 0.125,
+          "system_seconds": 0.4375,
+          "total_seconds": 0.5625,
+          "ns_per_verified_operation": 85746.9512195122
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 3592832020,
+          "cycles_per_verified_operation": 547687.8079268293
+        },
+        "server": {
+          "cycles": 2993466420,
+          "cycles_per_verified_operation": 456321.1006097561
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6586368,
+            "vms": 1261568,
+            "num_page_faults": 1661,
+            "peak_wset": 6586368,
+            "wset": 6586368,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1261568,
+            "peak_pagefile": 1282048,
+            "private": 1261568
+          },
+          "client": {
+            "rss": 5275648,
+            "vms": 901120,
+            "num_page_faults": 1332,
+            "peak_wset": 5275648,
+            "wset": 5275648,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 901120,
+            "peak_pagefile": 905216,
+            "private": 901120
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6586368,
+            "vms": 1261568,
+            "num_page_faults": 1661,
+            "peak_wset": 6586368,
+            "wset": 6586368,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 9172,
+            "nonpaged_pool": 8392,
+            "pagefile": 1261568,
+            "peak_pagefile": 1282048,
+            "private": 1261568
+          },
+          "client": {
+            "rss": 5337088,
+            "vms": 913408,
+            "num_page_faults": 1347,
+            "peak_wset": 5337088,
+            "wset": 5337088,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 913408,
+            "peak_pagefile": 913408,
+            "private": 913408
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-oscore-64-async-io",
+      "raw_sha256": "3822ecfbdbbc1e40da610bb19990695456a53afa2d42934f87f838307d3e90e1",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 64,
+      "mode": "async-io",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199053500,
+      "achieved_ops_per_second": 800.0923521233274,
+      "requested_operations_per_second": 800,
+      "missed": 3,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 56600.0,
+      "p99_ns": 84500,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.359375,
+          "total_seconds": 0.359375,
+          "ns_per_verified_operation": 54782.7743902439
+        },
+        "server": {
+          "user_seconds": 0.015625,
+          "system_seconds": 0.25,
+          "total_seconds": 0.265625,
+          "ns_per_verified_operation": 40491.615853658535
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1384301500,
+          "cycles_per_verified_operation": 211021.57012195123
+        },
+        "server": {
+          "cycles": 931984880,
+          "cycles_per_verified_operation": 142070.86585365853
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6615040,
+            "vms": 1380352,
+            "num_page_faults": 1671,
+            "peak_wset": 6615040,
+            "wset": 6615040,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1380352,
+            "peak_pagefile": 1396736,
+            "private": 1380352
+          },
+          "client": {
+            "rss": 5226496,
+            "vms": 892928,
+            "num_page_faults": 1322,
+            "peak_wset": 5226496,
+            "wset": 5226496,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 892928,
+            "peak_pagefile": 897024,
+            "private": 892928
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6623232,
+            "vms": 1388544,
+            "num_page_faults": 1673,
+            "peak_wset": 6623232,
+            "wset": 6623232,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1388544,
+            "peak_pagefile": 1396736,
+            "private": 1388544
+          },
+          "client": {
+            "rss": 5287936,
+            "vms": 905216,
+            "num_page_faults": 1337,
+            "peak_wset": 5287936,
+            "wset": 5287936,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 905216,
+            "private": 905216
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-oscore-64-tokio",
+      "raw_sha256": "99d03fc2ebdf5d20b3747cdc0c0cb4cf7fad83227a3651224c7744fd12793668",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "bytes": 64,
+      "mode": "tokio",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8198812000,
+      "achieved_ops_per_second": 800.1159192331767,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 56700.0,
+      "p99_ns": 86300,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.234375,
+          "total_seconds": 0.234375,
+          "ns_per_verified_operation": 35727.89634146341
+        },
+        "server": {
+          "user_seconds": 0.03125,
+          "system_seconds": 0.171875,
+          "total_seconds": 0.203125,
+          "ns_per_verified_operation": 30964.176829268294
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1395434120,
+          "cycles_per_verified_operation": 212718.61585365853
+        },
+        "server": {
+          "cycles": 995421060,
+          "cycles_per_verified_operation": 151741.01524390245
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6541312,
+            "vms": 1257472,
+            "num_page_faults": 1653,
+            "peak_wset": 6541312,
+            "wset": 6541312,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1257472,
+            "peak_pagefile": 1277952,
+            "private": 1257472
+          },
+          "client": {
+            "rss": 5222400,
+            "vms": 884736,
+            "num_page_faults": 1319,
+            "peak_wset": 5222400,
+            "wset": 5222400,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 884736,
+            "peak_pagefile": 888832,
+            "private": 884736
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6541312,
+            "vms": 1257472,
+            "num_page_faults": 1653,
+            "peak_wset": 6541312,
+            "wset": 6541312,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 9172,
+            "nonpaged_pool": 8392,
+            "pagefile": 1257472,
+            "peak_pagefile": 1277952,
+            "private": 1257472
+          },
+          "client": {
+            "rss": 5275648,
+            "vms": 884736,
+            "num_page_faults": 1332,
+            "peak_wset": 5275648,
+            "wset": 5275648,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 7148,
+            "nonpaged_pool": 6368,
+            "pagefile": 884736,
+            "peak_pagefile": 888832,
+            "private": 884736
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-unprotected-4096-async-io",
+      "raw_sha256": "50049991dd4d0ea27c5fcff61fb700172c51dfb96e75dcc00b2fbd2f5e7b5703",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 4096,
+      "mode": "async-io",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199073400,
+      "achieved_ops_per_second": 800.0904102163545,
+      "requested_operations_per_second": 800,
+      "missed": 2,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 118700.0,
+      "p99_ns": 342000,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 1.359375,
+          "total_seconds": 1.359375,
+          "ns_per_verified_operation": 207221.7987804878
+        },
+        "server": {
+          "user_seconds": 0.328125,
+          "system_seconds": 0.734375,
+          "total_seconds": 1.0625,
+          "ns_per_verified_operation": 161966.46341463414
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 3070163960,
+          "cycles_per_verified_operation": 468012.7987804878
+        },
+        "server": {
+          "cycles": 2460620460,
+          "cycles_per_verified_operation": 375094.5823170732
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6541312,
+            "vms": 1388544,
+            "num_page_faults": 1652,
+            "peak_wset": 6541312,
+            "wset": 6541312,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1388544,
+            "peak_pagefile": 1409024,
+            "private": 1388544
+          },
+          "client": {
+            "rss": 5193728,
+            "vms": 905216,
+            "num_page_faults": 1313,
+            "peak_wset": 5193728,
+            "wset": 5193728,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 909312,
+            "private": 905216
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6549504,
+            "vms": 1396736,
+            "num_page_faults": 1654,
+            "peak_wset": 6549504,
+            "wset": 6549504,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 10204,
+            "nonpaged_pool": 8528,
+            "pagefile": 1396736,
+            "peak_pagefile": 1409024,
+            "private": 1396736
+          },
+          "client": {
+            "rss": 5246976,
+            "vms": 905216,
+            "num_page_faults": 1326,
+            "peak_wset": 5246976,
+            "wset": 5246976,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 905216,
+            "peak_pagefile": 909312,
+            "private": 905216
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-unprotected-4096-tokio",
+      "raw_sha256": "0982926469b374dd4e13683367537c495cfe97d7047e7e5a9cd4b03c01d8f060",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 4096,
+      "mode": "tokio",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199528000,
+      "achieved_ops_per_second": 800.0460514312531,
+      "requested_operations_per_second": 800,
+      "missed": 3,
+      "sent_datagrams": 26240,
+      "received_datagrams": 26240,
+      "p50_ns": 117400.0,
+      "p99_ns": 305000,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.4375,
+          "system_seconds": 0.703125,
+          "total_seconds": 1.140625,
+          "ns_per_verified_operation": 173875.76219512196
+        },
+        "server": {
+          "user_seconds": 0.265625,
+          "system_seconds": 0.703125,
+          "total_seconds": 0.96875,
+          "ns_per_verified_operation": 147675.30487804877
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 2937298080,
+          "cycles_per_verified_operation": 447758.85365853657
+        },
+        "server": {
+          "cycles": 2461856360,
+          "cycles_per_verified_operation": 375282.98170731706
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6463488,
+            "vms": 1249280,
+            "num_page_faults": 1632,
+            "peak_wset": 6463488,
+            "wset": 6463488,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1249280,
+            "peak_pagefile": 1269760,
+            "private": 1249280
+          },
+          "client": {
+            "rss": 5185536,
+            "vms": 897024,
+            "num_page_faults": 1309,
+            "peak_wset": 5185536,
+            "wset": 5185536,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 897024,
+            "peak_pagefile": 901120,
+            "private": 897024
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6463488,
+            "vms": 1249280,
+            "num_page_faults": 1632,
+            "peak_wset": 6463488,
+            "wset": 6463488,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 9736,
+            "nonpaged_pool": 8392,
+            "pagefile": 1249280,
+            "peak_pagefile": 1269760,
+            "private": 1249280
+          },
+          "client": {
+            "rss": 5246976,
+            "vms": 909312,
+            "num_page_faults": 1324,
+            "peak_wset": 5246976,
+            "wset": 5246976,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 8620,
+            "nonpaged_pool": 6368,
+            "pagefile": 909312,
+            "peak_pagefile": 909312,
+            "private": 909312
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-unprotected-64-async-io",
+      "raw_sha256": "5362f9949e5ac126a030733e7466ccc7b8e17f01e3228946ea50e52765f9b639",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 64,
+      "mode": "async-io",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199060300,
+      "achieved_ops_per_second": 800.0916885560654,
+      "requested_operations_per_second": 800,
+      "missed": 1,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 52200.0,
+      "p99_ns": 79400,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.140625,
+          "system_seconds": 0.359375,
+          "total_seconds": 0.5,
+          "ns_per_verified_operation": 76219.51219512195
+        },
+        "server": {
+          "user_seconds": 0.125,
+          "system_seconds": 0.09375,
+          "total_seconds": 0.21875,
+          "ns_per_verified_operation": 33346.03658536585
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1282977420,
+          "cycles_per_verified_operation": 195575.8262195122
+        },
+        "server": {
+          "cycles": 881816520,
+          "cycles_per_verified_operation": 134423.25
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6488064,
+            "vms": 1372160,
+            "num_page_faults": 1640,
+            "peak_wset": 6488064,
+            "wset": 6488064,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1372160,
+            "peak_pagefile": 1392640,
+            "private": 1372160
+          },
+          "client": {
+            "rss": 5140480,
+            "vms": 884736,
+            "num_page_faults": 1300,
+            "peak_wset": 5140480,
+            "wset": 5140480,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 884736,
+            "peak_pagefile": 888832,
+            "private": 884736
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6496256,
+            "vms": 1380352,
+            "num_page_faults": 1642,
+            "peak_wset": 6496256,
+            "wset": 6496256,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8992,
+            "nonpaged_pool": 8528,
+            "pagefile": 1380352,
+            "peak_pagefile": 1392640,
+            "private": 1380352
+          },
+          "client": {
+            "rss": 5201920,
+            "vms": 897024,
+            "num_page_faults": 1315,
+            "peak_wset": 5201920,
+            "wset": 5201920,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 7148,
+            "nonpaged_pool": 6368,
+            "pagefile": 897024,
+            "peak_pagefile": 897024,
+            "private": 897024
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2072,
+        "app_including_adapter_bytes": 16032,
+        "loop_future_borrowing_app_bytes": 12704,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    },
+    {
+      "window": "reactor-2-coaptic-async-unprotected-64-tokio",
+      "raw_sha256": "fdf67e6adb8796e1c8d311b1a0d264d4dd8c8729437eff27ffa1619b6823359e",
+      "passed": true,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "bytes": 64,
+      "mode": "tokio",
+      "round": "2",
+      "series": "events",
+      "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "server_sha256": "db76d164292ccc7dc348b15387065e1f71475ba93464768eb6a25fc14f81f4ae",
+      "ops": 6560,
+      "warmup": 32,
+      "failed": 0,
+      "unattempted": 0,
+      "elapsed_ns": 8199389500,
+      "achieved_ops_per_second": 800.0595654103272,
+      "requested_operations_per_second": 800,
+      "missed": 3,
+      "sent_datagrams": 6560,
+      "received_datagrams": 6560,
+      "p50_ns": 52900.0,
+      "p99_ns": 103700,
+      "cpu_cost": {
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.21875,
+          "total_seconds": 0.21875,
+          "ns_per_verified_operation": 33346.03658536585
+        },
+        "server": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.15625,
+          "total_seconds": 0.15625,
+          "ns_per_verified_operation": 23818.59756097561
+        }
+      },
+      "process_cycles": {
+        "client": {
+          "cycles": 1328156620,
+          "cycles_per_verified_operation": 202462.8993902439
+        },
+        "server": {
+          "cycles": 973979300,
+          "cycles_per_verified_operation": 148472.45426829267
+        }
+      },
+      "process_memory": {
+        "before": {
+          "server": {
+            "rss": 6426624,
+            "vms": 1241088,
+            "num_page_faults": 1623,
+            "peak_wset": 6426624,
+            "wset": 6426624,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1241088,
+            "peak_pagefile": 1261568,
+            "private": 1241088
+          },
+          "client": {
+            "rss": 5152768,
+            "vms": 892928,
+            "num_page_faults": 1302,
+            "peak_wset": 5152768,
+            "wset": 5152768,
+            "peak_paged_pool": 36360,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 6496,
+            "nonpaged_pool": 6368,
+            "pagefile": 892928,
+            "peak_pagefile": 897024,
+            "private": 892928
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6426624,
+            "vms": 1241088,
+            "num_page_faults": 1623,
+            "peak_wset": 6426624,
+            "wset": 6426624,
+            "peak_paged_pool": 58168,
+            "paged_pool": 58168,
+            "peak_nonpaged_pool": 8856,
+            "nonpaged_pool": 8392,
+            "pagefile": 1241088,
+            "peak_pagefile": 1261568,
+            "private": 1241088
+          },
+          "client": {
+            "rss": 5206016,
+            "vms": 892928,
+            "num_page_faults": 1315,
+            "peak_wset": 5206016,
+            "wset": 5206016,
+            "peak_paged_pool": 36456,
+            "paged_pool": 36360,
+            "peak_nonpaged_pool": 7148,
+            "nonpaged_pool": 6368,
+            "pagefile": 892928,
+            "peak_pagefile": 897024,
+            "private": 892928
+          }
+        }
+      },
+      "server_resources": {
+        "schema": "coaptic-native-server-resources/2",
+        "server_kind": "coaptic-async",
+        "udp_scratch_bytes": 2049,
+        "adapter_inline_bytes": 2096,
+        "app_including_adapter_bytes": 16056,
+        "loop_future_borrowing_app_bytes": 13008,
+        "runtime_heap_bytes": null,
+        "runtime_stack_bytes": null,
+        "nesting": "scratch inside adapter inside App; loop future borrows separate App; both inside outer setup future; do not sum nested owners",
+        "limits": "inline component sizes only; complete outer setup future, core heap, response body, runtime heap, thread and polling stacks, allocator and kernel costs excluded and unknown"
+      }
+    }
+  ]
+}

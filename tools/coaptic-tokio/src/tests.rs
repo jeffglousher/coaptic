@@ -108,10 +108,14 @@ fn oversized_packet_refuses_then_exact_capacity_and_empty_packet_recover() {
         let mut sender = socket::<33>();
         let address = receiver.local_endpoint().unwrap();
         let mut bytes = [0xa5; 32];
-        sender.send(address, &[0x42; 64]).await.unwrap();
-        // Windows may report WSAEMSGSIZE instead of a copied oversized prefix.
-        assert!(receiver.recv(&mut bytes).await.is_err());
-        assert_eq!(bytes, [0xa5; 32]);
+        for size in [33, 64] {
+            sender.send(address, &[0x42; 64][..size]).await.unwrap();
+            assert_eq!(
+                receiver.recv(&mut bytes).await.unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+            assert_eq!(bytes, [0xa5; 32]);
+        }
         sender.send(address, &[0x43; 32]).await.unwrap();
         assert_eq!(receiver.recv(&mut bytes).await.unwrap().0, 32);
         assert_eq!(bytes, [0x43; 32]);
