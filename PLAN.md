@@ -202,6 +202,9 @@ for actual stop or transfer conditions.
 25. The [Tokio single-reader screen](architecture/requirements/WINDOWS-TOKIO-SINGLE-READER-WAIT-20261120.md)
     verifies all 209,920 reads. None of the 16 pairs meets the
     advancement gate. Keep the existing readiness wait.
+26. A Tokio UDP test drops the final Block1 reply after the assembled
+    body is released. Both protection modes replay the exact reply
+    without a second effect, then reuse the slot for another upload.
 
 ## Blocked and deferred work
 
