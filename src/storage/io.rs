@@ -214,8 +214,8 @@ impl<S: Storage + DatagramSlots> Engine<S> {
 /// accepted and oversized datagrams cannot become valid-looking prefixes.
 /// Uses default-profile-sized stack scratch without allocating. Larger destination
 /// buffers return `InvalidInput` before socket I/O, including when `alloc` is enabled.
-/// Native receive errors
-/// (including platform-specific truncation errors) are preserved.
+/// Oversized datagrams are consumed and return `InvalidData`. Other native
+/// receive errors are preserved, with idle receives returning `None`.
 /// Use [`UdpSocketIo`] with caller-supplied reusable scratch for larger datagrams.
 #[cfg(feature = "std")]
 impl crate::storage::DatagramTransport for std::net::UdpSocket {
@@ -249,6 +249,8 @@ impl DatagramIo for std::net::UdpSocket {
 /// It can be an array, a borrowed slice or storage allocated once by the caller.
 /// This adapter neither grows nor allocates scratch during receive. Custom
 /// `AsMut` implementations and the OS network stack control their own memory.
+/// Oversized datagrams are consumed with [`std::io::ErrorKind::InvalidData`]
+/// before any prefix reaches the destination.
 /// Accepted packets are still copied into the destination; this is not zero-copy.
 /// Socket blocking, timeout and nonblocking settings are retained.
 /// Configure and bind the socket before passing it in; this adapter never binds
@@ -337,7 +339,17 @@ fn recv_udp(
             Ok(Some((n, Endpoint::from(from))))
         }
         Err(e) if is_idle_io(&e) => Ok(None),
-        Err(e) => Err(e),
+        Err(e) => {
+            #[cfg(windows)]
+            {
+                // Winsock consumes UDP datagrams larger than the scratch buffer.
+                const WSAEMSGSIZE: i32 = 10040;
+                if e.raw_os_error() == Some(WSAEMSGSIZE) {
+                    return Err(std::io::ErrorKind::InvalidData.into());
+                }
+            }
+            Err(e)
+        }
     }
 }
 
@@ -572,7 +584,7 @@ mod udp_tests {
                         );
                         assert_eq!(output, payload);
                     } else {
-                        assert!(got.is_err());
+                        assert_eq!(got.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
                         assert!(output.iter().all(|b| *b == 0xA5));
                     }
                     sender.send_to(b"", dest).unwrap();
@@ -629,7 +641,7 @@ mod udp_tests {
     }
 
     #[test]
-    fn reusable_udp_delivers_a_complete_app_block2_body() {
+    fn reusable_udp_delivers_a_complete_app_block2_body_after_oversized_receive() {
         use crate::message::{BlockValue, Message, MessageId, Opt, Token, Type, decode};
         use crate::{App, Code, Response, get};
         static BODY: [u8; 2000] = [0x5A; 2000];
@@ -649,6 +661,23 @@ mod udp_tests {
             .allow_unprotected()
             .bind(UdpSocketIo::new(socket, [0; 1473]).unwrap())
             .unwrap();
+        peer.send_to(&[0x41; 1480], destination).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let error = loop {
+            if let Err(error) = app.poll(0) {
+                break error;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        assert!(matches!(
+            error,
+            crate::app::Error::Io(DatagramIoError::Io(error))
+                if error.kind() == std::io::ErrorKind::InvalidData
+        ));
+        assert_eq!(app.metrics().rx_error, 1);
+        assert_eq!(app.metrics().rx_accepted, 0);
+
         let token = Token::new(b"body").unwrap();
         let mut complete = std::vec::Vec::new();
         for number in 0..2 {
@@ -703,9 +732,10 @@ mod udp_tests {
                         );
                         assert_eq!(output, payload);
                     } else {
-                        assert!(
-                            got.is_err(),
-                            "accepted truncated {address} capacity={capacity} extra={extra}"
+                        assert_eq!(
+                            got.unwrap_err().kind(),
+                            std::io::ErrorKind::InvalidData,
+                            "{address} capacity={capacity} extra={extra}"
                         );
                         // No prefix is exposed, even on Windows native failure.
                         assert!(output.iter().all(|b| *b == 0xA5));
@@ -741,7 +771,7 @@ mod udp_tests {
         sender.send_to(&[0x41; 3000], dest).unwrap();
         assert!(matches!(
             engine.recv_from(&mut receiver),
-            Err(DatagramIoError::Io(_))
+            Err(DatagramIoError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
         ));
         assert_eq!(engine.rx_occupied(), 0);
         assert_eq!(engine.metrics().rx_accepted, 0);

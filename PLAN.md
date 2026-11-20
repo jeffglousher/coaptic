@@ -113,9 +113,13 @@ for actual stop or transfer conditions.
    compares current core with the original #650 source. Both protected
    4,096-byte pairs reduce server cycles, with inconsistent CPU-time
    ratios. The unprotected 4,096-byte pairs fail the p99 guard. Keep
-   the original matrix and both targets open. Check whether the
-   synchronous standard UDP transport can expose the same oversized
-   refusal as the async host adapters while preserving App progress.
+   the original matrix and both targets open. Compare per-datagram
+   App and send spans in the historical Mio fixture to localize the
+   unprotected blockwise tail before choosing another optimization.
+7. The synchronous standard UDP transport now reports oversized
+   receives as InvalidData. The same App completes a 2,000-byte Block2
+   read after that refusal. Preserve the fixed and allocated host
+   recovery evidence with the async adapter proofs.
 
 ## Blocked and deferred work
 

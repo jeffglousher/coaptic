@@ -130,10 +130,17 @@ fn raw_socket_refusal_preserves_datagram_for_reusable_scratch() {
         assert_eq!(got, Some((2048, sender.local_addr().unwrap().into())));
         assert_eq!(output, [0x39; 2048]);
 
-        sender.send_to(&[0x44; 2049], destination).unwrap();
-        output.fill(0xa5);
-        assert!(without_allocating(|| receiver.recv(&mut output)).is_err());
-        assert_eq!(output, [0xa5; 2048]);
+        for oversized in [&[0x44; 2049][..], &[0x44; 2056][..]] {
+            sender.send_to(oversized, destination).unwrap();
+            output.fill(0xa5);
+            assert_eq!(
+                without_allocating(|| receiver.recv(&mut output))
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidData
+            );
+            assert_eq!(output, [0xa5; 2048]);
+        }
         sender.send_to(b"complete", destination).unwrap();
         let n = without_allocating(|| receiver.recv(&mut output))
             .unwrap()

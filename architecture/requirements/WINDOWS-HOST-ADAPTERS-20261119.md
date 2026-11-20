@@ -51,3 +51,15 @@ or released RX ownership, and verified reuse on the same sockets.
 All eight Tokio and six async-io adapter tests pass with strict
 all-target Clippy. These checks cover the adapter fix. The runtime
 screen used the preceding adapter sources.
+
+The synchronous standard UDP transport subsequently adopted the same
+error class for the raw socket and reusable scratch adapter. Before the
+change, four Windows tests failed at the expected error class. Afterward,
+all 17 focused tests pass across the fixed and allocated host builds
+and strict all-target Clippy passes. IPv4 and IPv6 exact-capacity
+receives, one-byte and larger oversize refusal, untouched destination bytes,
+and same-socket recovery are covered. Allocation-sensitive receive
+checks report zero allocations. The Engine releases the RX slot and
+the same unprotected App completes a new 2,000-byte Block2 read after
+the refusal. The Windows Mio performance screen uses its own earlier
+fixture adapter.
