@@ -126,8 +126,15 @@ for actual stop or transfer conditions.
    unprotected and 200/s OSCORE rungs pass. Both modes complete all
    reads at their next rungs and miss pacing or overlap. The protected
    peer comparison includes libcoap's separate responses and Coaptic's
-   piggybacked responses. Make verified group starts repeatable in the
-   companion driver and retain the accounting needed to match response shape.
+   piggybacked responses. Companion
+   [#270](https://github.com/jeffglousher/coaptic-validation/pull/270)
+   makes group starts and response accounting repeatable. The
+   [loss check](architecture/requirements/WINDOWS-PROTECTED-RESPONSE-RECOVERY-20261120.md)
+   verifies exact retry and reply replay plus a fresh read across both
+   runtimes, security modes and body sizes.
+9. Prepare an exact-source Linux CPU comparison at the original fixed
+   Service workload. Verify the historical AES lock selection and keep
+   optional profiling setup out of the clean CPU comparison.
 
 ## Blocked and deferred work
 
