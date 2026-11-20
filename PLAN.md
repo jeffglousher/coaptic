@@ -163,6 +163,10 @@ for actual stop or transfer conditions.
     verifies 96,000 fixed Service reads. Only one of 16 pairs meets every
     advancement gate. Preserve the rejected source and keep the accepted
     App wake path.
+15. The Tokio loopback test drops the first mutating reply in each
+    protection mode. It verifies the same retry and reply bytes, one
+    server effect per Call, and a second completed mutation on the same
+    sockets. The test drives protocol time and uses real UDP readiness.
 
 ## Blocked and deferred work
 
