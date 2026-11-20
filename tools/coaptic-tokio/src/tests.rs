@@ -364,3 +364,175 @@ fn blockwise_exchange<const DATAGRAMS: usize, const CALLS: usize, const BINDINGS
         .await;
     });
 }
+
+#[test]
+fn lost_mutating_reply_replays_without_reapplying_the_effect() {
+    // Drive the App's protocol clock explicitly. UDP and Tokio readiness
+    // remain real, and no retry depends on sleeping for a wall-clock RTO.
+    struct TestTimer(u64);
+    impl AsyncTimer for TestTimer {
+        async fn wait_until(&mut self, deadline_ms: u64) {
+            if deadline_ms > self.0 {
+                pending().await
+            }
+        }
+    }
+
+    for protected in [false, true] {
+        run(async {
+            let mut relay = socket::<1153>();
+            let relay_endpoint = relay.local_endpoint().unwrap();
+            let server = App::with_resources(SmallDevice::new()).deterministic_for_tests();
+            let client = App::with_resources(SmallDevice::new()).deterministic_for_tests();
+            let mut server = if protected {
+                server.oscore(context(&[2], &[1]))
+            } else {
+                server.allow_unprotected()
+            }
+            .bind(socket::<1153>())
+            .unwrap();
+            let mut client = if protected {
+                client.oscore(context(&[1], &[2]))
+            } else {
+                client.allow_unprotected()
+            }
+            .bind(socket::<1153>())
+            .unwrap();
+            let server_endpoint = server.transport().local_endpoint().unwrap();
+            let client_endpoint = client.transport().local_endpoint().unwrap();
+            let mut effects = 0;
+            let mut now = 1;
+
+            for (operation, lose_first_reply) in [true, false].into_iter().enumerate() {
+                let call = client
+                    .post("effect")
+                    .to(relay_endpoint)
+                    .payload(b"apply")
+                    .deadline(now + 10_000)
+                    .send_async(now, || Ok::<_, io::Error>(now), &mut TestTimer(now))
+                    .await
+                    .unwrap();
+                let binding = client
+                    .oscore()
+                    .and_then(|context| context.lookup(call.token()));
+                assert_eq!(binding.is_some(), protected);
+                let sender_seq = protected.then_some(operation as u64 + 1);
+                assert_eq!(
+                    client.oscore().map(|context| context.sender_seq()),
+                    sender_seq
+                );
+
+                let mut request = [0; 1152];
+                let (size, peer) = relay.recv(&mut request).await.unwrap();
+                assert_eq!(peer, client_endpoint);
+                let mut response = [0; 1152];
+                let mut response_len = 0;
+                for attempt in 0..=usize::from(lose_first_reply) {
+                    if attempt == 1 {
+                        // The first reply never leaves the relay for the client.
+                        let retry_at = client.next_timeout().unwrap();
+                        assert!(retry_at > now && retry_at < now + 5000);
+                        now = retry_at;
+                        client
+                            .progress_async(
+                                now,
+                                &mut || Ok::<_, io::Error>(now),
+                                &mut TestTimer(now),
+                                now + 1000,
+                            )
+                            .await
+                            .unwrap();
+                        let mut retry = [0; 1152];
+                        let (len, from) = relay.recv(&mut retry).await.unwrap();
+                        assert_eq!(from, client_endpoint);
+                        assert_eq!(&retry[..len], &request[..size]);
+                        assert_eq!(
+                            client.oscore().map(|context| context.sender_seq()),
+                            sender_seq
+                        );
+                        assert_eq!(
+                            client
+                                .oscore()
+                                .and_then(|context| context.lookup(call.token())),
+                            binding
+                        );
+                    }
+
+                    let replay_before = server.oscore().map(|context| context.replay_checkpoint());
+                    relay.send(server_endpoint, &request[..size]).await.unwrap();
+                    now += 1;
+                    server
+                        .wait_async(now, &mut TestTimer(now), pending())
+                        .await
+                        .unwrap();
+                    server
+                        .progress_with_async(
+                            now,
+                            &mut || Ok::<_, io::Error>(now),
+                            &mut TestTimer(now),
+                            now + 1000,
+                            |request, _| {
+                                assert_eq!(request.code(), Code::POST);
+                                assert_eq!(request.path(), ["effect"]);
+                                assert_eq!(request.payload(), b"apply");
+                                effects += 1;
+                                Response::content(b"applied")
+                                    .content_format(ContentFormat::OCTET_STREAM)
+                                    .etag(b"effect")
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    let mut wire = [0; 1152];
+                    let (len, from) = relay.recv(&mut wire).await.unwrap();
+                    assert_eq!(from, server_endpoint);
+                    assert_eq!(effects, operation + 1);
+                    if attempt == 1 {
+                        assert_eq!(&wire[..len], &response[..response_len]);
+                        assert_eq!(
+                            server.oscore().map(|context| context.replay_checkpoint()),
+                            replay_before
+                        );
+                    }
+                    response[..len].copy_from_slice(&wire[..len]);
+                    response_len = len;
+                }
+
+                relay
+                    .send(client_endpoint, &response[..response_len])
+                    .await
+                    .unwrap();
+                now += 1;
+                client
+                    .wait_async(now, &mut TestTimer(now), pending())
+                    .await
+                    .unwrap();
+                client
+                    .progress_async(
+                        now,
+                        &mut || Ok::<_, io::Error>(now),
+                        &mut TestTimer(now),
+                        now + 1000,
+                    )
+                    .await
+                    .unwrap();
+                let reply = client.take_response(call).unwrap().unwrap();
+                assert_eq!(reply.code(), Code::CONTENT);
+                assert_eq!(reply.payload(), b"applied");
+                assert_eq!(reply.etag_bytes(), Some(&b"effect"[..]));
+                assert_eq!(reply.format(), Some(ContentFormat::OCTET_STREAM));
+                let usage = client.resource_usage();
+                assert_eq!(usage.client_requests.occupied, 0);
+                assert_eq!(usage.storage.tx_datagram.occupied, 0);
+                assert!(
+                    client
+                        .oscore()
+                        .and_then(|context| context.lookup(call.token()))
+                        .is_none()
+                );
+                now += 1;
+            }
+            assert_eq!(effects, 2);
+        });
+    }
+}
