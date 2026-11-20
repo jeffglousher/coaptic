@@ -33,12 +33,16 @@ Tokio readiness may retry spurious readiness internally. Reactor/executor
 allocations are distinct from the App's fixed pools and the adapter's scratch.
 
 The tests exercise current-thread Tokio with real loopback UDP, socket options
-and ownership, cancellation, oversize/refusal/recovery, timers, and a complete
-unprotected blockwise App exchange. This does not establish performance, device
-support, every executor configuration, or testing on operating systems other
-than the recorded validation host. Local validation on Windows x86-64 with
-Rust 1.99.1 and Tokio 1.53.3 passed all seven tests and strict all-target Clippy.
-Existing `coaptic-async-host` remains usable.
+and ownership, cancellation, oversized receive recovery, and timers. Complete
+2,000-byte blockwise uploads and downloads verify body refusal and reuse in
+unprotected and established OSCORE mode. The unprotected client exercises one
+Call with two 1,152-byte datagrams per direction. The protected client uses
+two Calls, one security request binding and four datagrams per direction so
+binding refusal is observable with packet credit available. Both retain one
+4,096-byte body per direction. The tests check that refusal sends no datagram
+and that collecting the matched reply releases request and body ownership.
+Local validation on Windows x86-64 with Rust 1.99.1 and Tokio 1.53.3 covers
+all eight tests and strict all-target Clippy.
 
 Run `cargo test --locked --manifest-path tools/coaptic-tokio/Cargo.toml` and
 `cargo clippy --locked --manifest-path tools/coaptic-tokio/Cargo.toml --all-targets -- -D warnings`
