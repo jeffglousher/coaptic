@@ -1,7 +1,7 @@
 # Project plan
 
-Updated 2026-11-19 after measuring accepted core `416ffc3` and companion
-`a5e49ed`. Production Rust remains `b875088`. Companion
+Updated 2026-11-19 after measuring accepted core `7c93123` and companion
+`3fbce2d`. Production Rust remains `b875088`. Companion
 [#266](https://github.com/jeffglousher/coaptic-validation/pull/266) delivers the
 Windows process-cycle diagnostic.
 Current effort: **performance**, with reliability as an acceptance condition.
@@ -86,14 +86,21 @@ for actual stop or transfer conditions.
    records 282,080 verified reads and a further 256,000-read matched Windows
    reactor screen. A smaller completion dequeue bound reduces small-read
    server cycles. Four blockwise pairs miss the advancement gate, so retain
-   the default bound. Verify oversized receive refusal and same-process
-   reuse in the affected native fixtures before the next runtime screen.
+   the default bound. The [64-entry follow-up](architecture/requirements/WINDOWS-IOCP-BOUND-20261119.md)
+   establishes a Windows API argument effect and rejects the 64-entry
+   candidate on complete operations. Companion
+   [#268](https://github.com/jeffglousher/coaptic-validation/pull/268)
+   proves same-process oversized receive recovery in 12 Windows cells.
+   Next, test the async fixture's explicit yield after App waits that
+   already suspended. Keep the busy-loop budget, capacities and deadline
+   priority. Require measured improvement at matched load and retain
+   blockwise latency and recovery guards.
 3. Reconcile peer speed and device evidence against that result. Keep the
    original #650 baseline and both 50% targets. For device work, separate live
    CPU attribution from end-to-end speed and preserve normal restoration.
-4. Extend reliability coverage where it changes the performance decision. Name
-   each remaining pool and runtime/security cell, prove refusal, release or
-   expiry and fresh reuse at unchanged capacities. Keep #130 open for unexecuted
+4. The [Tokio loopback tests](tools/coaptic-tokio/README.md) exercise body
+   refusal and reuse, Call refusal and established OSCORE binding refusal.
+   Keep #130 open for the remaining runtime/security cells and device
    qualification. Reuse settled recovery evidence where it applies.
 
 ## Blocked and deferred work

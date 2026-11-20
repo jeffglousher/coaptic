@@ -1,5 +1,12 @@
 use super::*;
-use coaptic::{App, Request, Response, get, platform::AsyncTimer, resources::SmallDevice};
+use coaptic::{
+    App, Code, ContentFormat, Error, Request, Response,
+    app::AsyncCallError,
+    get,
+    oscore::{BoundedSecurityContext, DeriveParams},
+    platform::AsyncTimer,
+    resources::SmallDevice,
+};
 use core::{
     future::{Future, pending, poll_fn},
     pin::pin,
@@ -158,23 +165,69 @@ fn content(_: Request<'_>) -> Response<'static> {
     Response::content(&BODY).etag(b"v1")
 }
 
+fn uploaded(request: Request<'_>) -> Response<'static> {
+    assert_eq!(request.body().unwrap_or(request.payload()), BODY);
+    Response::content(b"stored")
+}
+
+fn context<const BINDINGS: usize>(
+    sender: &[u8],
+    recipient: &[u8],
+) -> BoundedSecurityContext<BINDINGS> {
+    BoundedSecurityContext::derive(DeriveParams {
+        master_secret: &[0x58; 16],
+        master_salt: &[],
+        sender_id: sender,
+        recipient_id: recipient,
+        id_context: &[],
+    })
+    .unwrap()
+}
+
 #[test]
 fn complete_app_blockwise_exchange_uses_callers_runtime() {
+    blockwise_exchange::<2, 1, 4>(false);
+}
+
+#[test]
+fn protected_blockwise_exchange_refuses_full_binding_and_reuses_it() {
+    // Two Calls and four datagrams per direction leave packet and response
+    // credit available when the single request binding is occupied.
+    blockwise_exchange::<4, 2, 1>(true);
+}
+
+fn blockwise_exchange<const DATAGRAMS: usize, const CALLS: usize, const BINDINGS: usize>(
+    secured: bool,
+) {
     run(async {
         let clock = Clock::default();
         let transport = socket::<1153>();
         let endpoint = transport.local_endpoint().unwrap();
-        let mut server = App::with_resources(SmallDevice::new().block_wise::<true>())
+        let server = App::with_resources(SmallDevice::new().block_wise::<true>())
             .deterministic_for_tests()
-            .allow_unprotected()
-            .route("body", get(content))
-            .bind(transport)
-            .unwrap();
-        let mut client = App::with_resources(SmallDevice::new().block_wise::<true>())
-            .deterministic_for_tests()
-            .allow_unprotected()
-            .bind(socket::<1153>())
-            .unwrap();
+            .route("body", get(content).post(uploaded));
+        let mut server = if secured {
+            server.oscore(context(&[2], &[1]))
+        } else {
+            server.allow_unprotected()
+        }
+        .bind(transport)
+        .unwrap();
+        let resources = SmallDevice::new()
+            .block_wise::<true>()
+            .rx_datagram::<DATAGRAMS, 1152>()
+            .tx_datagram::<DATAGRAMS, 1152>()
+            .client_calls::<CALLS>()
+            .security_requests::<BINDINGS>();
+        let capacities = resources.pool_capacities();
+        let client = App::with_resources(resources).deterministic_for_tests();
+        let mut client = if secured {
+            client.oscore(context(&[1], &[2]))
+        } else {
+            client.allow_unprotected()
+        }
+        .bind(socket::<1153>())
+        .unwrap();
         let mut server_timer = clock;
         let mut client_timer = clock;
         let server_work = async {
@@ -191,31 +244,109 @@ fn complete_app_blockwise_exchange_uses_callers_runtime() {
             }
         };
         let client_work = async {
-            let call = client
-                .get("body")
+            let held = client.engine_mut().acquire_tx_body().unwrap();
+            let refused = client
+                .post("body")
                 .to(endpoint)
+                .content_format(ContentFormat::OCTET_STREAM)
+                .payload(&BODY)
                 .send_async(
                     clock.now_ms().unwrap(),
                     || clock.now_ms(),
                     &mut client_timer,
                 )
-                .await
-                .unwrap();
-            loop {
-                client
-                    .wait_async(clock.now_ms().unwrap(), &mut client_timer, pending())
+                .await;
+            assert!(matches!(
+                refused,
+                Err(AsyncCallError::Request(Error::Block(
+                    coaptic::error::BlockTransferError::Saturated
+                )))
+            ));
+            assert_eq!(client.metrics().tx_ok, 0);
+            assert_eq!(client.resource_usage().client_requests.occupied, 0);
+            assert_eq!(client.resource_usage().storage.tx_body.unwrap().occupied, 1);
+            client.engine_mut().release_tx_body(held).unwrap();
+
+            for upload in [true, false] {
+                let outgoing = if upload {
+                    client
+                        .post("body")
+                        .content_format(ContentFormat::OCTET_STREAM)
+                        .payload(&BODY)
+                } else {
+                    client.get("body")
+                };
+                let call = outgoing
+                    .to(endpoint)
+                    .send_async(
+                        clock.now_ms().unwrap(),
+                        || clock.now_ms(),
+                        &mut client_timer,
+                    )
                     .await
                     .unwrap();
-                let now = clock.now_ms().unwrap();
-                client
-                    .progress_async(now, &mut || clock.now_ms(), &mut client_timer, now + 1000)
-                    .await
-                    .unwrap();
-                if let Some(response) = client.take_response(call) {
-                    let response = response.unwrap();
-                    assert_eq!(response.body().unwrap_or(response.payload()), BODY);
-                    break;
+                let binding = client
+                    .oscore()
+                    .and_then(|oscore| oscore.lookup(call.token()));
+                assert_eq!(binding.is_some(), secured);
+                let sent = client.metrics().tx_ok;
+                let refused = client
+                    .get("body")
+                    .non()
+                    .to(endpoint)
+                    .send_async(
+                        clock.now_ms().unwrap(),
+                        || clock.now_ms(),
+                        &mut client_timer,
+                    )
+                    .await;
+                if secured {
+                    assert!(
+                        matches!(
+                            refused,
+                            Err(AsyncCallError::Request(Error::Oscore(
+                                coaptic::oscore::Error::Saturated
+                            )))
+                        ),
+                        "{refused:?}"
+                    );
+                    assert_eq!(client.oscore().unwrap().lookup(call.token()), binding);
+                } else {
+                    assert!(matches!(
+                        refused,
+                        Err(AsyncCallError::Request(Error::Saturated))
+                    ));
                 }
+                assert_eq!(client.metrics().tx_ok, sent);
+                loop {
+                    client
+                        .wait_async(clock.now_ms().unwrap(), &mut client_timer, pending())
+                        .await
+                        .unwrap();
+                    let now = clock.now_ms().unwrap();
+                    client
+                        .progress_async(now, &mut || clock.now_ms(), &mut client_timer, now + 1000)
+                        .await
+                        .unwrap();
+                    if let Some(response) = client.take_response(call) {
+                        let response = response.unwrap();
+                        assert_eq!(response.code(), Code::CONTENT);
+                        let expected: &[u8] = if upload { b"stored" } else { &BODY };
+                        assert_eq!(response.body().unwrap_or(response.payload()), expected);
+                        break;
+                    }
+                }
+                let usage = client.resource_usage();
+                assert_eq!(usage.client_requests.occupied, 0);
+                assert_eq!(usage.storage.rx_body.unwrap().occupied, 0);
+                assert_eq!(usage.storage.tx_body.unwrap().occupied, 0);
+                assert!(
+                    client
+                        .oscore()
+                        .and_then(|oscore| oscore.lookup(call.token()))
+                        .is_none()
+                );
+                assert_eq!(client.engine().capacities(), capacities);
             }
         };
         let mut server_work = pin!(server_work);
