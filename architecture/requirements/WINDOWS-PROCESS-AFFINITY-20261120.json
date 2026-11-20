@@ -1,0 +1,1707 @@
+{
+  "schema": 1,
+  "setup": {
+    "binary_sha256": {
+      "baseline-bench-rust-server.exe": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c",
+      "baseline-bench-native-client.exe": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82"
+    },
+    "physical_cores": [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        10,
+        11
+      ],
+      [
+        12,
+        13
+      ],
+      [
+        14,
+        15
+      ]
+    ],
+    "client_affinity": [
+      4
+    ],
+    "server_eligible": {
+      "control": [
+        0,
+        1,
+        2,
+        3,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "single_cpu": [
+        10
+      ]
+    },
+    "source_fixture": {
+      "core": "73093d875e089f10d43530e5ebef9895a75bf4e3",
+      "companion": "76be9a093c4c3282062bc1be509d1c2a7ca78d01",
+      "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n"
+    },
+    "harness_commit": "78630ac16aef90ed782c85c614aed41e410808cb",
+    "harness_sha256": "68ca5c419d3b5073358ecb0729d94dfb2a66ff0c82a141eafd94f1254621609f",
+    "psutil": "7.0.0",
+    "rate": 800,
+    "operations": 3600,
+    "warmup": 32,
+    "guards": {
+      "missed_fraction": 0.001,
+      "rate_difference": 0.005,
+      "median_increase_ns": 2000,
+      "p99_increase_ns": 10000,
+      "server_cycles_reduction": 0.05
+    },
+    "freeze_source_receipt_sha256": "408f35f778fb70e94cd3d9fc9aade056c3228613ac43ff72396eed02bc8a6800"
+  },
+  "pairs": {
+    "0/coaptic-async/oscore/4096": {
+      "control": {
+        "raw": "0-coaptic-async-oscore-4096-control.json",
+        "sha256": "3e2731baf85ecad8065b0b09f454348df98c7ff7e106f782207d11889f33d12e",
+        "achieved": 800.1495924115768,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 207,
+        "resource": {
+          "client": {
+            "cycles": 566892.0111111111,
+            "ns_cpu": 208333.33333333334,
+            "rss_before_bytes": 5251072,
+            "rss_after_bytes": 5279744,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 467395.8277777778,
+            "ns_cpu": 182291.66666666666,
+            "rss_before_bytes": 6578176,
+            "rss_after_bytes": 6578176,
+            "private_before_bytes": 1253376,
+            "private_after_bytes": 1253376
+          }
+        },
+        "median_ns": 150700.0,
+        "p99_ns": 537700
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-async-oscore-4096-single_cpu.json",
+        "sha256": "c468daf08c46b29e2ba419aba611df2558a08cf9b1071d73b192c5c5511a62c2",
+        "achieved": 800.1583068756914,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 70,
+        "resource": {
+          "client": {
+            "cycles": 774739.4888888889,
+            "ns_cpu": 177951.38888888888,
+            "rss_before_bytes": 5251072,
+            "rss_after_bytes": 5279744,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 847872
+          },
+          "server": {
+            "cycles": 416262.94444444444,
+            "ns_cpu": 138888.88888888888,
+            "rss_before_bytes": 6545408,
+            "rss_after_bytes": 6545408,
+            "private_before_bytes": 1216512,
+            "private_after_bytes": 1216512
+          }
+        },
+        "median_ns": 130000.0,
+        "p99_ns": 1550200
+      },
+      "server_cycles_delta_fraction": -0.1093995288243017,
+      "client_cycles_delta_fraction": 0.366643864623168,
+      "median_delta_ns": -20700.0,
+      "p99_delta_ns": 1012500,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-async/oscore/64": {
+      "control": {
+        "raw": "0-coaptic-async-oscore-64-control.json",
+        "sha256": "3ad46f627fd9f2035be239c56a33e3a6b40149917870e30e69789707060ae24a",
+        "achieved": 800.1751316638168,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 131,
+        "resource": {
+          "client": {
+            "cycles": 222220.1277777778,
+            "ns_cpu": 17361.11111111111,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 823296,
+            "private_after_bytes": 823296
+          },
+          "server": {
+            "cycles": 157026.07222222222,
+            "ns_cpu": 17361.11111111111,
+            "rss_before_bytes": 6516736,
+            "rss_after_bytes": 6516736,
+            "private_before_bytes": 1232896,
+            "private_after_bytes": 1232896
+          }
+        },
+        "median_ns": 59000.0,
+        "p99_ns": 267500
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-async-oscore-64-single_cpu.json",
+        "sha256": "f9022ab7081d775c0cf245e23ebe98196121e978897f70e0729483c41668acb6",
+        "achieved": 800.1247483385409,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 144,
+        "resource": {
+          "client": {
+            "cycles": 415005.13333333336,
+            "ns_cpu": 112847.22222222222,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5238784,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 158472.58333333334,
+            "ns_cpu": 43402.77777777778,
+            "rss_before_bytes": 6483968,
+            "rss_after_bytes": 6483968,
+            "private_before_bytes": 1191936,
+            "private_after_bytes": 1191936
+          }
+        },
+        "median_ns": 59300.0,
+        "p99_ns": 1404700
+      },
+      "server_cycles_delta_fraction": 0.009211916789614527,
+      "client_cycles_delta_fraction": 0.8675407015711123,
+      "median_delta_ns": 300.0,
+      "p99_delta_ns": 1137200,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-async/unprotected/4096": {
+      "control": {
+        "raw": "0-coaptic-async-unprotected-4096-control.json",
+        "sha256": "61695edd88809273f7015edcf9419eee7902ada21b2cdad43b811526f0923a32",
+        "achieved": 800.0973451769966,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 71,
+        "resource": {
+          "client": {
+            "cycles": 459434.5388888889,
+            "ns_cpu": 112847.22222222222,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5197824,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 379079.4111111111,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 6455296,
+            "rss_after_bytes": 6455296,
+            "private_before_bytes": 1253376,
+            "private_after_bytes": 1253376
+          }
+        },
+        "median_ns": 118100.0,
+        "p99_ns": 438800
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-async-unprotected-4096-single_cpu.json",
+        "sha256": "38f8e621eb68c57d4b8e87b609fac37edbbd3c0b05ccfa4656064b9278c7906c",
+        "achieved": 798.4909939753411,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 111,
+        "resource": {
+          "client": {
+            "cycles": 667536.0722222222,
+            "ns_cpu": 104166.66666666667,
+            "rss_before_bytes": 5165056,
+            "rss_after_bytes": 5193728,
+            "private_before_bytes": 839680,
+            "private_after_bytes": 839680
+          },
+          "server": {
+            "cycles": 386557.61666666664,
+            "ns_cpu": 52083.333333333336,
+            "rss_before_bytes": 6422528,
+            "rss_after_bytes": 6422528,
+            "private_before_bytes": 1200128,
+            "private_after_bytes": 1200128
+          }
+        },
+        "median_ns": 116600.0,
+        "p99_ns": 1287800
+      },
+      "server_cycles_delta_fraction": 0.019727279657938412,
+      "client_cycles_delta_fraction": 0.45295143424918094,
+      "median_delta_ns": -1500.0,
+      "p99_delta_ns": 849000,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-async/unprotected/64": {
+      "control": {
+        "raw": "0-coaptic-async-unprotected-64-control.json",
+        "sha256": "55f711c55db2fb0e9738b4160cfa280a21baa476139618f98916789314c87850",
+        "achieved": 799.957708902456,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 198,
+        "resource": {
+          "client": {
+            "cycles": 201718.1277777778,
+            "ns_cpu": 30381.944444444445,
+            "rss_before_bytes": 5115904,
+            "rss_after_bytes": 5144576,
+            "private_before_bytes": 823296,
+            "private_after_bytes": 823296
+          },
+          "server": {
+            "cycles": 145865.38333333333,
+            "ns_cpu": 17361.11111111111,
+            "rss_before_bytes": 6389760,
+            "rss_after_bytes": 6389760,
+            "private_before_bytes": 1224704,
+            "private_after_bytes": 1224704
+          }
+        },
+        "median_ns": 53400.0,
+        "p99_ns": 253200
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-async-unprotected-64-single_cpu.json",
+        "sha256": "fb210ed0307827574541d368ca070e546a3bae062aa41663e10a5f20015a7f68",
+        "achieved": 800.197666605822,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 341,
+        "resource": {
+          "client": {
+            "cycles": 693969.5611111111,
+            "ns_cpu": 173611.11111111112,
+            "rss_before_bytes": 5115904,
+            "rss_after_bytes": 5144576,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 136740.5388888889,
+            "ns_cpu": 21701.38888888889,
+            "rss_before_bytes": 6365184,
+            "rss_after_bytes": 6365184,
+            "private_before_bytes": 1187840,
+            "private_after_bytes": 1187840
+          }
+        },
+        "median_ns": 51400.0,
+        "p99_ns": 4898200
+      },
+      "server_cycles_delta_fraction": -0.06255661374839172,
+      "client_cycles_delta_fraction": 2.440293486540886,
+      "median_delta_ns": -2000.0,
+      "p99_delta_ns": 4645000,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-mio/oscore/4096": {
+      "control": {
+        "raw": "0-coaptic-mio-oscore-4096-control.json",
+        "sha256": "754f179bde54af4f1eea3db13a5c751478198ece79b3133a6cff9fd3feea4bae",
+        "achieved": 800.1403446164458,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 126,
+        "resource": {
+          "client": {
+            "cycles": 538755.3111111111,
+            "ns_cpu": 169270.83333333334,
+            "rss_before_bytes": 5255168,
+            "rss_after_bytes": 5283840,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 345290.4,
+            "ns_cpu": 130208.33333333333,
+            "rss_before_bytes": 6303744,
+            "rss_after_bytes": 6303744,
+            "private_before_bytes": 1224704,
+            "private_after_bytes": 1224704
+          }
+        },
+        "median_ns": 140300.0,
+        "p99_ns": 476000
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-mio-oscore-4096-single_cpu.json",
+        "sha256": "c517ab4c855bfcd4b6e6d51eb3f6ecc6a055c4966230d2a33750c1b66e4fab24",
+        "achieved": 800.1486142692903,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 300,
+        "resource": {
+          "client": {
+            "cycles": 749048.6166666667,
+            "ns_cpu": 234375.0,
+            "rss_before_bytes": 5251072,
+            "rss_after_bytes": 5279744,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 847872
+          },
+          "server": {
+            "cycles": 355876.1111111111,
+            "ns_cpu": 86805.55555555556,
+            "rss_before_bytes": 6275072,
+            "rss_after_bytes": 6275072,
+            "private_before_bytes": 1183744,
+            "private_after_bytes": 1183744
+          }
+        },
+        "median_ns": 150450.0,
+        "p99_ns": 1711100
+      },
+      "server_cycles_delta_fraction": 0.03065741506601727,
+      "client_cycles_delta_fraction": 0.3903317539865243,
+      "median_delta_ns": 10150.0,
+      "p99_delta_ns": 1235100,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-mio/oscore/64": {
+      "control": {
+        "raw": "0-coaptic-mio-oscore-64-control.json",
+        "sha256": "9ad908db19202a08f8a3c2134c2151e6db4f398287bb27313ace6ef7a399007f",
+        "achieved": 800.2136570464314,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 5,
+        "resource": {
+          "client": {
+            "cycles": 188988.3388888889,
+            "ns_cpu": 108506.94444444444,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 102288.43333333333,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 6279168,
+            "rss_after_bytes": 6279168,
+            "private_before_bytes": 1212416,
+            "private_after_bytes": 1212416
+          }
+        },
+        "median_ns": 51400.0,
+        "p99_ns": 237900
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-mio-oscore-64-single_cpu.json",
+        "sha256": "f5fea393504222a2f15828b6fe725d9a154120d3e4e5ef222420f597de426849",
+        "achieved": 800.0973273948924,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 231,
+        "resource": {
+          "client": {
+            "cycles": 407151.22777777776,
+            "ns_cpu": 117187.5,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 106378.91666666667,
+            "ns_cpu": 30381.944444444445,
+            "rss_before_bytes": 6258688,
+            "rss_after_bytes": 6258688,
+            "private_before_bytes": 1183744,
+            "private_after_bytes": 1183744
+          }
+        },
+        "median_ns": 52500.0,
+        "p99_ns": 1025400
+      },
+      "server_cycles_delta_fraction": 0.03998969580464129,
+      "client_cycles_delta_fraction": 1.1543722230245774,
+      "median_delta_ns": 1100.0,
+      "p99_delta_ns": 787500,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-mio/unprotected/4096": {
+      "control": {
+        "raw": "0-coaptic-mio-unprotected-4096-control.json",
+        "sha256": "0ce279d1f30aacd3396cdb7231f39781e5eaf13a1f9ade0be043186d2365448f",
+        "achieved": 800.1473337957295,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 376,
+        "resource": {
+          "client": {
+            "cycles": 485654.5833333333,
+            "ns_cpu": 121527.77777777778,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5197824,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 318001.3388888889,
+            "ns_cpu": 91145.83333333333,
+            "rss_before_bytes": 6189056,
+            "rss_after_bytes": 6189056,
+            "private_before_bytes": 1228800,
+            "private_after_bytes": 1228800
+          }
+        },
+        "median_ns": 128650.0,
+        "p99_ns": 494100
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-mio-unprotected-4096-single_cpu.json",
+        "sha256": "06d6ce34a9727efd7686c0df577d33b85a40262eb5f938e49b6c41cb326a17fc",
+        "achieved": 800.1822281660943,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 156,
+        "resource": {
+          "client": {
+            "cycles": 671546.2777777778,
+            "ns_cpu": 221354.16666666666,
+            "rss_before_bytes": 5173248,
+            "rss_after_bytes": 5201920,
+            "private_before_bytes": 856064,
+            "private_after_bytes": 856064
+          },
+          "server": {
+            "cycles": 280972.1277777778,
+            "ns_cpu": 130208.33333333333,
+            "rss_before_bytes": 6160384,
+            "rss_after_bytes": 6160384,
+            "private_before_bytes": 1179648,
+            "private_after_bytes": 1179648
+          }
+        },
+        "median_ns": 112750.0,
+        "p99_ns": 1968700
+      },
+      "server_cycles_delta_fraction": -0.11644356983053228,
+      "client_cycles_delta_fraction": 0.3827652426721895,
+      "median_delta_ns": -15900.0,
+      "p99_delta_ns": 1474600,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-mio/unprotected/64": {
+      "control": {
+        "raw": "0-coaptic-mio-unprotected-64-control.json",
+        "sha256": "5a6ec6b25486efd8554083e765634dc5a9c47a4a47bf5508e5e0caf19f4aba01",
+        "achieved": 800.1362898813765,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 8,
+        "resource": {
+          "client": {
+            "cycles": 172243.52777777778,
+            "ns_cpu": 56423.61111111111,
+            "rss_before_bytes": 5115904,
+            "rss_after_bytes": 5144576,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 93936.23888888888,
+            "ns_cpu": 26041.666666666668,
+            "rss_before_bytes": 6160384,
+            "rss_after_bytes": 6160384,
+            "private_before_bytes": 1204224,
+            "private_after_bytes": 1204224
+          }
+        },
+        "median_ns": 46700.0,
+        "p99_ns": 244400
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-mio-unprotected-64-single_cpu.json",
+        "sha256": "e352b2589a70a690c8342dd46d5910620a50808ba9ffe2b6533a5b08831cdbbe",
+        "achieved": 800.2094059103111,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 170,
+        "resource": {
+          "client": {
+            "cycles": 353676.7833333333,
+            "ns_cpu": 26041.666666666668,
+            "rss_before_bytes": 5124096,
+            "rss_after_bytes": 5152768,
+            "private_before_bytes": 843776,
+            "private_after_bytes": 843776
+          },
+          "server": {
+            "cycles": 94440.66666666667,
+            "ns_cpu": 17361.11111111111,
+            "rss_before_bytes": 6131712,
+            "rss_after_bytes": 6131712,
+            "private_before_bytes": 1167360,
+            "private_after_bytes": 1167360
+          }
+        },
+        "median_ns": 46400.0,
+        "p99_ns": 1206700
+      },
+      "server_cycles_delta_fraction": 0.0053698954071861316,
+      "client_cycles_delta_fraction": 1.0533531093814683,
+      "median_delta_ns": -300.0,
+      "p99_delta_ns": 962300,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-ready/oscore/4096": {
+      "control": {
+        "raw": "0-coaptic-ready-oscore-4096-control.json",
+        "sha256": "c340701a7276def5273b1ac33453bb39344deac5e0aaaac804a30aeeb223c09c",
+        "achieved": 800.1346004205597,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 53,
+        "resource": {
+          "client": {
+            "cycles": 554590.338888889,
+            "ns_cpu": 199652.77777777778,
+            "rss_before_bytes": 5246976,
+            "rss_after_bytes": 5275648,
+            "private_before_bytes": 839680,
+            "private_after_bytes": 839680
+          },
+          "server": {
+            "cycles": 440003.2555555556,
+            "ns_cpu": 186631.94444444444,
+            "rss_before_bytes": 6316032,
+            "rss_after_bytes": 6316032,
+            "private_before_bytes": 1167360,
+            "private_after_bytes": 1167360
+          }
+        },
+        "median_ns": 146450.0,
+        "p99_ns": 495400
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-ready-oscore-4096-single_cpu.json",
+        "sha256": "c4636e3c0b83ac2f07a89d915f99f29feee0aec4657928f219d9e44e95940e12",
+        "achieved": 800.1729618311051,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 174,
+        "resource": {
+          "client": {
+            "cycles": 716973.3,
+            "ns_cpu": 125868.05555555556,
+            "rss_before_bytes": 5255168,
+            "rss_after_bytes": 5283840,
+            "private_before_bytes": 856064,
+            "private_after_bytes": 856064
+          },
+          "server": {
+            "cycles": 439965.1,
+            "ns_cpu": 69444.44444444444,
+            "rss_before_bytes": 6275072,
+            "rss_after_bytes": 6275072,
+            "private_before_bytes": 1126400,
+            "private_after_bytes": 1126400
+          }
+        },
+        "median_ns": 147350.0,
+        "p99_ns": 1618000
+      },
+      "server_cycles_delta_fraction": -8.671653010250413e-05,
+      "client_cycles_delta_fraction": 0.29279803437694607,
+      "median_delta_ns": 900.0,
+      "p99_delta_ns": 1122600,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-ready/oscore/64": {
+      "control": {
+        "raw": "0-coaptic-ready-oscore-64-control.json",
+        "sha256": "052cfc15830110a80da0bc8cd758d6d3c261a855c2b46b8ae9381f117693c80c",
+        "achieved": 800.1337468009652,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 67,
+        "resource": {
+          "client": {
+            "cycles": 204173.02222222224,
+            "ns_cpu": 8680.555555555555,
+            "rss_before_bytes": 5210112,
+            "rss_after_bytes": 5238784,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 138970.65555555557,
+            "ns_cpu": 26041.666666666668,
+            "rss_before_bytes": 6283264,
+            "rss_after_bytes": 6283264,
+            "private_before_bytes": 1155072,
+            "private_after_bytes": 1155072
+          }
+        },
+        "median_ns": 54800.0,
+        "p99_ns": 256300
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-ready-oscore-64-single_cpu.json",
+        "sha256": "6b6f076c25c104517765c693b5fd6d77b34c3ef95e6fbdb754a6a23630b69547",
+        "achieved": 800.0506343157007,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 526,
+        "resource": {
+          "client": {
+            "cycles": 907177.3277777778,
+            "ns_cpu": 260416.66666666666,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 131547.98333333334,
+            "ns_cpu": 30381.944444444445,
+            "rss_before_bytes": 6250496,
+            "rss_after_bytes": 6250496,
+            "private_before_bytes": 1101824,
+            "private_after_bytes": 1101824
+          }
+        },
+        "median_ns": 53200.0,
+        "p99_ns": 6737400
+      },
+      "server_cycles_delta_fraction": -0.053411795407807605,
+      "client_cycles_delta_fraction": 3.443179210965514,
+      "median_delta_ns": -1600.0,
+      "p99_delta_ns": 6481100,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-ready/unprotected/4096": {
+      "control": {
+        "raw": "0-coaptic-ready-unprotected-4096-control.json",
+        "sha256": "eab12dbff67a87a0ab71b0fd73622df8bccdd4802ef573300c3d38833930d4a2",
+        "achieved": 800.0797057182385,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 243,
+        "resource": {
+          "client": {
+            "cycles": 456942.90555555554,
+            "ns_cpu": 138888.88888888888,
+            "rss_before_bytes": 5173248,
+            "rss_after_bytes": 5201920,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 363385.3888888889,
+            "ns_cpu": 121527.77777777778,
+            "rss_before_bytes": 6197248,
+            "rss_after_bytes": 6197248,
+            "private_before_bytes": 1159168,
+            "private_after_bytes": 1159168
+          }
+        },
+        "median_ns": 114900.0,
+        "p99_ns": 463100
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-ready-unprotected-4096-single_cpu.json",
+        "sha256": "aa18b33b65c87a02c3f8dfcb42659fb38d94e2096a432005650268aefbc3721f",
+        "achieved": 799.8536623288455,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 1172,
+        "resource": {
+          "client": {
+            "cycles": 1291192.4055555556,
+            "ns_cpu": 364583.3333333333,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5197824,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 847872
+          },
+          "server": {
+            "cycles": 375655.6111111111,
+            "ns_cpu": 125868.05555555556,
+            "rss_before_bytes": 6168576,
+            "rss_after_bytes": 6168576,
+            "private_before_bytes": 1122304,
+            "private_after_bytes": 1122304
+          }
+        },
+        "median_ns": 118800.0,
+        "p99_ns": 8971800
+      },
+      "server_cycles_delta_fraction": 0.03376641603488917,
+      "client_cycles_delta_fraction": 1.82571934011255,
+      "median_delta_ns": 3900.0,
+      "p99_delta_ns": 8508700,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "0/coaptic-ready/unprotected/64": {
+      "control": {
+        "raw": "0-coaptic-ready-unprotected-64-control.json",
+        "sha256": "04be9c5f3565ee828d51f2ce8c5005f2453688e2d305fa5e1e3b8eb0d99333ee",
+        "achieved": 799.8169485610393,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 336,
+        "resource": {
+          "client": {
+            "cycles": 204661.01666666666,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 5115904,
+            "rss_after_bytes": 5144576,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 150696.3111111111,
+            "ns_cpu": 52083.333333333336,
+            "rss_before_bytes": 6168576,
+            "rss_after_bytes": 6168576,
+            "private_before_bytes": 1146880,
+            "private_after_bytes": 1146880
+          }
+        },
+        "median_ns": 55650.0,
+        "p99_ns": 595900
+      },
+      "single_cpu": {
+        "raw": "0-coaptic-ready-unprotected-64-single_cpu.json",
+        "sha256": "bd186a0ad5f51ae30d2e56211f72bcdb1c4083503143c3e4fba8c09c35529188",
+        "achieved": 800.1577911164081,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 1021,
+        "resource": {
+          "client": {
+            "cycles": 767053.5055555556,
+            "ns_cpu": 195312.5,
+            "rss_before_bytes": 5115904,
+            "rss_after_bytes": 5144576,
+            "private_before_bytes": 823296,
+            "private_after_bytes": 823296
+          },
+          "server": {
+            "cycles": 126900.08888888889,
+            "ns_cpu": 26041.666666666668,
+            "rss_before_bytes": 6148096,
+            "rss_after_bytes": 6148096,
+            "private_before_bytes": 1110016,
+            "private_after_bytes": 1110016
+          }
+        },
+        "median_ns": 49400.0,
+        "p99_ns": 6700900
+      },
+      "server_cycles_delta_fraction": -0.15790845871918413,
+      "client_cycles_delta_fraction": 2.74792189567231,
+      "median_delta_ns": -6250.0,
+      "p99_delta_ns": 6105000,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-async/oscore/4096": {
+      "control": {
+        "raw": "1-coaptic-async-oscore-4096-control.json",
+        "sha256": "f64be370a31bbe17b00ddd39f26007e8c96af66123af9229e62810afe8150922",
+        "achieved": 800.1932555622544,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 155,
+        "resource": {
+          "client": {
+            "cycles": 579698.4888888889,
+            "ns_cpu": 151909.72222222222,
+            "rss_before_bytes": 5255168,
+            "rss_after_bytes": 5283840,
+            "private_before_bytes": 860160,
+            "private_after_bytes": 860160
+          },
+          "server": {
+            "cycles": 467461.3722222222,
+            "ns_cpu": 134548.61111111112,
+            "rss_before_bytes": 6574080,
+            "rss_after_bytes": 6574080,
+            "private_before_bytes": 1249280,
+            "private_after_bytes": 1249280
+          }
+        },
+        "median_ns": 153700.0,
+        "p99_ns": 506700
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-async-oscore-4096-single_cpu.json",
+        "sha256": "349e166ccf1fe9b14ec487a6da7594d9bc2c55bf8f646b7a3260706fb9e8f07a",
+        "achieved": 800.1503393582061,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 124,
+        "resource": {
+          "client": {
+            "cycles": 778328.3777777777,
+            "ns_cpu": 208333.33333333334,
+            "rss_before_bytes": 5251072,
+            "rss_after_bytes": 5279744,
+            "private_before_bytes": 843776,
+            "private_after_bytes": 843776
+          },
+          "server": {
+            "cycles": 443649.6611111111,
+            "ns_cpu": 117187.5,
+            "rss_before_bytes": 6545408,
+            "rss_after_bytes": 6545408,
+            "private_before_bytes": 1208320,
+            "private_after_bytes": 1208320
+          }
+        },
+        "median_ns": 139150.0,
+        "p99_ns": 1743100
+      },
+      "server_cycles_delta_fraction": -0.05093835025964766,
+      "client_cycles_delta_fraction": 0.3426434477509228,
+      "median_delta_ns": -14550.0,
+      "p99_delta_ns": 1236400,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-async/oscore/64": {
+      "control": {
+        "raw": "1-coaptic-async-oscore-64-control.json",
+        "sha256": "60e68376cc0873e2375faddda73349acbd6415299f79fd28169418a2f7fdede5",
+        "achieved": 800.1587337114631,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 69,
+        "resource": {
+          "client": {
+            "cycles": 206635.6611111111,
+            "ns_cpu": 56423.61111111111,
+            "rss_before_bytes": 5206016,
+            "rss_after_bytes": 5234688,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 147615.72222222222,
+            "ns_cpu": 56423.61111111111,
+            "rss_before_bytes": 6529024,
+            "rss_after_bytes": 6529024,
+            "private_before_bytes": 1257472,
+            "private_after_bytes": 1257472
+          }
+        },
+        "median_ns": 56200.0,
+        "p99_ns": 244700
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-async-oscore-64-single_cpu.json",
+        "sha256": "788974e082bd9c3f967caa1bc80ca9c1af983d195d96d2a75b41fe4437df6c23",
+        "achieved": 800.034472596497,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 276,
+        "resource": {
+          "client": {
+            "cycles": 385037.15555555554,
+            "ns_cpu": 190972.22222222222,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 149487.13888888888,
+            "ns_cpu": 56423.61111111111,
+            "rss_before_bytes": 6488064,
+            "rss_after_bytes": 6488064,
+            "private_before_bytes": 1196032,
+            "private_after_bytes": 1196032
+          }
+        },
+        "median_ns": 57100.0,
+        "p99_ns": 1522200
+      },
+      "server_cycles_delta_fraction": 0.012677624297020351,
+      "client_cycles_delta_fraction": 0.8633625652278638,
+      "median_delta_ns": 900.0,
+      "p99_delta_ns": 1277500,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-async/unprotected/4096": {
+      "control": {
+        "raw": "1-coaptic-async-unprotected-4096-control.json",
+        "sha256": "6a2a98333a215e037409f27f94a25b337368098924f06a7b6aabf3b88656e891",
+        "achieved": 800.1814100165553,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 7,
+        "resource": {
+          "client": {
+            "cycles": 448239.85,
+            "ns_cpu": 99826.38888888889,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5197824,
+            "private_before_bytes": 856064,
+            "private_after_bytes": 856064
+          },
+          "server": {
+            "cycles": 373047.15,
+            "ns_cpu": 95486.11111111111,
+            "rss_before_bytes": 6447104,
+            "rss_after_bytes": 6447104,
+            "private_before_bytes": 1236992,
+            "private_after_bytes": 1236992
+          }
+        },
+        "median_ns": 116500.0,
+        "p99_ns": 398400
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-async-unprotected-4096-single_cpu.json",
+        "sha256": "74b03e45db1268ad58ff8a6745e7c19263621e39fbb15777fc4d73686a3183e4",
+        "achieved": 800.1773548652761,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 224,
+        "resource": {
+          "client": {
+            "cycles": 756692.2888888889,
+            "ns_cpu": 182291.66666666666,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5197824,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 847872
+          },
+          "server": {
+            "cycles": 389779.30555555556,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 6430720,
+            "rss_after_bytes": 6430720,
+            "private_before_bytes": 1208320,
+            "private_after_bytes": 1208320
+          }
+        },
+        "median_ns": 119250.0,
+        "p99_ns": 1627500
+      },
+      "server_cycles_delta_fraction": 0.044852656173771877,
+      "client_cycles_delta_fraction": 0.6881414914111026,
+      "median_delta_ns": 2750.0,
+      "p99_delta_ns": 1229100,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-async/unprotected/64": {
+      "control": {
+        "raw": "1-coaptic-async-unprotected-64-control.json",
+        "sha256": "54951806f92d99c77ed66f366d097edabae286f150aa0747593be32c9bbb7b1b",
+        "achieved": 800.1933622804764,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 297,
+        "resource": {
+          "client": {
+            "cycles": 206157.9611111111,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 5115904,
+            "rss_after_bytes": 5144576,
+            "private_before_bytes": 823296,
+            "private_after_bytes": 823296
+          },
+          "server": {
+            "cycles": 151545.27222222224,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 6389760,
+            "rss_after_bytes": 6389760,
+            "private_before_bytes": 1220608,
+            "private_after_bytes": 1220608
+          }
+        },
+        "median_ns": 55300.0,
+        "p99_ns": 309600
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-async-unprotected-64-single_cpu.json",
+        "sha256": "cc37b148799f99778e923b5b505fa1ac1af6a2ce2af3502626c19b57cb3dd29d",
+        "achieved": 800.1527580520983,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 60,
+        "resource": {
+          "client": {
+            "cycles": 432383.85555555555,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 5124096,
+            "rss_after_bytes": 5152768,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 137503.93333333332,
+            "ns_cpu": 26041.666666666668,
+            "rss_before_bytes": 6365184,
+            "rss_after_bytes": 6365184,
+            "private_before_bytes": 1187840,
+            "private_after_bytes": 1187840
+          }
+        },
+        "median_ns": 51200.0,
+        "p99_ns": 1527500
+      },
+      "server_cycles_delta_fraction": -0.09265441727736012,
+      "client_cycles_delta_fraction": 1.0973425097200953,
+      "median_delta_ns": -4100.0,
+      "p99_delta_ns": 1217900,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-mio/oscore/4096": {
+      "control": {
+        "raw": "1-coaptic-mio-oscore-4096-control.json",
+        "sha256": "3f9928d67ec82a496103f3aeb7a00e7fd3752e18b80e8e782d2c6900329ab5c7",
+        "achieved": 800.1646916749843,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 378,
+        "resource": {
+          "client": {
+            "cycles": 533955.55,
+            "ns_cpu": 112847.22222222222,
+            "rss_before_bytes": 5251072,
+            "rss_after_bytes": 5279744,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 350144.27777777775,
+            "ns_cpu": 78125.0,
+            "rss_before_bytes": 6307840,
+            "rss_after_bytes": 6307840,
+            "private_before_bytes": 1232896,
+            "private_after_bytes": 1232896
+          }
+        },
+        "median_ns": 140700.0,
+        "p99_ns": 498000
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-mio-oscore-4096-single_cpu.json",
+        "sha256": "8f4df399dedac71bf4bc9c4db6ccea149ecce21f84b1a90082e736683a5cc55a",
+        "achieved": 800.1633044397328,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 1140,
+        "resource": {
+          "client": {
+            "cycles": 1146598.6222222222,
+            "ns_cpu": 360243.05555555556,
+            "rss_before_bytes": 5255168,
+            "rss_after_bytes": 5283840,
+            "private_before_bytes": 856064,
+            "private_after_bytes": 856064
+          },
+          "server": {
+            "cycles": 358526.97777777776,
+            "ns_cpu": 117187.5,
+            "rss_before_bytes": 6279168,
+            "rss_after_bytes": 6279168,
+            "private_before_bytes": 1187840,
+            "private_after_bytes": 1187840
+          }
+        },
+        "median_ns": 142350.0,
+        "p99_ns": 6403500
+      },
+      "server_cycles_delta_fraction": 0.023940702538969294,
+      "client_cycles_delta_fraction": 1.1473671773281917,
+      "median_delta_ns": 1650.0,
+      "p99_delta_ns": 5905500,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-mio/oscore/64": {
+      "control": {
+        "raw": "1-coaptic-mio-oscore-64-control.json",
+        "sha256": "fd6b4bbb32980f281d3d6be6105fd05f53dfd182188cac8dc6cf34bc9d656702",
+        "achieved": 800.2060085913229,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 160,
+        "resource": {
+          "client": {
+            "cycles": 203533.82222222222,
+            "ns_cpu": 34722.22222222222,
+            "rss_before_bytes": 5206016,
+            "rss_after_bytes": 5234688,
+            "private_before_bytes": 835584,
+            "private_after_bytes": 835584
+          },
+          "server": {
+            "cycles": 113626.86666666667,
+            "ns_cpu": 13020.833333333334,
+            "rss_before_bytes": 6295552,
+            "rss_after_bytes": 6295552,
+            "private_before_bytes": 1228800,
+            "private_after_bytes": 1228800
+          }
+        },
+        "median_ns": 53450.0,
+        "p99_ns": 249600
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-mio-oscore-64-single_cpu.json",
+        "sha256": "1d2ac9320d79e8d210b9b62560b18cd6a262506d18c859012cb8d3787ff7ed9f",
+        "achieved": 800.1826016697011,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 468,
+        "resource": {
+          "client": {
+            "cycles": 482322.01666666666,
+            "ns_cpu": 160590.27777777778,
+            "rss_before_bytes": 5206016,
+            "rss_after_bytes": 5234688,
+            "private_before_bytes": 839680,
+            "private_after_bytes": 839680
+          },
+          "server": {
+            "cycles": 112641.62222222223,
+            "ns_cpu": 30381.944444444445,
+            "rss_before_bytes": 6246400,
+            "rss_after_bytes": 6246400,
+            "private_before_bytes": 1163264,
+            "private_after_bytes": 1163264
+          }
+        },
+        "median_ns": 55800.0,
+        "p99_ns": 1726400
+      },
+      "server_cycles_delta_fraction": -0.008670875765101727,
+      "client_cycles_delta_fraction": 1.369738903345794,
+      "median_delta_ns": 2350.0,
+      "p99_delta_ns": 1476800,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-mio/unprotected/4096": {
+      "control": {
+        "raw": "1-coaptic-mio-unprotected-4096-control.json",
+        "sha256": "63dd586b72dbbb169c0201eba16568a21df35f44767a9a316efbe40fcc6688dd",
+        "achieved": 800.1010794363688,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 164,
+        "resource": {
+          "client": {
+            "cycles": 448017.52777777775,
+            "ns_cpu": 125868.05555555556,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 880640
+          },
+          "server": {
+            "cycles": 296768.43333333335,
+            "ns_cpu": 78125.0,
+            "rss_before_bytes": 6189056,
+            "rss_after_bytes": 6217728,
+            "private_before_bytes": 1220608,
+            "private_after_bytes": 1249280
+          }
+        },
+        "median_ns": 116900.0,
+        "p99_ns": 403200
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-mio-unprotected-4096-single_cpu.json",
+        "sha256": "58880daa324aeb59adf826f40928e7613476974a7f3e396296a596ffbdcd46a9",
+        "achieved": 800.19055204346,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 507,
+        "resource": {
+          "client": {
+            "cycles": 793463.0055555556,
+            "ns_cpu": 190972.22222222222,
+            "rss_before_bytes": 5169152,
+            "rss_after_bytes": 5197824,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 847872
+          },
+          "server": {
+            "cycles": 305332.75,
+            "ns_cpu": 56423.61111111111,
+            "rss_before_bytes": 6164480,
+            "rss_after_bytes": 6164480,
+            "private_before_bytes": 1183744,
+            "private_after_bytes": 1183744
+          }
+        },
+        "median_ns": 120500.0,
+        "p99_ns": 2931000
+      },
+      "server_cycles_delta_fraction": 0.02885858367910421,
+      "client_cycles_delta_fraction": 0.7710534886686913,
+      "median_delta_ns": 3600.0,
+      "p99_delta_ns": 2527800,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-mio/unprotected/64": {
+      "control": {
+        "raw": "1-coaptic-mio-unprotected-64-control.json",
+        "sha256": "e6250883510b7e9cdeddef0206d3656c50e22a289c81897df54ac9c341269faa",
+        "achieved": 800.1639980567572,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 24,
+        "resource": {
+          "client": {
+            "cycles": 175039.27222222224,
+            "ns_cpu": 65104.166666666664,
+            "rss_before_bytes": 5120000,
+            "rss_after_bytes": 5148672,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 95578.72222222222,
+            "ns_cpu": 39062.5,
+            "rss_before_bytes": 6160384,
+            "rss_after_bytes": 6160384,
+            "private_before_bytes": 1208320,
+            "private_after_bytes": 1208320
+          }
+        },
+        "median_ns": 47100.0,
+        "p99_ns": 226500
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-mio-unprotected-64-single_cpu.json",
+        "sha256": "78f2517b2dc49aafecd305c8946f5eac66d915f1433a106c7568d6a65f55f9f7",
+        "achieved": 800.1903386085437,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 440,
+        "resource": {
+          "client": {
+            "cycles": 608161.4,
+            "ns_cpu": 212673.61111111112,
+            "rss_before_bytes": 5128192,
+            "rss_after_bytes": 5156864,
+            "private_before_bytes": 839680,
+            "private_after_bytes": 839680
+          },
+          "server": {
+            "cycles": 96756.06666666667,
+            "ns_cpu": 34722.22222222222,
+            "rss_before_bytes": 6135808,
+            "rss_after_bytes": 6135808,
+            "private_before_bytes": 1171456,
+            "private_after_bytes": 1171456
+          }
+        },
+        "median_ns": 47600.0,
+        "p99_ns": 4951800
+      },
+      "server_cycles_delta_fraction": 0.012318060098220451,
+      "client_cycles_delta_fraction": 2.4744282941710636,
+      "median_delta_ns": 500.0,
+      "p99_delta_ns": 4725300,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-ready/oscore/4096": {
+      "control": {
+        "raw": "1-coaptic-ready-oscore-4096-control.json",
+        "sha256": "c112aa95f19516c08dd4324b5069b0ba0ee7ce33548511b362af84ab27ad5f51",
+        "achieved": 800.0270409139829,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 204,
+        "resource": {
+          "client": {
+            "cycles": 577566.5944444444,
+            "ns_cpu": 156250.0,
+            "rss_before_bytes": 5251072,
+            "rss_after_bytes": 5279744,
+            "private_before_bytes": 843776,
+            "private_after_bytes": 843776
+          },
+          "server": {
+            "cycles": 461232.7611111111,
+            "ns_cpu": 125868.05555555556,
+            "rss_before_bytes": 6311936,
+            "rss_after_bytes": 6311936,
+            "private_before_bytes": 1171456,
+            "private_after_bytes": 1171456
+          }
+        },
+        "median_ns": 155450.0,
+        "p99_ns": 580700
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-ready-oscore-4096-single_cpu.json",
+        "sha256": "b7856ba084c959e10648d85e4e3129707fd16d4579a205794a8ca232504b4009",
+        "achieved": 799.9479856043138,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 282,
+        "resource": {
+          "client": {
+            "cycles": 894019.3277777778,
+            "ns_cpu": 182291.66666666666,
+            "rss_before_bytes": 5255168,
+            "rss_after_bytes": 5283840,
+            "private_before_bytes": 856064,
+            "private_after_bytes": 856064
+          },
+          "server": {
+            "cycles": 408798.05555555556,
+            "ns_cpu": 73784.72222222222,
+            "rss_before_bytes": 6279168,
+            "rss_after_bytes": 6279168,
+            "private_before_bytes": 1122304,
+            "private_after_bytes": 1122304
+          }
+        },
+        "median_ns": 129200.0,
+        "p99_ns": 2572400
+      },
+      "server_cycles_delta_fraction": -0.11368382729197324,
+      "client_cycles_delta_fraction": 0.5479069190934185,
+      "median_delta_ns": -26250.0,
+      "p99_delta_ns": 1991700,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-ready/oscore/64": {
+      "control": {
+        "raw": "1-coaptic-ready-oscore-64-control.json",
+        "sha256": "9878c706722e91bf0cbf7f59eb3d9c317bf429c9a3ff385ede6fb237f83737cc",
+        "achieved": 800.0931486223474,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 324,
+        "resource": {
+          "client": {
+            "cycles": 214891.52222222224,
+            "ns_cpu": 43402.77777777778,
+            "rss_before_bytes": 5201920,
+            "rss_after_bytes": 5230592,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 149428.77222222224,
+            "ns_cpu": 30381.944444444445,
+            "rss_before_bytes": 6283264,
+            "rss_after_bytes": 6283264,
+            "private_before_bytes": 1163264,
+            "private_after_bytes": 1163264
+          }
+        },
+        "median_ns": 58600.0,
+        "p99_ns": 336200
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-ready-oscore-64-single_cpu.json",
+        "sha256": "43c24449e736a6f33e8c52eb60a62da3b65907708192e6190b66c51e8593aa8b",
+        "achieved": 800.170916507766,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 156,
+        "resource": {
+          "client": {
+            "cycles": 432975.8333333333,
+            "ns_cpu": 121527.77777777778,
+            "rss_before_bytes": 5206016,
+            "rss_after_bytes": 5234688,
+            "private_before_bytes": 839680,
+            "private_after_bytes": 839680
+          },
+          "server": {
+            "cycles": 139857.48888888888,
+            "ns_cpu": 56423.61111111111,
+            "rss_before_bytes": 6250496,
+            "rss_after_bytes": 6250496,
+            "private_before_bytes": 1110016,
+            "private_after_bytes": 1110016
+          }
+        },
+        "median_ns": 54700.0,
+        "p99_ns": 1659300
+      },
+      "server_cycles_delta_fraction": -0.06405247925814095,
+      "client_cycles_delta_fraction": 1.0148576772869946,
+      "median_delta_ns": -3900.0,
+      "p99_delta_ns": 1323100,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-ready/unprotected/4096": {
+      "control": {
+        "raw": "1-coaptic-ready-unprotected-4096-control.json",
+        "sha256": "977a99ee51ca448501300d4e8a2ec815603df8468adba1699d44d06beef7b536",
+        "achieved": 800.1476539137356,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 966,
+        "resource": {
+          "client": {
+            "cycles": 444025.64444444445,
+            "ns_cpu": 156250.0,
+            "rss_before_bytes": 5173248,
+            "rss_after_bytes": 5201920,
+            "private_before_bytes": 847872,
+            "private_after_bytes": 847872
+          },
+          "server": {
+            "cycles": 378539.0,
+            "ns_cpu": 134548.61111111112,
+            "rss_before_bytes": 6205440,
+            "rss_after_bytes": 6205440,
+            "private_before_bytes": 1175552,
+            "private_after_bytes": 1175552
+          }
+        },
+        "median_ns": 115200.0,
+        "p99_ns": 549700
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-ready-unprotected-4096-single_cpu.json",
+        "sha256": "3e14cd43810ab5621ba7145c8c3863ecce83bfdbd3c5d444cbb2fc021f4c3997",
+        "achieved": 799.8202181887337,
+        "verified": 3600,
+        "sent": 14400,
+        "received": 14400,
+        "missed_periods": 591,
+        "resource": {
+          "client": {
+            "cycles": 778183.2166666667,
+            "ns_cpu": 169270.83333333334,
+            "rss_before_bytes": 5173248,
+            "rss_after_bytes": 5201920,
+            "private_before_bytes": 851968,
+            "private_after_bytes": 851968
+          },
+          "server": {
+            "cycles": 388490.51666666666,
+            "ns_cpu": 60763.88888888889,
+            "rss_before_bytes": 6172672,
+            "rss_after_bytes": 6172672,
+            "private_before_bytes": 1130496,
+            "private_after_bytes": 1130496
+          }
+        },
+        "median_ns": 130700.0,
+        "p99_ns": 3831500
+      },
+      "server_cycles_delta_fraction": 0.026289277106630093,
+      "client_cycles_delta_fraction": 0.7525636782540188,
+      "median_delta_ns": 15500.0,
+      "p99_delta_ns": 3281800,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    },
+    "1/coaptic-ready/unprotected/64": {
+      "control": {
+        "raw": "1-coaptic-ready-unprotected-64-control.json",
+        "sha256": "3f5a684b1dc2247f367794d4946c8bc2f1ac9f8d571f3507740ae3d38316cd0f",
+        "achieved": 800.1889334981871,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 480,
+        "resource": {
+          "client": {
+            "cycles": 194923.51111111112,
+            "ns_cpu": 21701.38888888889,
+            "rss_before_bytes": 5120000,
+            "rss_after_bytes": 5148672,
+            "private_before_bytes": 827392,
+            "private_after_bytes": 827392
+          },
+          "server": {
+            "cycles": 143405.48333333334,
+            "ns_cpu": 4340.277777777777,
+            "rss_before_bytes": 6172672,
+            "rss_after_bytes": 6172672,
+            "private_before_bytes": 1150976,
+            "private_after_bytes": 1150976
+          }
+        },
+        "median_ns": 52500.0,
+        "p99_ns": 356400
+      },
+      "single_cpu": {
+        "raw": "1-coaptic-ready-unprotected-64-single_cpu.json",
+        "sha256": "59d71c0c1a0204e82220be04c1b74ab4609afa24705d63be886e454e680edd32",
+        "achieved": 799.4860903411287,
+        "verified": 3600,
+        "sent": 3600,
+        "received": 3600,
+        "missed_periods": 1803,
+        "resource": {
+          "client": {
+            "cycles": 1332405.0333333334,
+            "ns_cpu": 351562.5,
+            "rss_before_bytes": 5120000,
+            "rss_after_bytes": 5148672,
+            "private_before_bytes": 831488,
+            "private_after_bytes": 831488
+          },
+          "server": {
+            "cycles": 91741.06666666667,
+            "ns_cpu": 13020.833333333334,
+            "rss_before_bytes": 6139904,
+            "rss_after_bytes": 6139904,
+            "private_before_bytes": 1105920,
+            "private_after_bytes": 1105920
+          }
+        },
+        "median_ns": 27100.0,
+        "p99_ns": 10448300
+      },
+      "server_cycles_delta_fraction": -0.3602680697123506,
+      "client_cycles_delta_fraction": 5.83552756534244,
+      "median_delta_ns": -25400.0,
+      "p99_delta_ns": 10091900,
+      "pacing_passed": false,
+      "latency_passed": false,
+      "passed": false
+    }
+  },
+  "measured": 172800,
+  "warmup": 1536,
+  "pacing_misses": {
+    "control": 5049,
+    "single_cpu": 10487
+  },
+  "complete_preflight": 3840,
+  "partial_preflight": 160,
+  "receipt_source": "source-matched full raw records retained locally",
+  "custody": "6 MiB D: active continuation record",
+  "script_sha256": "db840bcfef9c997fe3b77e715b3d0c002983d1f02dd8d2222da00b6ed09f78cf"
+}

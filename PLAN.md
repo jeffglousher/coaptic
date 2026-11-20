@@ -144,6 +144,10 @@ for actual stop or transfer conditions.
     verifies 72,000 measured reads against those same core revisions.
     Server poll wall medians fall in all pairs. The unprotected 16 KiB
     p99 also falls in all four pairs. The clean socket tail cause stays open.
+11. The [Windows affinity control](architecture/requirements/WINDOWS-PROCESS-AFFINITY-20261120.md)
+    verifies all 172,800 measured reads. All pairs miss pacing, and all
+    operation p99 observations rise with a single-CPU server. Keep the
+    default placement.
 
 ## Blocked and deferred work
 
