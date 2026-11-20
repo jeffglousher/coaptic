@@ -138,6 +138,10 @@ for actual stop or transfer conditions.
    ratios withheld. Companion #272 adds native group starts and #273
    enforces latency guards in short runs. The separate fixed Service
    C4 comparison uses the same sources, group overlap and the same guards.
+10. The [Windows fixed Service App control](architecture/requirements/WINDOWS-SERVICE-APP-20261120.md)
+    verifies 72,000 measured reads against those same core revisions.
+    Server poll wall medians fall in all pairs. The unprotected 16 KiB
+    p99 also falls in all four pairs. The clean socket tail cause stays open.
 
 ## Blocked and deferred work
 
