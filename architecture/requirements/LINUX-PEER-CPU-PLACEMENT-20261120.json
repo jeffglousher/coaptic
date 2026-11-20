@@ -1,0 +1,1172 @@
+{
+  "schema": 1,
+  "run": 44710858859,
+  "workflow_commit": "04f40ae8f931a86afc77410a845a3e6ef224c3a6",
+  "cores": {
+    "baseline": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+    "candidate": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57"
+  },
+  "hardware": {
+    "platform": "Linux-7.0.0-1014-aws-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+    "clock_ticks_per_second": 100,
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu_count": 4,
+    "load_average": [
+      1.51220703125,
+      0.8681640625,
+      0.36767578125
+    ],
+    "cpuinfo": "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3861.153\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 0\ncpu cores\t: 2\napicid\t\t: 0\ninitial apicid\t: 0\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\nprocessor\t: 1\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3031.562\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 1\ncpu cores\t: 2\napicid\t\t: 2\ninitial apicid\t: 2\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\nprocessor\t: 2\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3876.956\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 0\ncpu cores\t: 2\napicid\t\t: 1\ninitial apicid\t: 1\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\nprocessor\t: 3\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 2700.000\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 1\ncpu cores\t: 2\napicid\t\t: 3\ninitial apicid\t: 3\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\n",
+    "meminfo": "MemTotal:       16078424 kB\nMemFree:        11050892 kB\nMemAvailable:   14684512 kB\nBuffers:           74056 kB\nCached:          3795844 kB\nSwapCached:            0 kB\nActive:          1202524 kB\nInactive:        2960132 kB\nActive(anon):     351372 kB\nInactive(anon):        0 kB\nActive(file):     851152 kB\nInactive(file):  2960132 kB\nUnevictable:       45604 kB\nMlocked:           43728 kB\nSwapTotal:       3145724 kB\nSwapFree:        3145724 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:            168956 kB\nWriteback:             0 kB\nAnonPages:        338372 kB\nMapped:           363660 kB\nShmem:             49924 kB\nKReclaimable:     148668 kB\nSlab:             236564 kB\nSReclaimable:     148668 kB\nSUnreclaim:        87896 kB\nKernelStack:        4712 kB\nPageTables:         6628 kB\nSecPageTables:         0 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    11184936 kB\nCommitted_AS:    2291752 kB\nVmallocTotal:   34359738367 kB\nVmallocUsed:       38868 kB\nVmallocChunk:          0 kB\nPercpu:             2448 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:         0 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:    614400 kB\nFilePmdMapped:         0 kB\nCmaTotal:              0 kB\nCmaFree:         1763328 kB\nUnaccepted:            0 kB\nBalloon:               0 kB\nGPUActive:             0 kB\nGPUReclaim:            0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\nDirectMap4k:      145840 kB\nDirectMap2M:     4798464 kB\nDirectMap1G:    11534336 kB\n",
+    "perf_event_paranoid": "4\n",
+    "governor": "[Errno 2] No such file or directory: '/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'",
+    "clocksource": "tsc\n"
+  },
+  "build_ledger": {
+    "baseline": "52d305b3a2e643d4b2867c6a6d62fae807836d743830e06c8bd1988ebe594edd",
+    "candidate": "1863bbc5cfe8a39164d71a26fa888edd7a61255df4630ee2e24763270872b13c"
+  },
+  "artifact": {
+    "run": 44710858859,
+    "artifact_id": 14618525882,
+    "artifact_size_bytes": 26398548,
+    "archive_digest": "sha256:6e615fcba61eb671f9e809b744df2d99e8afeb69fe4ef3c5f5dd08027ef0ece8",
+    "selected_bytes": 440874,
+    "transfer_mode": "ranges",
+    "transferred_bytes": 157599,
+    "selected_sha256": {
+      "cpu-evidence/build-baseline.json": "52d305b3a2e643d4b2867c6a6d62fae807836d743830e06c8bd1988ebe594edd",
+      "cpu-evidence/build-baseline.log": "63011b85d77770ba6538319f0f774a3bd91760f58a479457f4584ce65f0daeba",
+      "cpu-evidence/build-candidate.json": "1863bbc5cfe8a39164d71a26fa888edd7a61255df4630ee2e24763270872b13c",
+      "cpu-evidence/build-candidate.log": "36948d7ee4c53ed3167f21091983d5c02bd57080dd3cea38a9039324ae3c71e0",
+      "cpu-evidence/manifest.json": "0cc62283fc156a426e0dc0615d222dd8ebca62c7369b907e550be8d45a25ae83",
+      "cpu-evidence/request.json": "88413ed4e1290033fe8fdaf02af6898620c2e88972a37e5e20131f2841d4465f",
+      "cpu-evidence/rotation.json": "7d21b641033cdab64a0c91969f117c4f8e436a052b507cd3ff39562062272e80",
+      "cpu-evidence/summary.json": "41068fe211bfa28f427c8b71b47b7dbad6ef9fb5cb3674c7cf58ca7f5b35ba3d",
+      "cpu-evidence/window-000/client.json": "7be9dfab553171ff1a76ce1b2c916afc6ba3b06d86bbb3b09d39fe3c9034c5f3",
+      "cpu-evidence/window-000/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-000/process-cpu-clock.json": "3bae5394cc76524998c2dd1ff18091e60e42b4dfa830930386264328a8e6b6ad",
+      "cpu-evidence/window-000/result.json": "a63361cb7154380b4a0311df070bb863d962d7e73f37e6b7340dfc4214b43a6b",
+      "cpu-evidence/window-000/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-001/client.json": "f0486f6932abbaf8ee3bc32718f25cde33378476795fa3d4ab611807b023b71f",
+      "cpu-evidence/window-001/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-001/process-cpu-clock.json": "b1d046436d1c1d21554caa4f7f629634fcafbe492981693799692994bc315dd3",
+      "cpu-evidence/window-001/result.json": "3edbf30479eae265fa1721e72b11dccb3b19d92b7d54f2594195277e763f8f0b",
+      "cpu-evidence/window-001/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-002/client.json": "0a796402ab809d2995c076975d6f51610cd69f79152aec71b563196f9efb12b5",
+      "cpu-evidence/window-002/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-002/process-cpu-clock.json": "425a31da953755184103c7c6574ee63a0ca6d37820da71bb51301375a0ec1889",
+      "cpu-evidence/window-002/result.json": "fd82432c1cc66064a6ad6f2b060c28efd9ca88da3c558bb068db8434fc8a368a",
+      "cpu-evidence/window-002/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-003/client.json": "e518f001314b8c8b41f4256f970639b9f4306473f2600b2f324f41d3b8996764",
+      "cpu-evidence/window-003/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-003/process-cpu-clock.json": "e8d3bfc70fbcdca63ba0bb6067294dee84b00c42d34b2d04301f75ed9fee5818",
+      "cpu-evidence/window-003/result.json": "15cfe1e9431a266a6c2b9b557fb8cace6f930e77b5e718bbb02c8f0d274a0ffd",
+      "cpu-evidence/window-003/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-004/client.json": "367f07e2dfa0791f064a446fa08fcb04087b9e4635f57fbc2e7e821fe9cfc340",
+      "cpu-evidence/window-004/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-004/process-cpu-clock.json": "d80d0a048ebee36f0cdaeff1d226a465a6c0e96f3aa2072dce790ca81003acbe",
+      "cpu-evidence/window-004/result.json": "bb07e189b5b2145204491034407485080bc7bbc22aaf0754013f4021471e3318",
+      "cpu-evidence/window-004/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-005/client.json": "432a38d424040fc5d690cdf621971d5369947c7f1a5af0baf598d345cf0f1d7d",
+      "cpu-evidence/window-005/process-cpu-clock.json": "fc51efc903abcc32c3c7d6512def6a20c63c050461dcad7aa4d4892299eef150",
+      "cpu-evidence/window-005/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-005/result.json": "22f9275de375a189c3f9e4c9c3913c5140ddd344e979fd12594bbf5432e4ce31",
+      "cpu-evidence/window-005/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-006/client.json": "51b4293e3a321550d81b010ee8c33f95f59efb6fa796a1a36ad4c6d0cf6c1825",
+      "cpu-evidence/window-006/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-006/process-cpu-clock.json": "f8164072ca7780de5222265a77a42375ae090c98549dc14ae8edb6f41744a479",
+      "cpu-evidence/window-006/result.json": "e7fd9eae83ba387f20330ecd87d4343bdf15036533da75bd37f0634b1c9bff44",
+      "cpu-evidence/window-006/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-evidence/window-007/client.json": "88174c11a065b02419c6d0d4886c2f6a079a4a0b9a722fbb630cd961607e548b",
+      "cpu-evidence/window-007/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-007/process-cpu-clock.json": "ddee0fe3155deab13a786e649481bd2ae1748752512b32f7b1e10ce03726c9c8",
+      "cpu-evidence/window-007/result.json": "24f6332bf65ebe9b799bf852b568493a2377cdb5b77b4a46076c2736044295e1",
+      "cpu-evidence/window-007/server.log": "4e729155a38635dea6e73b87460c738e7c443f64b78deb275640fdb2b1b632a5",
+      "cpu-setup-logs/endpoint-tests.log": "91b1af86acd7a7187fdc6e59a587f564e9b366d06306e549f40fc6ddd6fc8c2e",
+      "cpu-setup-logs/input-validation.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "cpu-setup-logs/native-clippy.log": "b83f446489c4e62341b9886c0e093903ce9cd32e4ed5f4b1a36d39904c21d207",
+      "cpu-setup-logs/native-lock-input.json": "1aa4199bbf2cb594de55d90c235387173503660d98e91b831fd05b2ed7d2cd95",
+      "cpu-setup-logs/python.log": "8335a2556903f9af96cd491c97238f9ab776c6e1e9a42c4cc0ea04b9a219daa0",
+      "cpu-setup-logs/staged-tests.log": "acd5de39f4ce8e2d7da0d986cb0f98517395bdb781dc7cc38bb961b0cb29d0fc"
+    }
+  },
+  "client_sha256": "e6ffe58b25a96e68bb136044de375e4750c5c998304805cdb880c07427f0fcb9",
+  "server_sha256": {
+    "baseline": "324da26ecf376b47910c3891a4fc7d500db73014badc947ae3993890387d603c",
+    "candidate": "324da26ecf376b47910c3891a4fc7d500db73014badc947ae3993890387d603c"
+  },
+  "locks": {
+    "baseline": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42",
+    "candidate": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42"
+  },
+  "workload": {
+    "baseline_sha": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+    "resource_profile": "service-allocated",
+    "candidate_sha": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+    "cells": [
+      [
+        "unprotected",
+        16384,
+        50,
+        "coaptic-mio"
+      ]
+    ],
+    "seconds": 72,
+    "repeats": 4,
+    "long_window": true,
+    "security_mode": "unprotected",
+    "partial_matrix": true,
+    "measurement_timeout_seconds": 89,
+    "paced_span_limit_seconds": 1500,
+    "operation_deadline_ms": 3000,
+    "outbound_datagram_limit": 60000,
+    "peer_cpu_control": true,
+    "perf": false,
+    "concurrency": 4,
+    "independent_endpoints": true,
+    "group_starts": true,
+    "admission_diagnostics": false,
+    "message_type": "con",
+    "candidate_server_kind": null,
+    "comparison_type": "peer_cpu_control",
+    "RUSTUP_TOOLCHAIN": "1.99.0"
+  },
+  "original_latency_guards_ns": {
+    "median": 2000,
+    "p99": 10000
+  },
+  "windows": {
+    "000-unprotected-0-baseline": {
+      "label": "baseline",
+      "repeat": 0,
+      "raw_result_sha256": "a63361cb7154380b4a0311df070bb863d962d7e73f37e6b7340dfc4214b43a6b",
+      "raw_client_sha256": "7be9dfab553171ff1a76ce1b2c916afc6ba3b06d86bbb3b09d39fe3c9034c5f3",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 523450.5,
+        "p99_ns": 620586
+      },
+      "offered": 50,
+      "achieved": 50.055191344099754,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.19,
+          "system_seconds": 0.19,
+          "total_seconds": 0.38,
+          "ns_per_verified_operation": 105555.55555555556
+        },
+        "client": {
+          "user_seconds": 0.21,
+          "system_seconds": 0.3,
+          "total_seconds": 0.51,
+          "ns_per_verified_operation": 141666.66666666666
+        }
+      },
+      "cpu_ticks": 38,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6668288,
+            "vms": 12914688,
+            "shared": 5890048,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3141632,
+            "vms": 4161536,
+            "shared": 2797568,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6668288,
+            "vms": 12914688,
+            "shared": 5890048,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3166208,
+            "vms": 4161536,
+            "shared": 2797568,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "inherited",
+        "before": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "after": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "3bae5394cc76524998c2dd1ff18091e60e42b4dfa830930386264328a8e6b6ad"
+    },
+    "001-unprotected-0-candidate": {
+      "label": "candidate",
+      "repeat": 0,
+      "raw_result_sha256": "3edbf30479eae265fa1721e72b11dccb3b19d92b7d54f2594195277e763f8f0b",
+      "raw_client_sha256": "f0486f6932abbaf8ee3bc32718f25cde33378476795fa3d4ab611807b023b71f",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 464436.0,
+        "p99_ns": 547407
+      },
+      "offered": 50,
+      "achieved": 50.05521209191994,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.1,
+          "system_seconds": 0.21,
+          "total_seconds": 0.31,
+          "ns_per_verified_operation": 86111.11111111111
+        },
+        "client": {
+          "user_seconds": 0.23,
+          "system_seconds": 0.23,
+          "total_seconds": 0.46,
+          "ns_per_verified_operation": 127777.77777777778
+        }
+      },
+      "cpu_ticks": 31,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6832128,
+            "vms": 12918784,
+            "shared": 6049792,
+            "text": 7393280,
+            "lib": 0,
+            "data": 819200,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3125248,
+            "vms": 4161536,
+            "shared": 2781184,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6832128,
+            "vms": 12918784,
+            "shared": 6049792,
+            "text": 7393280,
+            "lib": 0,
+            "data": 819200,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3149824,
+            "vms": 4161536,
+            "shared": 2781184,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "separate",
+        "before": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        },
+        "after": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        899,
+        900,
+        900,
+        1
+      ],
+      "process_clock_sha256": "b1d046436d1c1d21554caa4f7f629634fcafbe492981693799692994bc315dd3"
+    },
+    "002-unprotected-1-candidate": {
+      "label": "candidate",
+      "repeat": 1,
+      "raw_result_sha256": "fd82432c1cc66064a6ad6f2b060c28efd9ca88da3c558bb068db8434fc8a368a",
+      "raw_client_sha256": "0a796402ab809d2995c076975d6f51610cd69f79152aec71b563196f9efb12b5",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 466438.0,
+        "p99_ns": 555248
+      },
+      "offered": 50,
+      "achieved": 50.055206940980185,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.16,
+          "system_seconds": 0.16,
+          "total_seconds": 0.32,
+          "ns_per_verified_operation": 88888.88888888889
+        },
+        "client": {
+          "user_seconds": 0.0,
+          "system_seconds": 0.45,
+          "total_seconds": 0.45,
+          "ns_per_verified_operation": 125000.0
+        }
+      },
+      "cpu_ticks": 32,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6934528,
+            "vms": 12914688,
+            "shared": 6156288,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3129344,
+            "vms": 4161536,
+            "shared": 2785280,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6934528,
+            "vms": 12914688,
+            "shared": 6156288,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3153920,
+            "vms": 4161536,
+            "shared": 2785280,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "separate",
+        "before": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        },
+        "after": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "425a31da953755184103c7c6574ee63a0ca6d37820da71bb51301375a0ec1889"
+    },
+    "003-unprotected-1-baseline": {
+      "label": "baseline",
+      "repeat": 1,
+      "raw_result_sha256": "15cfe1e9431a266a6c2b9b557fb8cace6f930e77b5e718bbb02c8f0d274a0ffd",
+      "raw_client_sha256": "e518f001314b8c8b41f4256f970639b9f4306473f2600b2f324f41d3b8996764",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 433643.5,
+        "p99_ns": 533716
+      },
+      "offered": 50,
+      "achieved": 50.05519986635651,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.34,
+          "system_seconds": 0.0,
+          "total_seconds": 0.34,
+          "ns_per_verified_operation": 94444.44444444444
+        },
+        "client": {
+          "user_seconds": 0.2,
+          "system_seconds": 0.24,
+          "total_seconds": 0.44,
+          "ns_per_verified_operation": 122222.22222222222
+        }
+      },
+      "cpu_ticks": 34,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6725632,
+            "vms": 12914688,
+            "shared": 5947392,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3063808,
+            "vms": 4161536,
+            "shared": 2719744,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6725632,
+            "vms": 12914688,
+            "shared": 5947392,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3088384,
+            "vms": 4161536,
+            "shared": 2719744,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "inherited",
+        "before": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "after": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "e8d3bfc70fbcdca63ba0bb6067294dee84b00c42d34b2d04301f75ed9fee5818"
+    },
+    "004-unprotected-2-baseline": {
+      "label": "baseline",
+      "repeat": 2,
+      "raw_result_sha256": "bb07e189b5b2145204491034407485080bc7bbc22aaf0754013f4021471e3318",
+      "raw_client_sha256": "367f07e2dfa0791f064a446fa08fcb04087b9e4635f57fbc2e7e821fe9cfc340",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 452548.5,
+        "p99_ns": 594007
+      },
+      "offered": 50,
+      "achieved": 50.05510696382279,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.19,
+          "system_seconds": 0.19,
+          "total_seconds": 0.38,
+          "ns_per_verified_operation": 105555.55555555556
+        },
+        "client": {
+          "user_seconds": 0.12,
+          "system_seconds": 0.36,
+          "total_seconds": 0.48,
+          "ns_per_verified_operation": 133333.33333333334
+        }
+      },
+      "cpu_ticks": 38,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6680576,
+            "vms": 12914688,
+            "shared": 5902336,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3129344,
+            "vms": 4161536,
+            "shared": 2785280,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6680576,
+            "vms": 12914688,
+            "shared": 5902336,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3153920,
+            "vms": 4161536,
+            "shared": 2785280,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "inherited",
+        "before": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "after": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "d80d0a048ebee36f0cdaeff1d226a465a6c0e96f3aa2072dce790ca81003acbe"
+    },
+    "005-unprotected-2-candidate": {
+      "label": "candidate",
+      "repeat": 2,
+      "raw_result_sha256": "22f9275de375a189c3f9e4c9c3913c5140ddd344e979fd12594bbf5432e4ce31",
+      "raw_client_sha256": "432a38d424040fc5d690cdf621971d5369947c7f1a5af0baf598d345cf0f1d7d",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 548459.5,
+        "p99_ns": 667020
+      },
+      "offered": 50,
+      "achieved": 50.05512609342745,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.18,
+          "system_seconds": 0.2,
+          "total_seconds": 0.38,
+          "ns_per_verified_operation": 105555.55555555556
+        },
+        "client": {
+          "user_seconds": 0.35,
+          "system_seconds": 0.22,
+          "total_seconds": 0.57,
+          "ns_per_verified_operation": 158333.33333333334
+        }
+      },
+      "cpu_ticks": 38,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6684672,
+            "vms": 12914688,
+            "shared": 5906432,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3129344,
+            "vms": 4161536,
+            "shared": 2785280,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6684672,
+            "vms": 12914688,
+            "shared": 5906432,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3153920,
+            "vms": 4161536,
+            "shared": 2785280,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "separate",
+        "before": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        },
+        "after": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "fc51efc903abcc32c3c7d6512def6a20c63c050461dcad7aa4d4892299eef150"
+    },
+    "006-unprotected-3-candidate": {
+      "label": "candidate",
+      "repeat": 3,
+      "raw_result_sha256": "e7fd9eae83ba387f20330ecd87d4343bdf15036533da75bd37f0634b1c9bff44",
+      "raw_client_sha256": "51b4293e3a321550d81b010ee8c33f95f59efb6fa796a1a36ad4c6d0cf6c1825",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 527170.0,
+        "p99_ns": 644403
+      },
+      "offered": 50,
+      "achieved": 50.05522656341465,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.09,
+          "system_seconds": 0.28,
+          "total_seconds": 0.37,
+          "ns_per_verified_operation": 102777.77777777778
+        },
+        "client": {
+          "user_seconds": 0.16,
+          "system_seconds": 0.39,
+          "total_seconds": 0.55,
+          "ns_per_verified_operation": 152777.77777777778
+        }
+      },
+      "cpu_ticks": 37,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6942720,
+            "vms": 12914688,
+            "shared": 6164480,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3067904,
+            "vms": 4161536,
+            "shared": 2719744,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6942720,
+            "vms": 12914688,
+            "shared": 6164480,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3092480,
+            "vms": 4161536,
+            "shared": 2719744,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "separate",
+        "before": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        },
+        "after": {
+          "server": [
+            0
+          ],
+          "client": [
+            1
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "f8164072ca7780de5222265a77a42375ae090c98549dc14ae8edb6f41744a479"
+    },
+    "007-unprotected-3-baseline": {
+      "label": "baseline",
+      "repeat": 3,
+      "raw_result_sha256": "24f6332bf65ebe9b799bf852b568493a2377cdb5b77b4a46076c2736044295e1",
+      "raw_client_sha256": "88174c11a065b02419c6d0d4886c2f6a079a4a0b9a722fbb630cd961607e548b",
+      "verified": 3600,
+      "latency": {
+        "median_ns": 496296.5,
+        "p99_ns": 673179
+      },
+      "offered": 50,
+      "achieved": 50.05511701789464,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 57600,
+        "received_datagrams": 57600
+      },
+      "peak_pending": 4,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.2,
+          "system_seconds": 0.2,
+          "total_seconds": 0.4,
+          "ns_per_verified_operation": 111111.11111111111
+        },
+        "client": {
+          "user_seconds": 0.29,
+          "system_seconds": 0.24,
+          "total_seconds": 0.53,
+          "ns_per_verified_operation": 147222.22222222222
+        }
+      },
+      "cpu_ticks": 40,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6942720,
+            "vms": 12914688,
+            "shared": 6164480,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3067904,
+            "vms": 4161536,
+            "shared": 2719744,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6942720,
+            "vms": 12914688,
+            "shared": 6164480,
+            "text": 7393280,
+            "lib": 0,
+            "data": 815104,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3092480,
+            "vms": 4161536,
+            "shared": 2719744,
+            "text": 888832,
+            "lib": 0,
+            "data": 540672,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": false,
+      "peer_cpu_placement": {
+        "mode": "inherited",
+        "before": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "after": {
+          "server": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "client": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "diagnostic_accountable": true,
+      "start_group_width": 4,
+      "verified_by_endpoint": [
+        900,
+        900,
+        900,
+        900
+      ],
+      "overlap_completions": [
+        900,
+        900,
+        900,
+        0
+      ],
+      "process_clock_sha256": "ddee0fe3155deab13a786e649481bd2ae1748752512b32f7b1e10ce03726c9c8"
+    }
+  },
+  "scores": {
+    "unprotected": {
+      "eligible": false,
+      "pairs": [
+        {
+          "repeat": 0,
+          "latency_guard": {
+            "median_ns": -59014.5,
+            "p99_ns": -73179,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 1,
+          "latency_guard": {
+            "median_ns": 32794.5,
+            "p99_ns": 21532,
+            "passed": false
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 2,
+          "latency_guard": {
+            "median_ns": 95911.0,
+            "p99_ns": 73013,
+            "passed": false
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 3,
+          "latency_guard": {
+            "median_ns": 30873.5,
+            "p99_ns": -28776,
+            "passed": false
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        }
+      ],
+      "pooled_latency_guard": {
+        "median_ns": 26526.5,
+        "p99_ns": 8948,
+        "passed": false
+      },
+      "eligible_cpu_time_ns_per_op": null,
+      "eligible_cpu_time_ratio": null,
+      "control_guards_passed": false
+    }
+  },
+  "host_report_sha256": "41068fe211bfa28f427c8b71b47b7dbad6ef9fb5cb3674c7cf58ca7f5b35ba3d",
+  "purpose": "same-binary inherited versus separate guest core diagnostic; no primary CPU comparison",
+  "peer_cpu_plan": {
+    "inherited": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "server": 0,
+    "client": 1,
+    "topology": {
+      "0": [
+        0,
+        0
+      ],
+      "1": [
+        0,
+        1
+      ],
+      "2": [
+        0,
+        0
+      ],
+      "3": [
+        0,
+        1
+      ]
+    }
+  }
+}

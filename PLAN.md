@@ -205,6 +205,11 @@ for actual stop or transfer conditions.
 26. A Tokio UDP test drops the final Block1 reply after the assembled
     body is released. Both protection modes replay the exact reply
     without a second effect, then reuse the slot for another upload.
+27. The [Linux peer-placement control](architecture/requirements/LINUX-PEER-CPU-PLACEMENT-20261120.md)
+    verifies 28,800 reads with stable masks. Separate guest cores still
+    fail three pair medians and the pooled median. Retain the control
+    and keep the existing placement. The next qualifying CPU comparison
+    needs repeatable matched windows under the original latency guards.
 
 ## Blocked and deferred work
 
