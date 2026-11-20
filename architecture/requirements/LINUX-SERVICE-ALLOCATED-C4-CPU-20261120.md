@@ -46,6 +46,6 @@ and original source comparisons within this run are matched. The
 [fixed Service C4 run](LINUX-SERVICE-C4-CPU-20261120.md) is on a
 different hosted machine. The two runs do not isolate allocation
 mode or measure peak memory, device results or throughput capacity.
-An additional longer grouped window could improve accounting
-resolution at this offered load while retaining the failed windows.
-Both original #650 targets stay open.
+The [72-second unprotected partition](LINUX-SERVICE-ALLOCATED-C4-LONG-CPU-20261120.md)
+clears the accounting floor and fails the median guard. Both original
+#650 targets stay open.

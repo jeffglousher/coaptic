@@ -1,9 +1,7 @@
 # Project plan
 
-Updated 2026-11-19 after measuring accepted core `c172c44` and companion
-`9019751`. Production Rust remains `b875088`. Companion
-[#266](https://github.com/jeffglousher/coaptic-validation/pull/266) delivers the
-Windows process-cycle diagnostic.
+Updated 2026-11-20 after measuring accepted core `753beb0` with companion
+`5d55676` in the allocated Service long-window comparison.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
@@ -177,6 +175,10 @@ for actual stop or transfer conditions.
     a partial upload in each protection mode. A second upload receives a
     refusal with no handler effect. The first and a fresh third upload
     each deliver the complete tagged body once and release the slot.
+19. The [unprotected long-window comparison](architecture/requirements/LINUX-SERVICE-ALLOCATED-C4-LONG-CPU-20261120.md)
+    clears the CPU accounting floor and verifies all 28,800 reads. The
+    median guard withholds the CPU ratio. Run the separately pinned
+    established OSCORE partition and apply the same guards.
 
 ## Blocked and deferred work
 
