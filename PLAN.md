@@ -167,6 +167,12 @@ for actual stop or transfer conditions.
     protection mode. It verifies the same retry and reply bytes, one
     server effect per Call, and a second completed mutation on the same
     sockets. The test drives protocol time and uses real UDP readiness.
+16. The [allocated Service C4 comparison](architecture/requirements/LINUX-SERVICE-ALLOCATED-C4-CPU-20261120.md)
+    verifies 24,000 reads and all pair and pooled latency guards. Seven
+    windows miss the CPU accounting floor. Both ratios stay withheld.
+17. The [Windows direct Mio screen](architecture/requirements/WINDOWS-DIRECT-MIO-20261120.md)
+    verifies 115,200 reads, with a 2,048-byte smaller App owner. Only
+    one of 16 pairs meets every advancement gate. Keep the guarded path.
 
 ## Blocked and deferred work
 
