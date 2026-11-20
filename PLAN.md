@@ -148,6 +148,17 @@ for actual stop or transfer conditions.
     verifies all 172,800 measured reads. All pairs miss pacing, and all
     operation p99 observations rise with a single-CPU server. Keep the
     default placement.
+12. The [Windows primary-thread results](architecture/requirements/WINDOWS-PRIMARY-THREAD-CYCLES-20261120.md)
+    charge every sampled server cycle to the primary thread. Separate
+    process-only controls limit the runtime comparison. The App, runtime
+    and kernel costs within that thread stay unresolved.
+13. The [Linux SmallDevice comparison](architecture/requirements/LINUX-SMALLDEVICE-CPU-20261120.md)
+    verifies all 480,000 body-free 32-byte reads. Both protection modes
+    fail p99 guards at 1,000 starts/s and withhold CPU-time ratios.
+    Companion [#274](https://github.com/jeffglousher/coaptic-validation/pull/274)
+    separately verifies four occupied 16 KiB receive bodies, cancellation
+    and expiry, late replies and successful replacement Calls on the same
+    endpoints in both protection modes.
 
 ## Blocked and deferred work
 
