@@ -33,6 +33,14 @@ cycles and inconsistent CPU time. The unprotected 4,096-byte pairs fail
 the p99 guard. This screen leaves both CPU targets and the retained
 historical cohort open.
 
+The separate [Linux fixed Service C1 comparison](LINUX-SERVICE-CPU-20261120.md)
+uses original `b8f44fa` and accepted `753beb0` at 16 KiB and 50 starts/s
+with four 30-second rotated pairs per protection. All 24,000 reads
+verify, with pacing and ticks in range. Unprotected repeat 2 and
+pooled p99 fail, and established OSCORE repeat 3 fails. CPU ratios
+are withheld. The corrected short-window aggregator enforces the same
+latency gates on later campaigns.
+
 The separately declared SmallDevice 32-byte/C1 CON/1,000/s stratum in
 [run 40054024038](https://github.com/jeffglousher/coaptic-validation/actions/runs/40054024038)
 compares that original baseline with accepted `d23f93c`, same Mio, companion

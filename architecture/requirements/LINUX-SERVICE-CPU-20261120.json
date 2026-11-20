@@ -1,0 +1,1554 @@
+{
+  "schema": 1,
+  "run": 44688190914,
+  "workflow_commit": "bd2a18b627e481f4ad8c7b3a9ffde4f6e580b043",
+  "cores": {
+    "baseline": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+    "candidate": "753beb0269de31f806ff9e42f9b50412c6eb86e4"
+  },
+  "hardware": {
+    "platform": "Linux-7.0.0-1014-aws-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+    "clock_ticks_per_second": 100,
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu_count": 4,
+    "load_average": [
+      1.5849609375,
+      1.01220703125,
+      0.451171875
+    ],
+    "cpuinfo": "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3728.068\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 0\ncpu cores\t: 2\napicid\t\t: 0\ninitial apicid\t: 0\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\nprocessor\t: 1\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3860.960\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 1\ncpu cores\t: 2\napicid\t\t: 2\ninitial apicid\t: 2\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\nprocessor\t: 2\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3084.780\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 0\ncpu cores\t: 2\napicid\t\t: 1\ninitial apicid\t: 1\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\nprocessor\t: 3\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 173\nmodel name\t: Intel(R) Xeon(R) 6975P-C\nstepping\t: 1\nmicrocode\t: 0x1000434\ncpu MHz\t\t: 3250.463\ncache size\t: 491520 KB\nphysical id\t: 0\nsiblings\t: 4\ncore id\t\t: 1\ncpu cores\t: 2\napicid\t\t: 3\ninitial apicid\t: 3\nfpu\t\t: yes\nfpu_exception\t: yes\ncpuid level\t: 36\nwp\t\t: yes\nflags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq monitor vmx ssse3 fma cx16 pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx_vnni avx512_bf16 wbnoinvd ida arat vnmi avx512vbmi umip pku ospke waitpkg avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg tme avx512_vpopcntdq rdpid bus_lock_detect cldemote movdiri movdir64b md_clear serialize amx_bf16 avx512_fp16 amx_tile amx_int8 flush_l1d arch_capabilities\nvmx flags\t: vnmi preemption_timer posted_intr invvpid ept_x_only ept_ad ept_1gb ept_5level flexpriority apicv tsc_offset vtpr mtf vapic ept vpid unrestricted_guest vapic_reg vid shadow_vmcs pml tsc_scaling usr_wait_pause\nbugs\t\t: spectre_v1 spectre_v2 spec_store_bypass swapgs bhi spectre_v2_user\nbogomips\t: 5400.00\nclflush size\t: 64\ncache_alignment\t: 64\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\n",
+    "meminfo": "MemTotal:       16078424 kB\nMemFree:        10999032 kB\nMemAvailable:   14621528 kB\nBuffers:           73772 kB\nCached:          3785244 kB\nSwapCached:            0 kB\nActive:          1204304 kB\nInactive:        2947592 kB\nActive(anon):     351572 kB\nInactive(anon):        0 kB\nActive(file):     852732 kB\nInactive(file):  2947592 kB\nUnevictable:       45620 kB\nMlocked:           43744 kB\nSwapTotal:       3145724 kB\nSwapFree:        3145724 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:            167828 kB\nWriteback:             0 kB\nAnonPages:        338548 kB\nMapped:           363764 kB\nShmem:             49984 kB\nKReclaimable:     148344 kB\nSlab:             235952 kB\nSReclaimable:     148344 kB\nSUnreclaim:        87608 kB\nKernelStack:        4728 kB\nPageTables:         6640 kB\nSecPageTables:         0 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    11184936 kB\nCommitted_AS:    2273616 kB\nVmallocTotal:   34359738367 kB\nVmallocUsed:       38884 kB\nVmallocChunk:          0 kB\nPercpu:             2448 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:         0 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:    614400 kB\nFilePmdMapped:         0 kB\nCmaTotal:              0 kB\nCmaFree:         1759232 kB\nUnaccepted:            0 kB\nBalloon:               0 kB\nGPUActive:             0 kB\nGPUReclaim:            0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\nDirectMap4k:      160176 kB\nDirectMap2M:     5832704 kB\nDirectMap1G:    10485760 kB\n",
+    "perf_event_paranoid": "4\n",
+    "governor": "[Errno 2] No such file or directory: '/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'",
+    "clocksource": "tsc\n"
+  },
+  "build_ledger": {
+    "baseline": "133b4b05243aeb4c1d876dc2e950bea68782a92a7a572a6915cba706e7d10064",
+    "candidate": "9f6fbf943d8317fe1e7b9c6c00daf23a374caf2317a1bc0debc390682330ac76"
+  },
+  "artifact": {
+    "run": 44688190914,
+    "artifact_id": 14607643921,
+    "artifact_size_bytes": 26761109,
+    "archive_digest": "sha256:71a25a07b98fce089d95d7cc80464f5569fa6eed112f7bc1c259285e7244e6c9",
+    "selected_bytes": 482204,
+    "transfer_mode": "ranges",
+    "transferred_bytes": 178409,
+    "selected_sha256": {
+      "cpu-evidence/build-baseline.json": "133b4b05243aeb4c1d876dc2e950bea68782a92a7a572a6915cba706e7d10064",
+      "cpu-evidence/build-baseline.log": "2a8c2c5105f01e47d0b02332ab9da48b8f80b6b9190fe042140d07d775337127",
+      "cpu-evidence/build-candidate.json": "9f6fbf943d8317fe1e7b9c6c00daf23a374caf2317a1bc0debc390682330ac76",
+      "cpu-evidence/build-candidate.log": "a4245d086ba8a6b3be66122f295c1fd42d795308b78fd9502df461c29dccb1b3",
+      "cpu-evidence/manifest.json": "6887e80cf77583b0d72524a26f58c865b1f50f1615c4ab6fbaa3d9666bf84578",
+      "cpu-evidence/request.json": "aa5b6122837becc8f32c35849470bc6ca4cc156b9030b932f31aed75f9e4c8da",
+      "cpu-evidence/rotation.json": "7bc38c237a4fb2d04f3ebf4f223d485163a227a78a0423f506b31d7c0387730a",
+      "cpu-evidence/summary.json": "831fc8eae1fbbb4f4da9302d341aa88001cdccb8a6ed0ba4a2d570645ba5a389",
+      "cpu-evidence/window-000/client.json": "f062241951b93f47b015772d92ee15f1c50c50920604fcc163bd6309a8af02b4",
+      "cpu-evidence/window-000/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-000/process-cpu-clock.json": "aa3f5e4e7b66b5a18294831fbd642a6573575d3bad36bf62caeee57e780c3f9f",
+      "cpu-evidence/window-000/result.json": "6f71dc414a98c8136da038401db0aa6c224ea71df597ee26e78425905cf33a69",
+      "cpu-evidence/window-000/server.log": "0769be1c3927d38c464ddc9327b50f8293c1651f8ce26bffe708e01849a74aa4",
+      "cpu-evidence/window-001/client.json": "bfe6882c2b23005be6ac5f1269454b058363b93eadae7e830276226fccf91866",
+      "cpu-evidence/window-001/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-001/process-cpu-clock.json": "399760007b777a62beb82758ce3aaa4d4ad4c8dbca9e7740192864017433b2e1",
+      "cpu-evidence/window-001/result.json": "381632508c21ee33421951526deb84e7c27837a32d1c621b9b1b9ec8a60bde90",
+      "cpu-evidence/window-001/server.log": "5460e4d7d9fb476976aaaba02cbae55957071a8b0c1a89157340bcedef8e57d9",
+      "cpu-evidence/window-002/client.json": "4b0ae95e331e2d756539312ee9840db8e7506479efc31eb7190fc406b15b43b3",
+      "cpu-evidence/window-002/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-002/result.json": "7b81fdbb0ab7661758943f6316c91fe61d66f8ee922a76e52a22e370edfa21ea",
+      "cpu-evidence/window-002/process-cpu-clock.json": "ee79658b26353c8f0f7b17b37e0d9d48842f8d52ddb2085610c454fa65d8dc65",
+      "cpu-evidence/window-002/server.log": "257115e292caf3ea644e2e6de2a7ff55cd204c373d67bfe51963f1ed0695a3b8",
+      "cpu-evidence/window-003/client.json": "92ba0ed62fb6a96b262b62c009aa374003e4a7c5ee5f0bb5abee439c6e3e13dc",
+      "cpu-evidence/window-003/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-003/process-cpu-clock.json": "ecb713554f3ea107065e05fafea6dab9ebfc126f33b240ad6aa57e7c796c9b3a",
+      "cpu-evidence/window-003/result.json": "9f4c848d38ed575df10229233506fd8f74dc557604162eb372b2b936ac9c69de",
+      "cpu-evidence/window-003/server.log": "37c44e3b92508b7355f0668b5212d1f7984f14269dc8e790e18008f0827aabb1",
+      "cpu-evidence/window-004/client.json": "74c0229acdc4f0bdef092693c78d45f3f4458d11a6334fe9dc7f2de913755076",
+      "cpu-evidence/window-004/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-004/process-cpu-clock.json": "d04e64c235f3fa8e7ec6035f527b777f4b4de46cb0f2b1a823899b93131905d3",
+      "cpu-evidence/window-004/result.json": "ff4b29a7090003ea73f5310f6a9cd8ee0dcaf22d97c4e45e69d754996c07fb0f",
+      "cpu-evidence/window-004/server.log": "5460e4d7d9fb476976aaaba02cbae55957071a8b0c1a89157340bcedef8e57d9",
+      "cpu-evidence/window-005/client.json": "81b1e86e9d73584a8cc5fd027ae6b041ad55bdd7c2471b5a553389e62e826d6e",
+      "cpu-evidence/window-005/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-005/process-cpu-clock.json": "319fdaef53be7e79c759561b7fabd9a987300a9076fc37e2b7a85721628910f7",
+      "cpu-evidence/window-005/result.json": "4968f23e81532ba8ad3489215c9bb1ff9ac7d5e74b6fec00531c797c3d680c35",
+      "cpu-evidence/window-005/server.log": "0769be1c3927d38c464ddc9327b50f8293c1651f8ce26bffe708e01849a74aa4",
+      "cpu-evidence/window-006/client.json": "63edfda0954fab7b8a8c4853ae8238a7d35fc695757da695bcf9d101b60166d5",
+      "cpu-evidence/window-006/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-006/process-cpu-clock.json": "04ef4c0d271bb37e38acabf457cc555ea1b3bbaf098b1b1584a03fe6c4a4e9ec",
+      "cpu-evidence/window-006/result.json": "ec848b2a46be6696c38969fec0111dde677cccaf1b16605a3f0340990fe5c54c",
+      "cpu-evidence/window-006/server.log": "37c44e3b92508b7355f0668b5212d1f7984f14269dc8e790e18008f0827aabb1",
+      "cpu-evidence/window-007/client.json": "c65309fe4d096f3a45f4751d57e9ce9790fc06cae4a03329531ca687d5158c0b",
+      "cpu-evidence/window-007/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-007/result.json": "aa3ad369445d2d82a2dc35283dd5dc38f1603142825aba86643f26ed1faad32f",
+      "cpu-evidence/window-007/process-cpu-clock.json": "200752e237d42d8c21899f9e77cbd9417241157d7e013d133fe2374d66bcb48d",
+      "cpu-evidence/window-007/server.log": "257115e292caf3ea644e2e6de2a7ff55cd204c373d67bfe51963f1ed0695a3b8",
+      "cpu-evidence/window-008/client.json": "404cc04d6efb1d818ace3a067c2aa1aa337111f4c3bc6db1435d70689461b888",
+      "cpu-evidence/window-008/process-cpu-clock.json": "fa3a76457863db1463f376cb9ab582722552fddcb623fdaca1e9b8fb55c03ae2",
+      "cpu-evidence/window-008/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-008/result.json": "5908843c11b833762c87ceb5e02c62bace87f1b602059a90c4a42388bb333d06",
+      "cpu-evidence/window-009/client.json": "d005c2a4a9945d9bfd68ec5cbccbf4eeead9064715d63599d77558dedf400cc1",
+      "cpu-evidence/window-008/server.log": "0769be1c3927d38c464ddc9327b50f8293c1651f8ce26bffe708e01849a74aa4",
+      "cpu-evidence/window-009/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-009/process-cpu-clock.json": "5ea895b051829be9e110d357fee8f8ede4474d7013be899d197f374e2ee654d9",
+      "cpu-evidence/window-009/result.json": "89824c5842c919578a2b46e4ec681ae4dd4eb4047149a4d21e0bc35bc3d02dd1",
+      "cpu-evidence/window-009/server.log": "5460e4d7d9fb476976aaaba02cbae55957071a8b0c1a89157340bcedef8e57d9",
+      "cpu-evidence/window-010/client.json": "aed7222769ec67cdddc53d7f9aa5be3ac57a96b4503bf9bb53982f0a97101300",
+      "cpu-evidence/window-010/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-010/process-cpu-clock.json": "55970e030111f7c38ea9b6c1c0af5321291fa942cd41dfae0a6c746852d55d73",
+      "cpu-evidence/window-010/result.json": "2d712738f9a93435b3d18eef11c877585a2ebec16d2ba02141453131f6c545b5",
+      "cpu-evidence/window-010/server.log": "257115e292caf3ea644e2e6de2a7ff55cd204c373d67bfe51963f1ed0695a3b8",
+      "cpu-evidence/window-011/client.json": "f460face8cb20d44d887b6ab6c786f83f25dd9751a08c28423ed43ec2d1da439",
+      "cpu-evidence/window-011/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-011/process-cpu-clock.json": "371999625bb618b3ce658240fc3ccf3758396262d4aea14549bdb0be8bb5a441",
+      "cpu-evidence/window-011/result.json": "57fd2e94d622e680a6c68e0bf858e9a51a83923e5bb7ba692624d52a373f6e23",
+      "cpu-evidence/window-011/server.log": "37c44e3b92508b7355f0668b5212d1f7984f14269dc8e790e18008f0827aabb1",
+      "cpu-evidence/window-012/client.json": "f724ca86a04d098340560ba898fa632ecec609328376854ecf79c94013f9a843",
+      "cpu-evidence/window-012/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-012/process-cpu-clock.json": "3427792e094b209ec4a1befbed92d5626645cd0bf791a7c732484493e3109156",
+      "cpu-evidence/window-012/result.json": "fee9340ecc2af0a89343f1626bd258c632b79bdd7ac5fff704bde03e6807da3e",
+      "cpu-evidence/window-012/server.log": "5460e4d7d9fb476976aaaba02cbae55957071a8b0c1a89157340bcedef8e57d9",
+      "cpu-evidence/window-013/client.json": "4bdd928c72897afd2039c39ae9d49efa7c03fca9bb83059183a887cd7f1354e0",
+      "cpu-evidence/window-013/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-013/process-cpu-clock.json": "b6f14ff90ab1a8dd589f56b068edf6c40ee6f45ec5b361c6ee780bc37902781d",
+      "cpu-evidence/window-013/result.json": "456c8dcbb3cd85efbbc0c6709a89971e55d38c921ed68462705df8a76ebaf630",
+      "cpu-evidence/window-013/server.log": "0769be1c3927d38c464ddc9327b50f8293c1651f8ce26bffe708e01849a74aa4",
+      "cpu-evidence/window-014/client.json": "f3348bce5f2bbf5cbe67ea9f7d6aacfe8ddcfc440e900ed4b414bc6ed34462c8",
+      "cpu-evidence/window-014/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-014/process-cpu-clock.json": "1379c533c007ff9d089c69ce49c0f3391464910fbc8ddf7c78405c4656de0fd6",
+      "cpu-evidence/window-014/result.json": "0e1f24c181bcbd57c0a5def945ba58791482e144f41e361dde41965bdec6ffa9",
+      "cpu-evidence/window-014/server.log": "37c44e3b92508b7355f0668b5212d1f7984f14269dc8e790e18008f0827aabb1",
+      "cpu-evidence/window-015/client.json": "7dabf155a61c29c4216ddda5b43ab2500b3c5f13fbc1c2bc7f98bf7f640ccc44",
+      "cpu-evidence/window-015/client.stderr": "a2bf7553c470d3c8a839332056065431aa718b2e285996101733ca30e18f4856",
+      "cpu-evidence/window-015/process-cpu-clock.json": "488641a8872b0bf4c894601fc514897ac4f1de1442c8bacb16bd2199f368642a",
+      "cpu-evidence/window-015/result.json": "43605f7e51937311cfc341f1a76ea53914945236d368bd439aced094d5fa2193",
+      "cpu-evidence/window-015/server.log": "257115e292caf3ea644e2e6de2a7ff55cd204c373d67bfe51963f1ed0695a3b8",
+      "cpu-setup-logs/endpoint-tests.log": "f034add82f23df86d219298183b66b85371802eb5796d43c0a410bb392af2056",
+      "cpu-setup-logs/input-validation.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "cpu-setup-logs/native-clippy.log": "7d35b0a63cd12eb4b1681fd92c5bae2546a1018fbe6238054f708e2f2c71557c",
+      "cpu-setup-logs/native-lock-input.json": "d79c31db3f722f836ba2475040d0506d6ca1efece1bf5497be96cc8931791714",
+      "cpu-setup-logs/python.log": "3e9c0feec71be4907a0e51c8d2aa0b02e4a80dd91af7a3706ca24ad0e503eefa",
+      "cpu-setup-logs/staged-tests.log": "9dc079854ee95ede8d491fcfe6e7fa5c99afadde04199d8f80d8d7b56e7b98a9"
+    }
+  },
+  "client_sha256": "bcfb68d9a2bef536068a342d9b3aa424cd0e84d208974d4f072ea52a09668c1d",
+  "server_sha256": {
+    "baseline": "324da26ecf376b47910c3891a4fc7d500db73014badc947ae3993890387d603c",
+    "candidate": "2aef31212e28e699a1a2fe6f992bcc602a11f98bca7b9ebad5c70ab89fc79013"
+  },
+  "locks": {
+    "baseline": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42",
+    "candidate": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b"
+  },
+  "workload": {
+    "baseline_sha": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+    "resource_profile": "service-fixed",
+    "candidate_sha": "753beb0269de31f806ff9e42f9b50412c6eb86e4",
+    "cells": [
+      [
+        "unprotected",
+        16384,
+        50,
+        "coaptic-mio"
+      ],
+      [
+        "oscore",
+        16384,
+        50,
+        "coaptic-mio"
+      ]
+    ],
+    "seconds": 30,
+    "repeats": 4,
+    "long_window": false,
+    "security_mode": "both",
+    "partial_matrix": false,
+    "measurement_timeout_seconds": 60,
+    "paced_span_limit_seconds": 120,
+    "operation_deadline_ms": 3000,
+    "outbound_datagram_limit": 60000,
+    "perf": false,
+    "concurrency": 1,
+    "independent_endpoints": false,
+    "admission_diagnostics": false,
+    "message_type": "con",
+    "candidate_server_kind": null,
+    "comparison_type": "core_revision",
+    "RUSTUP_TOOLCHAIN": "1.99.0"
+  },
+  "original_latency_guards_ns": {
+    "median": 2000,
+    "p99": 10000
+  },
+  "windows": {
+    "000-unprotected-0-baseline": {
+      "label": "baseline",
+      "repeat": 0,
+      "raw_result_sha256": "6f71dc414a98c8136da038401db0aa6c224ea71df597ee26e78425905cf33a69",
+      "raw_client_sha256": "f062241951b93f47b015772d92ee15f1c50c50920604fcc163bd6309a8af02b4",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 343317.5,
+        "p99_ns": 536522
+      },
+      "offered": 50,
+      "achieved": 50.032468403595615,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.11,
+          "system_seconds": 0.2,
+          "total_seconds": 0.31,
+          "ns_per_verified_operation": 206666.66666666666
+        },
+        "client": {
+          "user_seconds": 0.29,
+          "system_seconds": 0.29,
+          "total_seconds": 0.58,
+          "ns_per_verified_operation": 386666.6666666667
+        }
+      },
+      "cpu_ticks": 31,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7270400,
+            "vms": 13320192,
+            "shared": 6090752,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1220608,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3072000,
+            "vms": 4005888,
+            "shared": 2777088,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7270400,
+            "vms": 13320192,
+            "shared": 6090752,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1220608,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3076096,
+            "vms": 4005888,
+            "shared": 2777088,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "aa3f5e4e7b66b5a18294831fbd642a6573575d3bad36bf62caeee57e780c3f9f"
+    },
+    "001-unprotected-0-candidate": {
+      "label": "candidate",
+      "repeat": 0,
+      "raw_result_sha256": "381632508c21ee33421951526deb84e7c27837a32d1c621b9b1b9ec8a60bde90",
+      "raw_client_sha256": "bfe6882c2b23005be6ac5f1269454b058363b93eadae7e830276226fccf91866",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 312115.5,
+        "p99_ns": 492636
+      },
+      "offered": 50,
+      "achieved": 50.03274873722271,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.05,
+          "system_seconds": 0.22,
+          "total_seconds": 0.27,
+          "ns_per_verified_operation": 180000.0
+        },
+        "client": {
+          "user_seconds": 0.37,
+          "system_seconds": 0.15,
+          "total_seconds": 0.52,
+          "ns_per_verified_operation": 346666.6666666667
+        }
+      },
+      "cpu_ticks": 27,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7020544,
+            "vms": 13340672,
+            "shared": 5861376,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1200128,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3076096,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7020544,
+            "vms": 13340672,
+            "shared": 5861376,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1200128,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3080192,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "399760007b777a62beb82758ce3aaa4d4ad4c8dbca9e7740192864017433b2e1"
+    },
+    "002-oscore-0-candidate": {
+      "label": "candidate",
+      "repeat": 0,
+      "raw_result_sha256": "7b81fdbb0ab7661758943f6316c91fe61d66f8ee922a76e52a22e370edfa21ea",
+      "raw_client_sha256": "4b0ae95e331e2d756539312ee9840db8e7506479efc31eb7190fc406b15b43b3",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 364564.5,
+        "p99_ns": 588323
+      },
+      "offered": 50,
+      "achieved": 50.03271847096598,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.08,
+          "system_seconds": 0.26,
+          "total_seconds": 0.34,
+          "ns_per_verified_operation": 226666.66666666666
+        },
+        "client": {
+          "user_seconds": 0.23,
+          "system_seconds": 0.39,
+          "total_seconds": 0.62,
+          "ns_per_verified_operation": 413333.3333333333
+        }
+      },
+      "cpu_ticks": 34,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7151616,
+            "vms": 13352960,
+            "shared": 5980160,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1212416,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3014656,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7151616,
+            "vms": 13352960,
+            "shared": 5980160,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1212416,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3022848,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "ee79658b26353c8f0f7b17b37e0d9d48842f8d52ddb2085610c454fa65d8dc65"
+    },
+    "003-oscore-0-baseline": {
+      "label": "baseline",
+      "repeat": 0,
+      "raw_result_sha256": "9f4c848d38ed575df10229233506fd8f74dc557604162eb372b2b936ac9c69de",
+      "raw_client_sha256": "92ba0ed62fb6a96b262b62c009aa374003e4a7c5ee5f0bb5abee439c6e3e13dc",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 460519.5,
+        "p99_ns": 662644
+      },
+      "offered": 50,
+      "achieved": 50.032562479166046,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.14,
+          "system_seconds": 0.23,
+          "total_seconds": 0.37,
+          "ns_per_verified_operation": 246666.66666666666
+        },
+        "client": {
+          "user_seconds": 0.45,
+          "system_seconds": 0.25,
+          "total_seconds": 0.7,
+          "ns_per_verified_operation": 466666.6666666667
+        }
+      },
+      "cpu_ticks": 37,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7421952,
+            "vms": 13332480,
+            "shared": 6234112,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1232896,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3010560,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7421952,
+            "vms": 13332480,
+            "shared": 6234112,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1232896,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3018752,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "ecb713554f3ea107065e05fafea6dab9ebfc126f33b240ad6aa57e7c796c9b3a"
+    },
+    "004-unprotected-1-candidate": {
+      "label": "candidate",
+      "repeat": 1,
+      "raw_result_sha256": "ff4b29a7090003ea73f5310f6a9cd8ee0dcaf22d97c4e45e69d754996c07fb0f",
+      "raw_client_sha256": "74c0229acdc4f0bdef092693c78d45f3f4458d11a6334fe9dc7f2de913755076",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 391422.0,
+        "p99_ns": 496831
+      },
+      "offered": 50,
+      "achieved": 50.03269838137446,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.1,
+          "system_seconds": 0.19,
+          "total_seconds": 0.29000000000000004,
+          "ns_per_verified_operation": 193333.33333333337
+        },
+        "client": {
+          "user_seconds": 0.26,
+          "system_seconds": 0.32,
+          "total_seconds": 0.5800000000000001,
+          "ns_per_verified_operation": 386666.66666666674
+        }
+      },
+      "cpu_ticks": 29,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6971392,
+            "vms": 13344768,
+            "shared": 5812224,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3076096,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6971392,
+            "vms": 13344768,
+            "shared": 5812224,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3080192,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "d04e64c235f3fa8e7ec6035f527b777f4b4de46cb0f2b1a823899b93131905d3"
+    },
+    "005-unprotected-1-baseline": {
+      "label": "baseline",
+      "repeat": 1,
+      "raw_result_sha256": "4968f23e81532ba8ad3489215c9bb1ff9ac7d5e74b6fec00531c797c3d680c35",
+      "raw_client_sha256": "81b1e86e9d73584a8cc5fd027ae6b041ad55bdd7c2471b5a553389e62e826d6e",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 409583.0,
+        "p99_ns": 528275
+      },
+      "offered": 50,
+      "achieved": 50.032502866667535,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.07,
+          "system_seconds": 0.23,
+          "total_seconds": 0.30000000000000004,
+          "ns_per_verified_operation": 200000.00000000003
+        },
+        "client": {
+          "user_seconds": 0.31,
+          "system_seconds": 0.31,
+          "total_seconds": 0.62,
+          "ns_per_verified_operation": 413333.3333333333
+        }
+      },
+      "cpu_ticks": 30,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7356416,
+            "vms": 13320192,
+            "shared": 6176768,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1220608,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3014656,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7356416,
+            "vms": 13320192,
+            "shared": 6176768,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1220608,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3018752,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "319fdaef53be7e79c759561b7fabd9a987300a9076fc37e2b7a85721628910f7"
+    },
+    "006-oscore-1-baseline": {
+      "label": "baseline",
+      "repeat": 1,
+      "raw_result_sha256": "ec848b2a46be6696c38969fec0111dde677cccaf1b16605a3f0340990fe5c54c",
+      "raw_client_sha256": "63edfda0954fab7b8a8c4853ae8238a7d35fc695757da695bcf9d101b60166d5",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 535954.0,
+        "p99_ns": 799445
+      },
+      "offered": 50,
+      "achieved": 50.03251436493802,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.3,
+          "system_seconds": 0.12,
+          "total_seconds": 0.42,
+          "ns_per_verified_operation": 280000.0
+        },
+        "client": {
+          "user_seconds": 0.47,
+          "system_seconds": 0.33,
+          "total_seconds": 0.8,
+          "ns_per_verified_operation": 533333.3333333334
+        }
+      },
+      "cpu_ticks": 42,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7360512,
+            "vms": 13332480,
+            "shared": 6172672,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1232896,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3010560,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7360512,
+            "vms": 13332480,
+            "shared": 6172672,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1232896,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3018752,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "04ef4c0d271bb37e38acabf457cc555ea1b3bbaf098b1b1584a03fe6c4a4e9ec"
+    },
+    "007-oscore-1-candidate": {
+      "label": "candidate",
+      "repeat": 1,
+      "raw_result_sha256": "aa3ad369445d2d82a2dc35283dd5dc38f1603142825aba86643f26ed1faad32f",
+      "raw_client_sha256": "c65309fe4d096f3a45f4751d57e9ce9790fc06cae4a03329531ca687d5158c0b",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 479924.0,
+        "p99_ns": 601266
+      },
+      "offered": 50,
+      "achieved": 50.03228324737823,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.12,
+          "system_seconds": 0.24,
+          "total_seconds": 0.36,
+          "ns_per_verified_operation": 240000.0
+        },
+        "client": {
+          "user_seconds": 0.58,
+          "system_seconds": 0.12,
+          "total_seconds": 0.7,
+          "ns_per_verified_operation": 466666.6666666667
+        }
+      },
+      "cpu_ticks": 36,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7036928,
+            "vms": 13344768,
+            "shared": 5873664,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3080192,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7036928,
+            "vms": 13344768,
+            "shared": 5873664,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3088384,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "200752e237d42d8c21899f9e77cbd9417241157d7e013d133fe2374d66bcb48d"
+    },
+    "008-unprotected-2-baseline": {
+      "label": "baseline",
+      "repeat": 2,
+      "raw_result_sha256": "5908843c11b833762c87ceb5e02c62bace87f1b602059a90c4a42388bb333d06",
+      "raw_client_sha256": "404cc04d6efb1d818ace3a067c2aa1aa337111f4c3bc6db1435d70689461b888",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 356133.5,
+        "p99_ns": 658867
+      },
+      "offered": 50,
+      "achieved": 50.03264680069617,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.17,
+          "system_seconds": 0.15,
+          "total_seconds": 0.32,
+          "ns_per_verified_operation": 213333.33333333334
+        },
+        "client": {
+          "user_seconds": 0.31,
+          "system_seconds": 0.29,
+          "total_seconds": 0.6,
+          "ns_per_verified_operation": 400000.0
+        }
+      },
+      "cpu_ticks": 32,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7176192,
+            "vms": 13324288,
+            "shared": 5992448,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1224704,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3014656,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7176192,
+            "vms": 13324288,
+            "shared": 5992448,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1224704,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3018752,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "fa3a76457863db1463f376cb9ab582722552fddcb623fdaca1e9b8fb55c03ae2"
+    },
+    "009-unprotected-2-candidate": {
+      "label": "candidate",
+      "repeat": 2,
+      "raw_result_sha256": "89824c5842c919578a2b46e4ec681ae4dd4eb4047149a4d21e0bc35bc3d02dd1",
+      "raw_client_sha256": "d005c2a4a9945d9bfd68ec5cbccbf4eeead9064715d63599d77558dedf400cc1",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 380937.0,
+        "p99_ns": 735012
+      },
+      "offered": 50,
+      "achieved": 50.03200463282594,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.13,
+          "system_seconds": 0.16,
+          "total_seconds": 0.29000000000000004,
+          "ns_per_verified_operation": 193333.33333333337
+        },
+        "client": {
+          "user_seconds": 0.4,
+          "system_seconds": 0.3,
+          "total_seconds": 0.7,
+          "ns_per_verified_operation": 466666.6666666667
+        }
+      },
+      "cpu_ticks": 29,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 6983680,
+            "vms": 13344768,
+            "shared": 5820416,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3010560,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 6983680,
+            "vms": 13344768,
+            "shared": 5820416,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3014656,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "5ea895b051829be9e110d357fee8f8ede4474d7013be899d197f374e2ee654d9"
+    },
+    "010-oscore-2-candidate": {
+      "label": "candidate",
+      "repeat": 2,
+      "raw_result_sha256": "2d712738f9a93435b3d18eef11c877585a2ebec16d2ba02141453131f6c545b5",
+      "raw_client_sha256": "aed7222769ec67cdddc53d7f9aa5be3ac57a96b4503bf9bb53982f0a97101300",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 390456.5,
+        "p99_ns": 594989
+      },
+      "offered": 50,
+      "achieved": 50.032620594855224,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.22,
+          "system_seconds": 0.13,
+          "total_seconds": 0.35,
+          "ns_per_verified_operation": 233333.33333333334
+        },
+        "client": {
+          "user_seconds": 0.32,
+          "system_seconds": 0.32,
+          "total_seconds": 0.64,
+          "ns_per_verified_operation": 426666.6666666667
+        }
+      },
+      "cpu_ticks": 35,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7057408,
+            "vms": 13348864,
+            "shared": 5890048,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1208320,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3026944,
+            "vms": 4005888,
+            "shared": 2727936,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7057408,
+            "vms": 13348864,
+            "shared": 5890048,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1208320,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3035136,
+            "vms": 4005888,
+            "shared": 2727936,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "55970e030111f7c38ea9b6c1c0af5321291fa942cd41dfae0a6c746852d55d73"
+    },
+    "011-oscore-2-baseline": {
+      "label": "baseline",
+      "repeat": 2,
+      "raw_result_sha256": "57fd2e94d622e680a6c68e0bf858e9a51a83923e5bb7ba692624d52a373f6e23",
+      "raw_client_sha256": "f460face8cb20d44d887b6ab6c786f83f25dd9751a08c28423ed43ec2d1da439",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 544350.0,
+        "p99_ns": 750951
+      },
+      "offered": 50,
+      "achieved": 50.03228977079481,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.26,
+          "system_seconds": 0.16,
+          "total_seconds": 0.42000000000000004,
+          "ns_per_verified_operation": 280000.00000000006
+        },
+        "client": {
+          "user_seconds": 0.49,
+          "system_seconds": 0.32,
+          "total_seconds": 0.81,
+          "ns_per_verified_operation": 540000.0
+        }
+      },
+      "cpu_ticks": 42,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7405568,
+            "vms": 13328384,
+            "shared": 6217728,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1228800,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 2981888,
+            "vms": 4005888,
+            "shared": 2682880,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7405568,
+            "vms": 13328384,
+            "shared": 6217728,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1228800,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 2990080,
+            "vms": 4005888,
+            "shared": 2682880,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "371999625bb618b3ce658240fc3ccf3758396262d4aea14549bdb0be8bb5a441"
+    },
+    "012-unprotected-3-candidate": {
+      "label": "candidate",
+      "repeat": 3,
+      "raw_result_sha256": "fee9340ecc2af0a89343f1626bd258c632b79bdd7ac5fff704bde03e6807da3e",
+      "raw_client_sha256": "f724ca86a04d098340560ba898fa632ecec609328376854ecf79c94013f9a843",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 316693.0,
+        "p99_ns": 482509
+      },
+      "offered": 50,
+      "achieved": 50.032682282010015,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.13,
+          "system_seconds": 0.13,
+          "total_seconds": 0.26,
+          "ns_per_verified_operation": 173333.33333333334
+        },
+        "client": {
+          "user_seconds": 0.3,
+          "system_seconds": 0.23,
+          "total_seconds": 0.53,
+          "ns_per_verified_operation": 353333.3333333333
+        }
+      },
+      "cpu_ticks": 26,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7004160,
+            "vms": 13344768,
+            "shared": 5840896,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3076096,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7004160,
+            "vms": 13344768,
+            "shared": 5840896,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1204224,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3080192,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "3427792e094b209ec4a1befbed92d5626645cd0bf791a7c732484493e3109156"
+    },
+    "013-unprotected-3-baseline": {
+      "label": "baseline",
+      "repeat": 3,
+      "raw_result_sha256": "456c8dcbb3cd85efbbc0c6709a89971e55d38c921ed68462705df8a76ebaf630",
+      "raw_client_sha256": "4bdd928c72897afd2039c39ae9d49efa7c03fca9bb83059183a887cd7f1354e0",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 499394.0,
+        "p99_ns": 643249
+      },
+      "offered": 50,
+      "achieved": 50.03262951148006,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.15,
+          "system_seconds": 0.18,
+          "total_seconds": 0.32999999999999996,
+          "ns_per_verified_operation": 219999.99999999997
+        },
+        "client": {
+          "user_seconds": 0.39,
+          "system_seconds": 0.34,
+          "total_seconds": 0.73,
+          "ns_per_verified_operation": 486666.6666666667
+        }
+      },
+      "cpu_ticks": 33,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7417856,
+            "vms": 13324288,
+            "shared": 6238208,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1224704,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3014656,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7417856,
+            "vms": 13324288,
+            "shared": 6238208,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1224704,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3018752,
+            "vms": 4005888,
+            "shared": 2715648,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "b6f14ff90ab1a8dd589f56b068edf6c40ee6f45ec5b361c6ee780bc37902781d"
+    },
+    "014-oscore-3-baseline": {
+      "label": "baseline",
+      "repeat": 3,
+      "raw_result_sha256": "0e1f24c181bcbd57c0a5def945ba58791482e144f41e361dde41965bdec6ffa9",
+      "raw_client_sha256": "f3348bce5f2bbf5cbe67ea9f7d6aacfe8ddcfc440e900ed4b414bc6ed34462c8",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 490441.5,
+        "p99_ns": 666340
+      },
+      "offered": 50,
+      "achieved": 50.032392790603986,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.25,
+          "system_seconds": 0.12,
+          "total_seconds": 0.37,
+          "ns_per_verified_operation": 246666.66666666666
+        },
+        "client": {
+          "user_seconds": 0.37,
+          "system_seconds": 0.35,
+          "total_seconds": 0.72,
+          "ns_per_verified_operation": 480000.0
+        }
+      },
+      "cpu_ticks": 37,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7364608,
+            "vms": 13324288,
+            "shared": 6180864,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1224704,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3080192,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7364608,
+            "vms": 13324288,
+            "shared": 6180864,
+            "text": 7393280,
+            "lib": 0,
+            "data": 1224704,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3088384,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "1379c533c007ff9d089c69ce49c0f3391464910fbc8ddf7c78405c4656de0fd6"
+    },
+    "015-oscore-3-candidate": {
+      "label": "candidate",
+      "repeat": 3,
+      "raw_result_sha256": "43605f7e51937311cfc341f1a76ea53914945236d368bd439aced094d5fa2193",
+      "raw_client_sha256": "7dabf155a61c29c4216ddda5b43ab2500b3c5f13fbc1c2bc7f98bf7f640ccc44",
+      "verified": 1500,
+      "latency": {
+        "median_ns": 514310.0,
+        "p99_ns": 791094
+      },
+      "offered": 50,
+      "achieved": 50.03231615318431,
+      "misses": 0,
+      "traffic": {
+        "sent_datagrams": 24000,
+        "received_datagrams": 24000
+      },
+      "peak_pending": 1,
+      "cpu_time": {
+        "server": {
+          "user_seconds": 0.23,
+          "system_seconds": 0.16,
+          "total_seconds": 0.39,
+          "ns_per_verified_operation": 260000.0
+        },
+        "client": {
+          "user_seconds": 0.47,
+          "system_seconds": 0.35,
+          "total_seconds": 0.82,
+          "ns_per_verified_operation": 546666.6666666666
+        }
+      },
+      "cpu_ticks": 39,
+      "process_snapshots": {
+        "before": {
+          "server": {
+            "rss": 7372800,
+            "vms": 13352960,
+            "shared": 6201344,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1212416,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3080192,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        },
+        "after": {
+          "server": {
+            "rss": 7372800,
+            "vms": 13352960,
+            "shared": 6201344,
+            "text": 7430144,
+            "lib": 0,
+            "data": 1212416,
+            "dirty": 0
+          },
+          "client": {
+            "rss": 3088384,
+            "vms": 4005888,
+            "shared": 2781184,
+            "text": 884736,
+            "lib": 0,
+            "data": 389120,
+            "dirty": 0
+          }
+        }
+      },
+      "eligible_before_latency_guard": true,
+      "process_clock_sha256": "488641a8872b0bf4c894601fc514897ac4f1de1442c8bacb16bd2199f368642a"
+    }
+  },
+  "scores": {
+    "unprotected": {
+      "eligible": false,
+      "pairs": [
+        {
+          "repeat": 0,
+          "latency_guard": {
+            "median_ns": -31202.0,
+            "p99_ns": -43886,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 1,
+          "latency_guard": {
+            "median_ns": -18161.0,
+            "p99_ns": -31444,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 2,
+          "latency_guard": {
+            "median_ns": 24803.5,
+            "p99_ns": 76145,
+            "passed": false
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 3,
+          "latency_guard": {
+            "median_ns": -182701.0,
+            "p99_ns": -160740,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        }
+      ],
+      "pooled_latency_guard": {
+        "median_ns": -41026.5,
+        "p99_ns": 99885,
+        "passed": false
+      },
+      "eligible_cpu_time_ns_per_op": null,
+      "eligible_cpu_time_ratio": null
+    },
+    "oscore": {
+      "eligible": false,
+      "pairs": [
+        {
+          "repeat": 0,
+          "latency_guard": {
+            "median_ns": -95955.0,
+            "p99_ns": -74321,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 1,
+          "latency_guard": {
+            "median_ns": -56030.0,
+            "p99_ns": -198179,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 2,
+          "latency_guard": {
+            "median_ns": -153893.5,
+            "p99_ns": -155962,
+            "passed": true
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        },
+        {
+          "repeat": 3,
+          "latency_guard": {
+            "median_ns": 23868.5,
+            "p99_ns": 124754,
+            "passed": false
+          },
+          "accounted": true,
+          "matched_rate": true,
+          "matched_datagrams": true
+        }
+      ],
+      "pooled_latency_guard": {
+        "median_ns": -42421.0,
+        "p99_ns": -18948,
+        "passed": true
+      },
+      "eligible_cpu_time_ns_per_op": null,
+      "eligible_cpu_time_ratio": null
+    }
+  },
+  "host_report_sha256": "831fc8eae1fbbb4f4da9302d341aa88001cdccb8a6ed0ba4a2d570645ba5a389"
+}
