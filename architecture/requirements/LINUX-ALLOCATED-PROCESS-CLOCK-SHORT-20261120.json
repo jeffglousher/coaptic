@@ -1,0 +1,535 @@
+{
+  "run": 44696916380,
+  "assessment_sha256": "0ab2ea219998a3f3d9b16c8d67ab258e9abdb66819cbb2c2bf461e3ab8e58c84",
+  "block_verified_operations": 300,
+  "windows": {
+    "000-unprotected-0-baseline": {
+      "latency_block_medians_ns": [
+        569192.0,
+        502758.0,
+        512116.0,
+        500767.0,
+        561977.0
+      ],
+      "latency_median_ns": 531001.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 192062740,
+          "per_verified_ns": 128041.82666666666,
+          "clock_minus_tick_ns": 2062740,
+          "before_snapshot_wall_ns": 38829,
+          "after_snapshot_wall_ns": 80061
+        },
+        "client": {
+          "total_cpu_ns": 224092643,
+          "per_verified_ns": 149395.09533333333,
+          "clock_minus_tick_ns": 14092643,
+          "before_snapshot_wall_ns": 31450,
+          "after_snapshot_wall_ns": 35624
+        }
+      },
+      "cpu_ticks": 19
+    },
+    "001-unprotected-0-candidate": {
+      "latency_block_medians_ns": [
+        447111.0,
+        447938.5,
+        404177.0,
+        507265.0,
+        515571.0
+      ],
+      "latency_median_ns": 468243.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 143522038,
+          "per_verified_ns": 95681.35866666667,
+          "clock_minus_tick_ns": 13522038,
+          "before_snapshot_wall_ns": 38155,
+          "after_snapshot_wall_ns": 66328
+        },
+        "client": {
+          "total_cpu_ns": 192381435,
+          "per_verified_ns": 128254.29,
+          "clock_minus_tick_ns": 12381435,
+          "before_snapshot_wall_ns": 28960,
+          "after_snapshot_wall_ns": 33521
+        }
+      },
+      "cpu_ticks": 13
+    },
+    "002-oscore-0-candidate": {
+      "latency_block_medians_ns": [
+        604877.0,
+        614681.5,
+        618532.0,
+        620512.0,
+        617573.5
+      ],
+      "latency_median_ns": 616718.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 222995233,
+          "per_verified_ns": 148663.48866666667,
+          "clock_minus_tick_ns": 12995233,
+          "before_snapshot_wall_ns": 37904,
+          "after_snapshot_wall_ns": 62751
+        },
+        "client": {
+          "total_cpu_ns": 254840035,
+          "per_verified_ns": 169893.35666666666,
+          "clock_minus_tick_ns": 4840035,
+          "before_snapshot_wall_ns": 29151,
+          "after_snapshot_wall_ns": 32554
+        }
+      },
+      "cpu_ticks": 21
+    },
+    "003-oscore-0-baseline": {
+      "latency_block_medians_ns": [
+        706963.0,
+        711045.0,
+        719389.0,
+        722589.0,
+        699689.5
+      ],
+      "latency_median_ns": 710713.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 268364485,
+          "per_verified_ns": 178909.65666666668,
+          "clock_minus_tick_ns": 8364485,
+          "before_snapshot_wall_ns": 38326,
+          "after_snapshot_wall_ns": 63829
+        },
+        "client": {
+          "total_cpu_ns": 295962917,
+          "per_verified_ns": 197308.61133333333,
+          "clock_minus_tick_ns": 5962917,
+          "before_snapshot_wall_ns": 29761,
+          "after_snapshot_wall_ns": 32328
+        }
+      },
+      "cpu_ticks": 26
+    },
+    "004-unprotected-1-candidate": {
+      "latency_block_medians_ns": [
+        450878.0,
+        482974.0,
+        490020.5,
+        546799.5,
+        486777.0
+      ],
+      "latency_median_ns": 482099.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 171166750,
+          "per_verified_ns": 114111.16666666667,
+          "clock_minus_tick_ns": 11166750,
+          "before_snapshot_wall_ns": 61805,
+          "after_snapshot_wall_ns": 63596
+        },
+        "client": {
+          "total_cpu_ns": 205331315,
+          "per_verified_ns": 136887.54333333333,
+          "clock_minus_tick_ns": 5331315,
+          "before_snapshot_wall_ns": 30246,
+          "after_snapshot_wall_ns": 34697
+        }
+      },
+      "cpu_ticks": 16
+    },
+    "005-unprotected-1-baseline": {
+      "latency_block_medians_ns": [
+        593119.0,
+        587298.0,
+        579922.0,
+        592501.5,
+        576796.0
+      ],
+      "latency_median_ns": 585366.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 223320102,
+          "per_verified_ns": 148880.068,
+          "clock_minus_tick_ns": 3320102,
+          "before_snapshot_wall_ns": 38652,
+          "after_snapshot_wall_ns": 64635
+        },
+        "client": {
+          "total_cpu_ns": 251467129,
+          "per_verified_ns": 167644.75266666667,
+          "clock_minus_tick_ns": 1467129,
+          "before_snapshot_wall_ns": 29381,
+          "after_snapshot_wall_ns": 75888
+        }
+      },
+      "cpu_ticks": 22
+    },
+    "006-oscore-1-baseline": {
+      "latency_block_medians_ns": [
+        694304.5,
+        665128.5,
+        682593.0,
+        686622.5,
+        684657.0
+      ],
+      "latency_median_ns": 684867.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 251891681,
+          "per_verified_ns": 167927.78733333334,
+          "clock_minus_tick_ns": 11891681,
+          "before_snapshot_wall_ns": 38773,
+          "after_snapshot_wall_ns": 61226
+        },
+        "client": {
+          "total_cpu_ns": 280011067,
+          "per_verified_ns": 186674.04466666665,
+          "clock_minus_tick_ns": 11067,
+          "before_snapshot_wall_ns": 28797,
+          "after_snapshot_wall_ns": 32307
+        }
+      },
+      "cpu_ticks": 24
+    },
+    "007-oscore-1-candidate": {
+      "latency_block_medians_ns": [
+        556449.5,
+        531499.5,
+        539188.0,
+        539316.5,
+        537670.5
+      ],
+      "latency_median_ns": 539095.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 193113516,
+          "per_verified_ns": 128742.344,
+          "clock_minus_tick_ns": 3113516,
+          "before_snapshot_wall_ns": 36691,
+          "after_snapshot_wall_ns": 61840
+        },
+        "client": {
+          "total_cpu_ns": 231282449,
+          "per_verified_ns": 154188.29933333333,
+          "clock_minus_tick_ns": 1282449,
+          "before_snapshot_wall_ns": 28643,
+          "after_snapshot_wall_ns": 33108
+        }
+      },
+      "cpu_ticks": 19
+    },
+    "008-unprotected-2-baseline": {
+      "latency_block_medians_ns": [
+        533824.5,
+        513947.0,
+        548505.5,
+        542849.5,
+        541341.0
+      ],
+      "latency_median_ns": 538844.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 201252472,
+          "per_verified_ns": 134168.31466666667,
+          "clock_minus_tick_ns": 1252472,
+          "before_snapshot_wall_ns": 38100,
+          "after_snapshot_wall_ns": 58666
+        },
+        "client": {
+          "total_cpu_ns": 222027471,
+          "per_verified_ns": 148018.314,
+          "clock_minus_tick_ns": 2027471,
+          "before_snapshot_wall_ns": 209789,
+          "after_snapshot_wall_ns": 31418
+        }
+      },
+      "cpu_ticks": 20
+    },
+    "009-unprotected-2-candidate": {
+      "latency_block_medians_ns": [
+        469694.5,
+        464411.5,
+        491393.5,
+        490581.5,
+        496743.5
+      ],
+      "latency_median_ns": 485647.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 177107678,
+          "per_verified_ns": 118071.78533333333,
+          "clock_minus_tick_ns": 7107678,
+          "before_snapshot_wall_ns": 35872,
+          "after_snapshot_wall_ns": 60788
+        },
+        "client": {
+          "total_cpu_ns": 201408940,
+          "per_verified_ns": 134272.62666666668,
+          "clock_minus_tick_ns": 11408940,
+          "before_snapshot_wall_ns": 28580,
+          "after_snapshot_wall_ns": 33263
+        }
+      },
+      "cpu_ticks": 17
+    },
+    "010-oscore-2-candidate": {
+      "latency_block_medians_ns": [
+        627895.5,
+        628085.5,
+        627114.5,
+        629025.5,
+        631038.0
+      ],
+      "latency_median_ns": 629061.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 230702512,
+          "per_verified_ns": 153801.67466666666,
+          "clock_minus_tick_ns": 702512,
+          "before_snapshot_wall_ns": 39338,
+          "after_snapshot_wall_ns": 58962
+        },
+        "client": {
+          "total_cpu_ns": 260692919,
+          "per_verified_ns": 173795.27933333334,
+          "clock_minus_tick_ns": 692919,
+          "before_snapshot_wall_ns": 29683,
+          "after_snapshot_wall_ns": 59942
+        }
+      },
+      "cpu_ticks": 23
+    },
+    "011-oscore-2-baseline": {
+      "latency_block_medians_ns": [
+        679862.5,
+        677272.0,
+        674437.0,
+        656568.0,
+        663581.5
+      ],
+      "latency_median_ns": 673050.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 240128161,
+          "per_verified_ns": 160085.44066666666,
+          "clock_minus_tick_ns": 128161,
+          "before_snapshot_wall_ns": 42776,
+          "after_snapshot_wall_ns": 60681
+        },
+        "client": {
+          "total_cpu_ns": 271107141,
+          "per_verified_ns": 180738.094,
+          "clock_minus_tick_ns": 11107141,
+          "before_snapshot_wall_ns": 35295,
+          "after_snapshot_wall_ns": 31478
+        }
+      },
+      "cpu_ticks": 24
+    },
+    "012-unprotected-3-candidate": {
+      "latency_block_medians_ns": [
+        464164.5,
+        473139.0,
+        446510.5,
+        417644.5,
+        419540.5
+      ],
+      "latency_median_ns": 442205.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 152727778,
+          "per_verified_ns": 101818.51866666667,
+          "clock_minus_tick_ns": 2727778,
+          "before_snapshot_wall_ns": 36778,
+          "after_snapshot_wall_ns": 59789
+        },
+        "client": {
+          "total_cpu_ns": 191203400,
+          "per_verified_ns": 127468.93333333333,
+          "clock_minus_tick_ns": 1203400,
+          "before_snapshot_wall_ns": 29805,
+          "after_snapshot_wall_ns": 48901
+        }
+      },
+      "cpu_ticks": 15
+    },
+    "013-unprotected-3-baseline": {
+      "latency_block_medians_ns": [
+        564734.0,
+        558717.0,
+        566822.5,
+        528812.5,
+        495617.5
+      ],
+      "latency_median_ns": 556738.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 194079301,
+          "per_verified_ns": 129386.20066666667,
+          "clock_minus_tick_ns": 4079301,
+          "before_snapshot_wall_ns": 38065,
+          "after_snapshot_wall_ns": 60154
+        },
+        "client": {
+          "total_cpu_ns": 223833362,
+          "per_verified_ns": 149222.24133333334,
+          "clock_minus_tick_ns": 3833362,
+          "before_snapshot_wall_ns": 30311,
+          "after_snapshot_wall_ns": 30619
+        }
+      },
+      "cpu_ticks": 19
+    },
+    "014-oscore-3-baseline": {
+      "latency_block_medians_ns": [
+        578338.0,
+        568194.5,
+        669554.5,
+        668103.0,
+        670034.0
+      ],
+      "latency_median_ns": 661373.5,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 234558935,
+          "per_verified_ns": 156372.62333333332,
+          "clock_minus_tick_ns": 4558935,
+          "before_snapshot_wall_ns": 35623,
+          "after_snapshot_wall_ns": 59411
+        },
+        "client": {
+          "total_cpu_ns": 263033130,
+          "per_verified_ns": 175355.42,
+          "clock_minus_tick_ns": 3033130,
+          "before_snapshot_wall_ns": 28353,
+          "after_snapshot_wall_ns": 32623
+        }
+      },
+      "cpu_ticks": 23
+    },
+    "015-oscore-3-candidate": {
+      "latency_block_medians_ns": [
+        601129.5,
+        596404.0,
+        600868.0,
+        599966.0,
+        599071.0
+      ],
+      "latency_median_ns": 599590.0,
+      "process_cpu_clock": {
+        "server": {
+          "total_cpu_ns": 221140405,
+          "per_verified_ns": 147426.93666666668,
+          "clock_minus_tick_ns": 11140405,
+          "before_snapshot_wall_ns": 36970,
+          "after_snapshot_wall_ns": 57598
+        },
+        "client": {
+          "total_cpu_ns": 249561853,
+          "per_verified_ns": 166374.56866666666,
+          "clock_minus_tick_ns": -438147,
+          "before_snapshot_wall_ns": 29088,
+          "after_snapshot_wall_ns": 32048
+        }
+      },
+      "cpu_ticks": 21
+    }
+  },
+  "diagnostics": {
+    "unprotected": {
+      "pairs": [
+        {
+          "repeat": 0,
+          "alternate_process_cpu_fraction": {
+            "server": -0.2527335702906248,
+            "client": -0.14150936673097292
+          },
+          "median_latency_change_ns": -62758.0
+        },
+        {
+          "repeat": 1,
+          "alternate_process_cpu_fraction": {
+            "server": -0.23353630744804155,
+            "client": -0.1834665794430731
+          },
+          "median_latency_change_ns": -103266.5
+        },
+        {
+          "repeat": 2,
+          "alternate_process_cpu_fraction": {
+            "server": -0.11997265802528878,
+            "client": -0.09286477437740126
+          },
+          "median_latency_change_ns": -53197.0
+        },
+        {
+          "repeat": 3,
+          "alternate_process_cpu_fraction": {
+            "server": -0.21306508621442322,
+            "client": -0.14577792027267145
+          },
+          "median_latency_change_ns": -114533.5
+        }
+      ],
+      "eligible_cpu_time_ratio": null,
+      "alternate_process_cpu_ns_per_verified": {
+        "baseline": {
+          "server": 135119.1025,
+          "client": 153570.10083333333
+        },
+        "candidate": {
+          "server": 107420.70733333334,
+          "client": 131720.84833333333
+        }
+      }
+    },
+    "oscore": {
+      "pairs": [
+        {
+          "repeat": 0,
+          "alternate_process_cpu_fraction": {
+            "server": -0.16905833124677427,
+            "client": -0.13894606262446052
+          },
+          "median_latency_change_ns": -93994.5
+        },
+        {
+          "repeat": 1,
+          "alternate_process_cpu_fraction": {
+            "server": -0.23334698774748341,
+            "client": -0.17402390027677017
+          },
+          "median_latency_change_ns": -145772.0
+        },
+        {
+          "repeat": 2,
+          "alternate_process_cpu_fraction": {
+            "server": -0.03925257646061764,
+            "client": -0.03841367645863669
+          },
+          "median_latency_change_ns": -43989.0
+        },
+        {
+          "repeat": 3,
+          "alternate_process_cpu_fraction": {
+            "server": -0.057207498831796766,
+            "client": -0.05121513400232125
+          },
+          "median_latency_change_ns": -61783.5
+        }
+      ],
+      "eligible_cpu_time_ratio": null,
+      "alternate_process_cpu_ns_per_verified": {
+        "baseline": {
+          "server": 165823.877,
+          "client": 185019.0425
+        },
+        "candidate": {
+          "server": 144658.611,
+          "client": 166062.876
+        }
+      }
+    }
+  }
+}
