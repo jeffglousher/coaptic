@@ -18,8 +18,8 @@ retain user and system CPU components. Snapshot fences and resolution
 account for possible differences between readings. The reported clock
 resolution gives no bound on measurement error.
 
-The audit confirms identity and positive deltas in all 48 clock pairs
-across 24 windows, divides by raw verified completions, and checks each
+The audit confirms identity and positive deltas in all 64 clock pairs
+across 32 windows, divides by raw verified completions, and checks each
 input against the existing per-window hash. The largest absolute delta
 between clock backends at one process window is 14.1 ms. The longest
 process clock snapshot bracket is 210 µs wall time. The alternate CPU
@@ -58,3 +58,14 @@ load and capacities. Both #650 modes stay open.
 
 [Long campaign](LINUX-SERVICE-ALLOCATED-C4-LONG-CPU-20261120.md) ·
 [Long diagnostic receipt](LINUX-ALLOCATED-PROCESS-CLOCK-LONG-UNPROTECTED-20261120.json)
+
+## 72-second established OSCORE diagnostic
+
+On the separately recorded Intel host, server clock averages 183.08 to
+167.69 µs per verified read. All four pair readings fall by 1.5–18.2%.
+Client clock averages 214.43 to 214.41 µs, with one pair rising 14.6%.
+The within-window spread of 360-completion medians is 18–159 µs.
+The independent pair and pooled latency failures withhold the primary
+comparison despite the alternate server clock direction.
+
+[Protected diagnostic receipt](LINUX-ALLOCATED-PROCESS-CLOCK-LONG-OSCORE-20261120.json)

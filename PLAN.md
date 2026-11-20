@@ -175,10 +175,9 @@ for actual stop or transfer conditions.
     a partial upload in each protection mode. A second upload receives a
     refusal with no handler effect. The first and a fresh third upload
     each deliver the complete tagged body once and release the slot.
-19. The [unprotected long-window comparison](architecture/requirements/LINUX-SERVICE-ALLOCATED-C4-LONG-CPU-20261120.md)
-    clears the CPU accounting floor and verifies all 28,800 reads. The
-    median guard withholds the CPU ratio. Run the separately pinned
-    established OSCORE partition and apply the same guards.
+19. The [allocated Service long-window comparisons](architecture/requirements/LINUX-SERVICE-ALLOCATED-C4-LONG-CPU-20261120.md)
+    clear the CPU accounting floor and verify all 57,600 reads. Both
+    modes fail a latency guard and withhold the CPU ratios.
 20. The [Windows Tokio timer-poll probe](architecture/requirements/WINDOWS-TOKIO-TIMER-POLLS-20261120.md)
     verifies 157,440 reads and counts a pending progress timer poll per
     send. Timing perturbation limits the comparison. Keep the current
