@@ -1,0 +1,1763 @@
+{
+  "plan": {
+    "inputs": {
+      "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)\n",
+      "flags": {
+        "CARGO_BUILD_JOBS": "2",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+        "CARGO_PROFILE_RELEASE_DEBUG": "0",
+        "CARGO_PROFILE_RELEASE_LTO": "thin",
+        "RUSTFLAGS": null
+      },
+      "profile": "release, thin LTO, one codegen unit, debug 0, incremental off, two jobs",
+      "runs": {
+        "current": {
+          "binary_bytes": 1296896,
+          "binary_sha256": "b58b2ec64c3b35ec4c94eef02cff5120913e07cf2be512b9f1c16491cb0c8254",
+          "build_checkout_head": "912ac866adb0c8b590a2bf13cd6ab92dea81c174",
+          "core_rust_source": "753beb0269de31f806ff9e42f9b50412c6eb86e4",
+          "lock": "Cargo.syn3.lock",
+          "lock_sha256": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+          "rust_features": [
+            "alloc",
+            "diagnostics",
+            "oscore",
+            "std"
+          ]
+        },
+        "original": {
+          "binary_bytes": 1304576,
+          "binary_sha256": "7b8f108c77f630b2cf4cd4aa80e05e643a40ba5d68a2bf5a2c1218d6e8bace67",
+          "build_checkout_head": null,
+          "core_rust_source": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+          "lock": "Cargo.aes093.lock",
+          "lock_sha256": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42",
+          "rust_features": [
+            "alloc",
+            "diagnostics",
+            "oscore",
+            "std"
+          ]
+        }
+      },
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+      "sources": {
+        "servers/src/bin/bench-core.rs": {
+          "git_blob": "75275f7c3698a736462eddcda5cfafb222dc220f",
+          "sha256": "2c5c708baa794765ea9e7c0a21ec0178fb8cb01c14b64785ff9452bd0c63f6d3"
+        },
+        "servers/src/bin/bench_core/admission_pressure.rs": {
+          "git_blob": "451cdf6345fc4c5d4669efbc0fefa6ff34b37902",
+          "sha256": "4c897faa722b6504d4b9e1524da67e8de0a49aa8afe0e00870db375e9f5c3e12"
+        },
+        "servers/src/bin/bench_core/live_c1.rs": {
+          "git_blob": "f03cc3f91b432e0fa7cdfcb00dbdf6abf23610c1",
+          "sha256": "ca4696f687ab8b1f78a67c0df85874bf232eee87ebc87f205480968bb1286123"
+        }
+      },
+      "suite": "78630ac16aef90ed782c85c614aed41e410808cb",
+      "verified_original_export_members": 157
+    },
+    "operations": 1500,
+    "warmup": 128,
+    "repeats": 4,
+    "concurrency": 1,
+    "cells": [
+      [
+        "unprotected",
+        64,
+        "original"
+      ],
+      [
+        "unprotected",
+        64,
+        "current"
+      ],
+      [
+        "unprotected",
+        16384,
+        "original"
+      ],
+      [
+        "unprotected",
+        16384,
+        "current"
+      ],
+      [
+        "oscore",
+        64,
+        "original"
+      ],
+      [
+        "oscore",
+        64,
+        "current"
+      ],
+      [
+        "oscore",
+        16384,
+        "original"
+      ],
+      [
+        "oscore",
+        16384,
+        "current"
+      ]
+    ],
+    "backends": [
+      "fixed",
+      "allocated"
+    ],
+    "script_sha256": "9ddf1a54449962be74f17f900e3807069a2f0572de1f3d449ed470c7d969acf5"
+  },
+  "capacities": [
+    {
+      "routes": 32,
+      "populated_routes": 1,
+      "calls": 4,
+      "deferred": 8,
+      "associations": 1,
+      "security_requests": 4,
+      "rx_slots": 32,
+      "tx_slots": 32,
+      "datagram_bytes": 1472,
+      "dedup": 64,
+      "observe": 32,
+      "rx_body_slots": 4,
+      "tx_body_slots": 4,
+      "body_bytes": 16384,
+      "blockwise": true
+    },
+    {
+      "routes": 1,
+      "populated_routes": 0,
+      "calls": 4,
+      "deferred": 0,
+      "associations": 1,
+      "security_requests": 4,
+      "rx_slots": 4,
+      "tx_slots": 4,
+      "datagram_bytes": 1472,
+      "dedup": 8,
+      "observe": 4,
+      "rx_body_slots": 1,
+      "rx_body_bytes": 16384,
+      "tx_body_slots": 1,
+      "tx_body_bytes": 1024,
+      "blockwise": true
+    }
+  ],
+  "matched": {
+    "0/unprotected/64/original": {
+      "fixed": {
+        "raw": "0-unprotected-64-original-fixed.json",
+        "sha256": "994d504fea5671e65215877fdf3604ba155980ac75b118e012f3e4167691bca6",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1400.0,
+          "p99_ns": 1800
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      },
+      "allocated": {
+        "raw": "0-unprotected-64-original-allocated.json",
+        "sha256": "ce03b3b78643cb346554a18e7d1fe5c0338ff70547469507137848a55c8d39b5",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      }
+    },
+    "0/unprotected/64/current": {
+      "fixed": {
+        "raw": "0-unprotected-64-current-fixed.json",
+        "sha256": "d220a9adb879f965e6bc2f986d75e607c2ceaed3d87ac282c170e3992c48d6a4",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      },
+      "allocated": {
+        "raw": "0-unprotected-64-current-allocated.json",
+        "sha256": "2038008c225adad39477b1fc45ef7b92a987ea83250c4273c4c24215773e591b",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      }
+    },
+    "0/unprotected/16384/original": {
+      "fixed": {
+        "raw": "0-unprotected-16384-original-fixed.json",
+        "sha256": "004cbfd5520788e3aa89b38f21c59aefc1582f9c4f474881d8cdb551958b0007",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 31600.0,
+          "p99_ns": 57800
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      },
+      "allocated": {
+        "raw": "0-unprotected-16384-original-allocated.json",
+        "sha256": "591a5cbdef0f9ffaab1eb325125200c5996c720fd4111f02110354c18ddea20d",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 33600.0,
+          "p99_ns": 51300
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      }
+    },
+    "0/unprotected/16384/current": {
+      "fixed": {
+        "raw": "0-unprotected-16384-current-fixed.json",
+        "sha256": "3e19fd4a4f9e9088f282eed66f912191b274b02e6f15f9a076907ed6849b867e",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 19100.0,
+          "p99_ns": 49800
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      },
+      "allocated": {
+        "raw": "0-unprotected-16384-current-allocated.json",
+        "sha256": "c5c7dc98b2eaaa6e058851fdf9d06ffb357cc6b17c847f0227549f9aa092b9b2",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 20200.0,
+          "p99_ns": 42600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      }
+    },
+    "0/oscore/64/original": {
+      "fixed": {
+        "raw": "0-oscore-64-original-fixed.json",
+        "sha256": "e72ae2e953f5904aebf3143289733e6843495d1febee42fe78bc2eac8ca93c57",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2400.0,
+          "p99_ns": 6600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      },
+      "allocated": {
+        "raw": "0-oscore-64-original-allocated.json",
+        "sha256": "93ec6fbd8fecb15026d4d9d6269cf991812b63a3f35e9f56d7cf52ed436ec9c8",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2500.0,
+          "p99_ns": 4900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      }
+    },
+    "0/oscore/64/current": {
+      "fixed": {
+        "raw": "0-oscore-64-current-fixed.json",
+        "sha256": "b5b06c1838d3b298b95579aba506dd1aa0b7a1cfcbc42cf77651419c5d9520ad",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      },
+      "allocated": {
+        "raw": "0-oscore-64-current-allocated.json",
+        "sha256": "f0186d9ab7a69ae0f137ab84b786000499942e63c55c7e5fb524aa32e2b057cd",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 4600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      }
+    },
+    "0/oscore/16384/original": {
+      "fixed": {
+        "raw": "0-oscore-16384-original-fixed.json",
+        "sha256": "6585a87a1fdb65e2823890d9bc2438f0e39880833847bf4b3bcdcdd8e8e8fc72",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 66000.0,
+          "p99_ns": 119000
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      },
+      "allocated": {
+        "raw": "0-oscore-16384-original-allocated.json",
+        "sha256": "615e1c634c29211e3719ec59a3c4e774af076d35e80ca8827161508f9a27caee",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 68800.0,
+          "p99_ns": 160300
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      }
+    },
+    "0/oscore/16384/current": {
+      "fixed": {
+        "raw": "0-oscore-16384-current-fixed.json",
+        "sha256": "d8f0d19e368d57a10ffd8512b51fda6d8b558e2c8cbce6ef3f837bff9d488366",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 50200.0,
+          "p99_ns": 103600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      },
+      "allocated": {
+        "raw": "0-oscore-16384-current-allocated.json",
+        "sha256": "4932bb18af97a6079f2df94320c11f8fc01792059e4e3e6ee8247be4060dd2bd",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 52100.0,
+          "p99_ns": 100500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      }
+    },
+    "1/oscore/16384/current": {
+      "allocated": {
+        "raw": "1-oscore-16384-current-allocated.json",
+        "sha256": "39e282455b7efaae82015ebded35eeedfdb73df9bc5b8afbf291a6ededcbb23d",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 52700.0,
+          "p99_ns": 99700
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      },
+      "fixed": {
+        "raw": "1-oscore-16384-current-fixed.json",
+        "sha256": "7f61922871f94675ef8eb42342b610ce7d52481b2b72b91668c65b5ee93fdc3c",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 50400.0,
+          "p99_ns": 85000
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      }
+    },
+    "1/oscore/16384/original": {
+      "allocated": {
+        "raw": "1-oscore-16384-original-allocated.json",
+        "sha256": "b3bb78e8a9ff7a414627d62fbad40f7b5ac401dee4aee1a584e0c4f988f90bb8",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 66500.0,
+          "p99_ns": 99800
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      },
+      "fixed": {
+        "raw": "1-oscore-16384-original-fixed.json",
+        "sha256": "721e214c4d35470684809aed430edf2b960eafd23f80b1a0df0c69112f56845b",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 64400.0,
+          "p99_ns": 99900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      }
+    },
+    "1/oscore/64/current": {
+      "allocated": {
+        "raw": "1-oscore-64-current-allocated.json",
+        "sha256": "60d4f339a02e3d66e2da220fc6fa3dfc238eb88f826926b2aae5edfef9352a1d",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 5300
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      },
+      "fixed": {
+        "raw": "1-oscore-64-current-fixed.json",
+        "sha256": "8772b8509ce18e702a06c61111ad58ca966a83469cdbda00c72fe3f1625ce3ad",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 3500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      }
+    },
+    "1/oscore/64/original": {
+      "allocated": {
+        "raw": "1-oscore-64-original-allocated.json",
+        "sha256": "b02dd52734bc559d02d9c16057480cee44a63de184c3c505d27f702dfa558cd0",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2500.0,
+          "p99_ns": 2600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      },
+      "fixed": {
+        "raw": "1-oscore-64-original-fixed.json",
+        "sha256": "7af71d9a5596c43efe80bc2d4a3347d0f69f46542ba0cce1a19c3a07564cad0a",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2400.0,
+          "p99_ns": 4700
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      }
+    },
+    "1/unprotected/16384/current": {
+      "allocated": {
+        "raw": "1-unprotected-16384-current-allocated.json",
+        "sha256": "179e199b4275d4af55b7195581f0ad76d331c70f7673af92dd7eda522f00b42c",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 20000.0,
+          "p99_ns": 43800
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      },
+      "fixed": {
+        "raw": "1-unprotected-16384-current-fixed.json",
+        "sha256": "d2d8c6df54b2bfdf17ed9a1723e1e525b3b4fda47b58ffa4390c5920544e87fb",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 19000.0,
+          "p99_ns": 31300
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      }
+    },
+    "1/unprotected/16384/original": {
+      "allocated": {
+        "raw": "1-unprotected-16384-original-allocated.json",
+        "sha256": "0effd5ea165b0e585e022418bc6b9119047ea505e8036ea0644860f421de090c",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 33700.0,
+          "p99_ns": 65800
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      },
+      "fixed": {
+        "raw": "1-unprotected-16384-original-fixed.json",
+        "sha256": "39b718232ccc2be5319c0da362c58cb235618aa824a16643748f908b7da6481c",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 31500.0,
+          "p99_ns": 61200
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      }
+    },
+    "1/unprotected/64/current": {
+      "allocated": {
+        "raw": "1-unprotected-64-current-allocated.json",
+        "sha256": "dee7a27c6f12454f6abeab974fd4ff7f12706aa1738fbb3ea4454dfde6fdbc1f",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      },
+      "fixed": {
+        "raw": "1-unprotected-64-current-fixed.json",
+        "sha256": "020605a3593aa3261802535e17c7c1fdc89fd04a8ac436176493d5b837907d67",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 2700
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      }
+    },
+    "1/unprotected/64/original": {
+      "allocated": {
+        "raw": "1-unprotected-64-original-allocated.json",
+        "sha256": "8c64319a03854b75ec3b3a3ab61c3ab9dca948e1b12ef895df4c32d9686159f2",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 2200
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      },
+      "fixed": {
+        "raw": "1-unprotected-64-original-fixed.json",
+        "sha256": "27b211d0089aa7dbfa22ab8ce22fcc91124a76cb21de9b541015d279b98c9858",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      }
+    },
+    "2/unprotected/64/original": {
+      "fixed": {
+        "raw": "2-unprotected-64-original-fixed.json",
+        "sha256": "38f2033f72d2968a2e790570c22302976b1c5a54b819e486ce73ddf2dc14f40a",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1400.0,
+          "p99_ns": 3200
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      },
+      "allocated": {
+        "raw": "2-unprotected-64-original-allocated.json",
+        "sha256": "74f7b82bbf1d556890331170ca543b02376abb9f745cb4b68b2f7505439da368",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      }
+    },
+    "2/unprotected/64/current": {
+      "fixed": {
+        "raw": "2-unprotected-64-current-fixed.json",
+        "sha256": "5e4fea8a8de890931c322b8e509836e5d2f281b525af3623ddbfb7a61b0e7683",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 2100
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      },
+      "allocated": {
+        "raw": "2-unprotected-64-current-allocated.json",
+        "sha256": "320bf6c4a9091cbcc4cd2a4fb64dbe8ad363b08b2976628c75b4568dab42e98d",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 1900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      }
+    },
+    "2/unprotected/16384/original": {
+      "fixed": {
+        "raw": "2-unprotected-16384-original-fixed.json",
+        "sha256": "9ba0335a163be6a4c3b19eac4a712138c744523dab5b2e7431e6df915da2ce4f",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 31800.0,
+          "p99_ns": 51400
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      },
+      "allocated": {
+        "raw": "2-unprotected-16384-original-allocated.json",
+        "sha256": "ad2053673692dccf67591764e1c27ecba488c2f405333588aa9104a96f65721a",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 33500.0,
+          "p99_ns": 53900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      }
+    },
+    "2/unprotected/16384/current": {
+      "fixed": {
+        "raw": "2-unprotected-16384-current-fixed.json",
+        "sha256": "06168e9710b1fcd0b7e145c2cbd7a99c22f17d03dcf02399c4769ff0bf857726",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 19100.0,
+          "p99_ns": 38000
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      },
+      "allocated": {
+        "raw": "2-unprotected-16384-current-allocated.json",
+        "sha256": "c1a47ee4626200834afd7249f0d799a9809de66a9f1f71f022a92131d91ef17d",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 20000.0,
+          "p99_ns": 39500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      }
+    },
+    "2/oscore/64/original": {
+      "fixed": {
+        "raw": "2-oscore-64-original-fixed.json",
+        "sha256": "d9ccc5d0b11498eb51b7a7e5ab06c1883db12e368383272c7e5e8c73f3f6a3de",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2400.0,
+          "p99_ns": 3700
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      },
+      "allocated": {
+        "raw": "2-oscore-64-original-allocated.json",
+        "sha256": "51468bd87e8213a6b0dcaa428fa4798d6dbb4557b3cbfcfd803f606cc8a43bcf",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2400.0,
+          "p99_ns": 2500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      }
+    },
+    "2/oscore/64/current": {
+      "fixed": {
+        "raw": "2-oscore-64-current-fixed.json",
+        "sha256": "6fc42df784b73d91658b41d0cfca31b5702cf38f295ada160e033fa69b60bee2",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      },
+      "allocated": {
+        "raw": "2-oscore-64-current-allocated.json",
+        "sha256": "0362d695b4e52ba396a3996c84032d27465f37d4b0a3acca572fbb16f4e769d5",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 1700
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      }
+    },
+    "2/oscore/16384/original": {
+      "fixed": {
+        "raw": "2-oscore-16384-original-fixed.json",
+        "sha256": "2fc276c4debc3440aca167132352ed1651c30278ede11e28e9cb90c8b40f8263",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 64700.0,
+          "p99_ns": 83100
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      },
+      "allocated": {
+        "raw": "2-oscore-16384-original-allocated.json",
+        "sha256": "760c1fb289ec5c96a4ff38b9c6da4b0621266b52ba73faf667328f0ddae783e9",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 66300.0,
+          "p99_ns": 107000
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      }
+    },
+    "2/oscore/16384/current": {
+      "fixed": {
+        "raw": "2-oscore-16384-current-fixed.json",
+        "sha256": "abe0f8854b98746d756ed1f58d2e7af3d3cfd4c7583e5cd14a36e9a67854788c",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 49400.0,
+          "p99_ns": 64600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      },
+      "allocated": {
+        "raw": "2-oscore-16384-current-allocated.json",
+        "sha256": "d4687544c5ab7f8d2067cde14f3cfbf23f5ae7b8b54e976f8eef62d2df142da0",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 50200.0,
+          "p99_ns": 96100
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      }
+    },
+    "3/oscore/16384/current": {
+      "allocated": {
+        "raw": "3-oscore-16384-current-allocated.json",
+        "sha256": "c0e02cae1c105446d3707754063ce45e311fb7e07712ffab7ee078b1840c8c22",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 50300.0,
+          "p99_ns": 76500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      },
+      "fixed": {
+        "raw": "3-oscore-16384-current-fixed.json",
+        "sha256": "e4cddf0314b218b9cddad71f386ac69a3654d435af12a9f77b124975c01837cc",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 49200.0,
+          "p99_ns": 61300
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      }
+    },
+    "3/oscore/16384/original": {
+      "allocated": {
+        "raw": "3-oscore-16384-original-allocated.json",
+        "sha256": "5d623e12239255187fb7f4cea3095562534a259296e45bbffb063f616149d005",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 66300.0,
+          "p99_ns": 117100
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      },
+      "fixed": {
+        "raw": "3-oscore-16384-original-fixed.json",
+        "sha256": "397153abddf6c97d44fc991cad932ecf61da87f4deaf6685487bf186516d84eb",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 64300.0,
+          "p99_ns": 111300
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      }
+    },
+    "3/oscore/64/current": {
+      "allocated": {
+        "raw": "3-oscore-64-current-allocated.json",
+        "sha256": "be78ea34e59442457063e622e7d1ad1f8b98b785e9b00c53c77ada62d5b97211",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 2100
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      },
+      "fixed": {
+        "raw": "3-oscore-64-current-fixed.json",
+        "sha256": "58a9b4413a9ab13e15a2e476533f39817e9ed63f0b19a9281ee55a40ec93e2e5",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1600.0,
+          "p99_ns": 1700
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      }
+    },
+    "3/oscore/64/original": {
+      "allocated": {
+        "raw": "3-oscore-64-original-allocated.json",
+        "sha256": "dc2a2157beef78d99e32dc90695aab2867b75dba75d96edd769b37ca920b8d08",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2400.0,
+          "p99_ns": 2500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      },
+      "fixed": {
+        "raw": "3-oscore-64-original-fixed.json",
+        "sha256": "8b32054be0211a8c357d248208a9535a2f4f1f4e26cd36f0c01a4f419143ec9f",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 2400.0,
+          "p99_ns": 2500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      }
+    },
+    "3/unprotected/16384/current": {
+      "allocated": {
+        "raw": "3-unprotected-16384-current-allocated.json",
+        "sha256": "4a9e332e6557151a1b56a9e6417392dc89e0f9932f8cd58bcadd86570ee50e7a",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 20000.0,
+          "p99_ns": 48900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/16384"
+      },
+      "fixed": {
+        "raw": "3-unprotected-16384-current-fixed.json",
+        "sha256": "f7c5d7a71c210639981df33adc4d379572357f63ca7ab8b76c8883a9863e6378",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 19000.0,
+          "p99_ns": 21600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/16384"
+      }
+    },
+    "3/unprotected/16384/original": {
+      "allocated": {
+        "raw": "3-unprotected-16384-original-allocated.json",
+        "sha256": "04e3a724b78fa5f1dcd98e9e2985c926bb49473ee998ff46e66ca8290a041275",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 33100.0,
+          "p99_ns": 41500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/16384"
+      },
+      "fixed": {
+        "raw": "3-unprotected-16384-original-fixed.json",
+        "sha256": "46c2097070e2ae6e63281fecdb7b057afdcb5ef97fbe5fbf4fb90663d834b5ee",
+        "verified": 1500,
+        "sends": {
+          "client": 26048,
+          "server": 26048,
+          "combined": 52096,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 31500.0,
+          "p99_ns": 41400
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/16384"
+      }
+    },
+    "3/unprotected/64/current": {
+      "allocated": {
+        "raw": "3-unprotected-64-current-allocated.json",
+        "sha256": "6fd9331fa9f7008580a3155b1e5b1bda0960b401729f516fc7dbe461b963de52",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/allocated/64"
+      },
+      "fixed": {
+        "raw": "3-unprotected-64-current-fixed.json",
+        "sha256": "1ee82808bf490e117986faba85893fb876c8979c237670d64acdb0c00771b220",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 800.0,
+          "p99_ns": 900
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "current/fixed/64"
+      }
+    },
+    "3/unprotected/64/original": {
+      "allocated": {
+        "raw": "3-unprotected-64-original-allocated.json",
+        "sha256": "27a715028973b88001e21c8c5d3a05ec6fbcb7bfc03fbbe9cd5905a3788a3f00",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1500.0,
+          "p99_ns": 1600
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/allocated/64"
+      },
+      "fixed": {
+        "raw": "3-unprotected-64-original-fixed.json",
+        "sha256": "5b2db0160494c67568db60c2748283b5852c6c3412b133a33832b1b17703f933",
+        "verified": 1500,
+        "sends": {
+          "client": 1628,
+          "server": 1628,
+          "combined": 3256,
+          "per_port_limit": 30000,
+          "combined_limit": 60000
+        },
+        "wall": {
+          "median_ns": 1400.0,
+          "p99_ns": 1500
+        },
+        "clock": {
+          "median_ns": 0.0,
+          "p99_ns": 100
+        },
+        "configured_owner_key": "original/fixed/64"
+      }
+    }
+  },
+  "configured_owners": {
+    "original/fixed/64": {
+      "payload_bytes": 64,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 315784,
+        "server_pool_requested_heap_bytes": 0,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16936,
+        "client_pool_requested_heap_bytes": 37076,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "original/allocated/64": {
+      "payload_bytes": 64,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 35664,
+        "server_pool_requested_heap_bytes": 282640,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16936,
+        "client_pool_requested_heap_bytes": 37076,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "current/fixed/64": {
+      "payload_bytes": 64,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 315336,
+        "server_pool_requested_heap_bytes": 0,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16944,
+        "client_pool_requested_heap_bytes": 37060,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "current/allocated/64": {
+      "payload_bytes": 64,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 35352,
+        "server_pool_requested_heap_bytes": 282512,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16944,
+        "client_pool_requested_heap_bytes": 37060,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "original/fixed/16384": {
+      "payload_bytes": 16384,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 315784,
+        "server_pool_requested_heap_bytes": 0,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16936,
+        "client_pool_requested_heap_bytes": 37076,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "original/allocated/16384": {
+      "payload_bytes": 16384,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 35664,
+        "server_pool_requested_heap_bytes": 282640,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16936,
+        "client_pool_requested_heap_bytes": 37076,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "current/fixed/16384": {
+      "payload_bytes": 16384,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 315336,
+        "server_pool_requested_heap_bytes": 0,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16944,
+        "client_pool_requested_heap_bytes": 37060,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    },
+    "current/allocated/16384": {
+      "payload_bytes": 16384,
+      "memory": {
+        "server_app_including_transport_inline_bytes": 35352,
+        "server_pool_requested_heap_bytes": 282512,
+        "server_pool_payload_nested_bytes": 225280,
+        "server_transport_nested_bytes": 2984,
+        "client_app_including_transport_inline_bytes": 16944,
+        "client_pool_requested_heap_bytes": 37060,
+        "client_pool_payload_nested_bytes": 29184,
+        "client_transport_nested_bytes": 2984,
+        "each_transport_input_nested_bytes": 1472,
+        "each_transport_output_nested_bytes": 1472,
+        "packet_buffers_nested_count": 4,
+        "separate_static_representation_bytes": 16384,
+        "separate_verification_requested_bytes": 16384,
+        "separate_timing_requested_bytes": 24000,
+        "separate_poll_counts_requested_bytes": 6000,
+        "separate_calibration_requested_bytes": 65536,
+        "separate_vec_headers_bytes": 96,
+        "separate_pending_inline_bytes": 80,
+        "clock_inline_bytes": 16,
+        "remaining": "security/bindings, fixed pools, profile scratch and transport metadata nest in Apps; allocated pool metadata/alignment nest in requested heap; allocator overhead, init temporaries, generated peak stack and runtime unknown; do not add nested owners twice"
+      }
+    }
+  }
+}
