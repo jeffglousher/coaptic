@@ -187,6 +187,10 @@ for actual stop or transfer conditions.
     records lower alternate CPU time in every 30-second pair under both
     protections. The original CPU ratios stay withheld. Run a same-binary
     control at the 72-second workload to quantify repeatability.
+22. The [Service storage control](architecture/requirements/WINDOWS-SERVICE-APP-BACKENDS-20261120.md)
+    verifies all 96,000 socket-free reads. Fixed Service has a lower
+    16 KiB poll-wall median in each pair. Keep both backends and use
+    separate measurements for Linux sockets and process CPU time.
 
 ## Blocked and deferred work
 
