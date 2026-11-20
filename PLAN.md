@@ -173,6 +173,10 @@ for actual stop or transfer conditions.
 17. The [Windows direct Mio screen](architecture/requirements/WINDOWS-DIRECT-MIO-20261120.md)
     verifies 115,200 reads, with a 2,048-byte smaller App owner. Only
     one of 16 pairs meets every advancement gate. Keep the guarded path.
+18. A Tokio UDP test fills the server's only Block1 receive body slot with
+    a partial upload in each protection mode. A second upload receives a
+    refusal with no handler effect. The first and a fresh third upload
+    each deliver the complete tagged body once and release the slot.
 
 ## Blocked and deferred work
 
