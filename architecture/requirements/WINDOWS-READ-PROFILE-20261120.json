@@ -1,0 +1,4873 @@
+{
+ "core": "f8ffae43e80e246061125b26b67f5c60a5b2af54",
+ "fixture": "8215e251766b7a565752d7dd4202710ecca23ae3",
+ "lock_sha256": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+ "patches": {
+  "last-option": "bca30b0f9c3abc14081d234a42e4a34904199cd2b8010ff242ad8113dbe87d33",
+  "seal": "b94dd992d8ecec68dfb437a5c4391eeeadfbf397b31aa6e931171ad0ef0338b3"
+ },
+ "scripts": {
+  "run.py": "cdb0f865989b8d69f3f6cac9d3dfaae3b6b6a1a31112b4baa1f1d69c2714c98f",
+  "sample.cpp": "f6ec09c097b1a8a411ecbce163d03ef6ce7b7343189535b2d21608f211194bfb",
+  "phase.rs": "5b4ee9c58ac596965d1c667f6b609e408b2b14c615e2468dd2a40196978045ba",
+  "inject.py": "017aeb795a1842aa3fd40eb4995b5f9ba2a4be07ee8b5e74da42dbab962895dc",
+  "runphase.py": "de72ee3b51715e0f7449dde72b5ce6b3b96ccf673e8df038a6bfe1dc2fa8e023",
+  "summarize.py": "07a6dc7ce34db1aab631d061509bece2b58fd144f63926e89605026a5aa5a90f",
+  "receipt.py": "8009e26b21680ddf4fff3be78a8c4b150c894b85bf4f8b24f3d0bfd5293e9c77"
+ },
+ "verified": 614400,
+ "windows": [
+  {
+   "window": "coaptic-async-compare-base-0-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "d3fbef607e03f6f5d702923d62b6da2fdef9c35d9a91fee3a9c96fb7c249f5d8",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1065075112582,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 166.2,
+    "p99": 475.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 195.3125,
+     "cycles_per_read": 538553.6958333333,
+     "rss_end_bytes": 6586368,
+     "private_end_bytes": 1261568
+    },
+    "client": {
+     "cpu_us_per_read": 231.11979166666666,
+     "cycles_per_read": 641884.5125,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-0-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "03a7e98e55ea2a4344bccdfe324fcf817555be79d16eaa12c38b7d340ff4276c",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1499347619422,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 59.7,
+    "p99": 156.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 55.338541666666664,
+     "cycles_per_read": 170524.73333333334,
+     "rss_end_bytes": 6520832,
+     "private_end_bytes": 1232896
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 234156.15833333333,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-0-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "cd347afad0e0d414ed5fddcaa6a519c94f486cbac7b47fcf129a264f60f8e9d2",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1011861300059,
+   "missed_starts": 13,
+   "latency_us": {
+    "p50": 149.7,
+    "p99": 607.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 188.80208333333334,
+     "cycles_per_read": 483528.80416666664,
+     "rss_end_bytes": 6463488,
+     "private_end_bytes": 1253376
+    },
+    "client": {
+     "cpu_us_per_read": 188.80208333333334,
+     "cycles_per_read": 562618.1166666667,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-0-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "09264317a0c0be0f5c69a69b0bbade9b0704d31f7d81fb6cac49f2cbf337e9d0",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1415583773696,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 54.25,
+    "p99": 124.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 157215.71666666667,
+     "rss_end_bytes": 6393856,
+     "private_end_bytes": 1224704
+    },
+    "client": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 214125.625,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-1-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "cd60ab2e71bf1b3242934035515f6588b7f59e4586e9749ec5ac1223fc1f381d",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0956114255654,
+   "missed_starts": 33,
+   "latency_us": {
+    "p50": 166.0,
+    "p99": 616.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 534165.8541666666,
+     "rss_end_bytes": 6582272,
+     "private_end_bytes": 1249280
+    },
+    "client": {
+     "cpu_us_per_read": 113.93229166666667,
+     "cycles_per_read": 629265.9083333333,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-1-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "3653949b7c8b36626f1d1679e11884553c2fb57f29126fb3871709da21b1d7ff",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1075611264674,
+   "missed_starts": 35,
+   "latency_us": {
+    "p50": 64.0,
+    "p99": 231.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 13.020833333333334,
+     "cycles_per_read": 179789.16666666666,
+     "rss_end_bytes": 6516736,
+     "private_end_bytes": 1228800
+    },
+    "client": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 241448.16666666666,
+     "rss_end_bytes": 5259264,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-1-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "7f845ce1c26ba2e2580cc9016ab336031855c20a09f71a6455beb67357333ba6",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0674056789285,
+   "missed_starts": 6,
+   "latency_us": {
+    "p50": 177.95,
+    "p99": 686.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 126.953125,
+     "cycles_per_read": 556272.4416666667,
+     "rss_end_bytes": 6459392,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 166.015625,
+     "cycles_per_read": 635309.55,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-1-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "1eda25764afe275bb8e04869b001bcf4c9fa4b90e18a761aaf34db8b7879ddc1",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1050671303987,
+   "missed_starts": 27,
+   "latency_us": {
+    "p50": 60.9,
+    "p99": 195.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 177637.25,
+     "rss_end_bytes": 6406144,
+     "private_end_bytes": 1236992
+    },
+    "client": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 229076.275,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-2-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5b41da2e91a98a52be044ecce0442cfb6a81c0a8ebb14bf226f695561c3addae",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1371701822083,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 172.25,
+    "p99": 502.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 107.421875,
+     "cycles_per_read": 557055.0791666667,
+     "rss_end_bytes": 6586368,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 136.71875,
+     "cycles_per_read": 657148.3166666667,
+     "rss_end_bytes": 5320704,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-2-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "cdd1d15bf3ae1186c5ce151a3141fe00483c49c1aeb1a05299306dfce8a90753",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.133568963779,
+   "missed_starts": 19,
+   "latency_us": {
+    "p50": 68.0,
+    "p99": 258.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 35.807291666666664,
+     "cycles_per_read": 189474.775,
+     "rss_end_bytes": 6524928,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 29.296875,
+     "cycles_per_read": 252037.75,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-2-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "0f51db484ebbd63d6af6f4b90b6c6664dbff16240feca91ba4173a4d1422ab36",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1250328718035,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 140.2,
+    "p99": 428.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 169.27083333333334,
+     "cycles_per_read": 471285.9,
+     "rss_end_bytes": 6463488,
+     "private_end_bytes": 1253376
+    },
+    "client": {
+     "cpu_us_per_read": 188.80208333333334,
+     "cycles_per_read": 547981.825,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-base-2-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "c94d3072b9bc50a4de0c36448d100980423f74c8890a9d8dc86c8be3dc9f5f1f",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1258197851612,
+   "missed_starts": 13,
+   "latency_us": {
+    "p50": 60.9,
+    "p99": 206.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 97.65625,
+     "cycles_per_read": 175677.575,
+     "rss_end_bytes": 6393856,
+     "private_end_bytes": 1232896
+    },
+    "client": {
+     "cpu_us_per_read": 91.14583333333333,
+     "cycles_per_read": 227586.93333333332,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-0-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "4430106e17421e1d3cd65b828df817f1d51f956a18723e9c6de3b3b328d5d212",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1193511365445,
+   "missed_starts": 21,
+   "latency_us": {
+    "p50": 173.9,
+    "p99": 471.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 558284.1083333333,
+     "rss_end_bytes": 6549504,
+     "private_end_bytes": 1253376
+    },
+    "client": {
+     "cpu_us_per_read": 179.03645833333334,
+     "cycles_per_read": 661435.2916666666,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-0-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "590c1e466c673841e055dea7351c178147f87c39d8df3a8afbe9e2d5d6c21cdb",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1199246413717,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 59.0,
+    "p99": 169.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 19.53125,
+     "cycles_per_read": 165020.275,
+     "rss_end_bytes": 6508544,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 26.041666666666668,
+     "cycles_per_read": 230605.99166666667,
+     "rss_end_bytes": 5271552,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-0-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "8b425fc15565b7bb455e0e417c5b9103e2019b846a6add9728b8c1cd20543404",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1007326822447,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 132.8,
+    "p99": 414.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 146.484375,
+     "cycles_per_read": 459989.68333333335,
+     "rss_end_bytes": 6434816,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 172.52604166666666,
+     "cycles_per_read": 539663.8666666667,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-0-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "32711f01b24626d4951417367ccbb78f91e42d9bf0b26a9ac835db68fb968f7b",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1418384765673,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 58.5,
+    "p99": 191.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 74.86979166666667,
+     "cycles_per_read": 171820.20416666666,
+     "rss_end_bytes": 6406144,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 223527.475,
+     "rss_end_bytes": 5177344,
+     "private_end_bytes": 864256
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-1-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "e621e1252f280e29a9bef08070c61eb81d1d9ee03574b5d22b0758cdf4a0b04d",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0797812888575,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 165.7,
+    "p99": 477.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 533203.2291666666,
+     "rss_end_bytes": 6549504,
+     "private_end_bytes": 1253376
+    },
+    "client": {
+     "cpu_us_per_read": 139.97395833333334,
+     "cycles_per_read": 633066.1875,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-1-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "ebc643098ded3641efe354db3190154915cf1818fd11681cfb18831ba6c559a5",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1539896353053,
+   "missed_starts": 366,
+   "latency_us": {
+    "p50": 68.5,
+    "p99": 768.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 185620.025,
+     "rss_end_bytes": 6516736,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 84.63541666666667,
+     "cycles_per_read": 240351.80833333332,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-1-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "95c5367000466972b14459584bf6ed6ff481b3472088665e07bc20176b849cf7",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1300478037697,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 134.6,
+    "p99": 446.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 100.91145833333333,
+     "cycles_per_read": 465771.80833333335,
+     "rss_end_bytes": 6447104,
+     "private_end_bytes": 1245184
+    },
+    "client": {
+     "cpu_us_per_read": 113.93229166666667,
+     "cycles_per_read": 542090.3333333334,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-1-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "6da903b9ad6472747bfefabfd590a3ee49e231131fdf9a67797d1e59aaa569fa",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1370234652684,
+   "missed_starts": 32,
+   "latency_us": {
+    "p50": 64.6,
+    "p99": 291.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 185431.46666666667,
+     "rss_end_bytes": 6414336,
+     "private_end_bytes": 1249280
+    },
+    "client": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 239458.10416666666,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-2-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "e0ab5b01d8f32dd5acec100d044ea0c573adc860bc6a8df48fb967585e7c9bf4",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1140295844496,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 178.5,
+    "p99": 576.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 149.73958333333334,
+     "cycles_per_read": 566782.4791666666,
+     "rss_end_bytes": 6549504,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 182.29166666666666,
+     "cycles_per_read": 670553.6666666666,
+     "rss_end_bytes": 5320704,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-2-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "a1011c9034f508213e15f3ace718a29b4b2655372f82491caef6d528c5f1d57f",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1159901480385,
+   "missed_starts": 9,
+   "latency_us": {
+    "p50": 66.55,
+    "p99": 214.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 78.125,
+     "cycles_per_read": 186456.6375,
+     "rss_end_bytes": 6520832,
+     "private_end_bytes": 1249280
+    },
+    "client": {
+     "cpu_us_per_read": 78.125,
+     "cycles_per_read": 248080.50416666668,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-2-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "3fd75d48e527d8d2dd7a6a5b6b338bb4f033ea8cd26c9763cd61f84a020184ae",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.068192478939,
+   "missed_starts": 28,
+   "latency_us": {
+    "p50": 141.7,
+    "p99": 489.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 159.50520833333334,
+     "cycles_per_read": 478713.69583333336,
+     "rss_end_bytes": 6447104,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 550747.6541666667,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compare-last-option-2-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "c1b4d2b389a10f847703ba047c532dd8039cd30dfa7adfc1289dc62c8f5d7248",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1210716534923,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 58.5,
+    "p99": 158.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 55.338541666666664,
+     "cycles_per_read": 170447.525,
+     "rss_end_bytes": 6397952,
+     "private_end_bytes": 1228800
+    },
+    "client": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 222392.79583333334,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-0-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "745fd57f3107ab5135e2ffad7f41a34c87462ae3f91c8e09643b4cafa47f1f44",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0689259379695,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 144.8,
+    "p99": 406.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 169.27083333333334,
+     "cycles_per_read": 484182.7375,
+     "rss_end_bytes": 6578176,
+     "private_end_bytes": 1249280
+    },
+    "client": {
+     "cpu_us_per_read": 205.078125,
+     "cycles_per_read": 581859.6375,
+     "rss_end_bytes": 5324800,
+     "private_end_bytes": 905216
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-0-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "9832b11d996523b4c42c7787d5cb0f15a535736a544ed799ae139c20a012b9d6",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.124619409473,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 59.0,
+    "p99": 124.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 161843.96666666667,
+     "rss_end_bytes": 6520832,
+     "private_end_bytes": 1236992
+    },
+    "client": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 225830.90416666667,
+     "rss_end_bytes": 5271552,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-0-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "efc3fed4907ebd08a3e9d3987ebd99daff7a3f30a038225158980251929ca01b",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1150165336267,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 122.8,
+    "p99": 400.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 126.953125,
+     "cycles_per_read": 414407.1583333333,
+     "rss_end_bytes": 6463488,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 497203.0375,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 909312
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-0-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "03cf092efb434773d917aad671ec30394e5b76e872a0a6f60d00f3daba72d95d",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.115349962953,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 54.2,
+    "p99": 154.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 156216.6125,
+     "rss_end_bytes": 6397952,
+     "private_end_bytes": 1236992
+    },
+    "client": {
+     "cpu_us_per_read": 81.38020833333333,
+     "cycles_per_read": 211496.3625,
+     "rss_end_bytes": 5177344,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-1-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "6bcb7a31f44d8d6bf7d45e8bf473c4ec61e789a1f10ccdb8d09cec6b3ac2bd5f",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1138562017375,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 144.8,
+    "p99": 377.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 136.71875,
+     "cycles_per_read": 482632.7625,
+     "rss_end_bytes": 6574080,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 578017.6375,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-1-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "e3860984d660a7044fc250630215cf9e7fc1d60a86b5b11eef7a2f0639aad83c",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1076811587559,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 58.9,
+    "p99": 213.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 160162.87916666668,
+     "rss_end_bytes": 6516736,
+     "private_end_bytes": 1232896
+    },
+    "client": {
+     "cpu_us_per_read": 78.125,
+     "cycles_per_read": 228840.11666666667,
+     "rss_end_bytes": 5251072,
+     "private_end_bytes": 847872
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-1-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f1f26b082f95ad2f2a4c4162fd44ea7dd5fd5549c9f3102751ae64d51ff826fc",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1240992477933,
+   "missed_starts": 105,
+   "latency_us": {
+    "p50": 122.8,
+    "p99": 357.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 414200.25416666665,
+     "rss_end_bytes": 6471680,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 143.22916666666666,
+     "cycles_per_read": 492158.925,
+     "rss_end_bytes": 5230592,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-1-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "988cfebd7522b33a1c3b0212f63d69da5eaeca08c7b579c3ea42ed14d21dc554",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0954647238659,
+   "missed_starts": 29,
+   "latency_us": {
+    "p50": 57.9,
+    "p99": 187.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 74.86979166666667,
+     "cycles_per_read": 168929.0,
+     "rss_end_bytes": 6406144,
+     "private_end_bytes": 1249280
+    },
+    "client": {
+     "cpu_us_per_read": 113.93229166666667,
+     "cycles_per_read": 222746.89166666666,
+     "rss_end_bytes": 5177344,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-2-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "cb4bc96fc26ab6ec7fa343b9d99fc7769ad195ff75441208b7d8ec9e28bd6df9",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0479628753744,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 147.0,
+    "p99": 385.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 489399.32916666666,
+     "rss_end_bytes": 6578176,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 585369.7125,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-2-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "661dfdca65b39906decf9506bb9ecd158e95ae10deb5b5f3b64a3c4b2fd3ea87",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1401045323036,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 59.0,
+    "p99": 162.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 164143.42916666667,
+     "rss_end_bytes": 6520832,
+     "private_end_bytes": 1236992
+    },
+    "client": {
+     "cpu_us_per_read": 91.14583333333333,
+     "cycles_per_read": 228075.04583333334,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-2-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "4982cee644d14759a4a6069900ce5fdc4f074eadd92553eecbede2d0941a518a",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1307013500656,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 122.8,
+    "p99": 320.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 107.421875,
+     "cycles_per_read": 413433.8375,
+     "rss_end_bytes": 6459392,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 136.71875,
+     "cycles_per_read": 490000.63333333336,
+     "rss_end_bytes": 5230592,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-base-2-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "67791fdd217e2e75091c6422100535dae9eb4b1616a482b753743ab2fd5bfdd6",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1567507074636,
+   "missed_starts": 10,
+   "latency_us": {
+    "p50": 55.5,
+    "p99": 180.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 32.55208333333333,
+     "cycles_per_read": 159509.86666666667,
+     "rss_end_bytes": 6389760,
+     "private_end_bytes": 1224704
+    },
+    "client": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 214145.45833333334,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-0-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "0aac4b57e932a9ad7b84da892056dbbc82f42fe5409eeba85bf49aa1c0718639",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1053605408939,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 155.05,
+    "p99": 387.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 494422.3333333333,
+     "rss_end_bytes": 6582272,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 149.73958333333334,
+     "cycles_per_read": 600233.875,
+     "rss_end_bytes": 5320704,
+     "private_end_bytes": 905216
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-0-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "99132ac11b3008a2414c045e991692ad6f384163ff8b847b7a187ed2d4f529c4",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1243393223307,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 57.8,
+    "p99": 109.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 157320.55,
+     "rss_end_bytes": 6516736,
+     "private_end_bytes": 1224704
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 221211.8625,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-0-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "d6db7af3e9c6aba6e9cb035ac5c23e2fec8273d81bc1771861b068e36fbea126",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1032533248416,
+   "missed_starts": 14,
+   "latency_us": {
+    "p50": 122.9,
+    "p99": 361.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 421316.87916666665,
+     "rss_end_bytes": 6463488,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 117.1875,
+     "cycles_per_read": 497226.9083333333,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-0-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "820f29f16ad9d5c01ef419e48bafed65ff2f1dd2b76b0310e656562680da02cb",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0681124653079,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 54.5,
+    "p99": 146.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 19.53125,
+     "cycles_per_read": 157510.17083333334,
+     "rss_end_bytes": 6402048,
+     "private_end_bytes": 1241088
+    },
+    "client": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 214057.625,
+     "rss_end_bytes": 5189632,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-1-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "8f185c89deed3ee53411dac4aa583b20fd3196f0e7943159127ba0e11a0bb7b7",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1000925215744,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 139.4,
+    "p99": 318.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 451339.0916666667,
+     "rss_end_bytes": 6569984,
+     "private_end_bytes": 1245184
+    },
+    "client": {
+     "cpu_us_per_read": 175.78125,
+     "cycles_per_read": 539793.5625,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-1-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "215bd45971aea472bfe4289164cb30326b3f7b1f6eb659f8dadb6172ea6fa33e",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1292608820955,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 57.6,
+    "p99": 89.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 26.041666666666668,
+     "cycles_per_read": 153070.05416666667,
+     "rss_end_bytes": 6520832,
+     "private_end_bytes": 1236992
+    },
+    "client": {
+     "cpu_us_per_read": 61.848958333333336,
+     "cycles_per_read": 216769.62083333332,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-1-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "738cebdddd1de7c874f875b191db07af781f12c100e5e296e5cdbc5326516b6e",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.070299510317,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 124.85,
+    "p99": 386.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 434857.025,
+     "rss_end_bytes": 6463488,
+     "private_end_bytes": 1257472
+    },
+    "client": {
+     "cpu_us_per_read": 107.421875,
+     "cycles_per_read": 513288.65,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 905216
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-1-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f675e087d43c1e5106212dbbb321f48f5672d2555e94800dc64225c70dcd84a3",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0909970160607,
+   "missed_starts": 41,
+   "latency_us": {
+    "p50": 55.5,
+    "p99": 152.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 158488.6625,
+     "rss_end_bytes": 6397952,
+     "private_end_bytes": 1232896
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 217430.2125,
+     "rss_end_bytes": 5177344,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-2-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "10e3e47f286f78882a68995a10a724b480f84a668dc125e2c1eb4e4d55fa0f23",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1216985103434,
+   "missed_starts": 21,
+   "latency_us": {
+    "p50": 156.1,
+    "p99": 508.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 146.484375,
+     "cycles_per_read": 514583.9791666667,
+     "rss_end_bytes": 6578176,
+     "private_end_bytes": 1253376
+    },
+    "client": {
+     "cpu_us_per_read": 162.76041666666666,
+     "cycles_per_read": 610354.6125,
+     "rss_end_bytes": 5320704,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-2-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "610577abb5c1207c0f13d925d41bb6b18636a07e8a2596ead81fc3424cca3b77",
+   "runtime": "coaptic-async",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0840621654648,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 60.5,
+    "p99": 159.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 171121.07916666666,
+     "rss_end_bytes": 6520832,
+     "private_end_bytes": 1232896
+    },
+    "client": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 232845.24583333332,
+     "rss_end_bytes": 5259264,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-2-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "ea595b47192cdb0b018a2432a6afdb1738581450ffa87b5f434871fc043e2db2",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1272068904422,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 124.3,
+    "p99": 414.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 113.93229166666667,
+     "cycles_per_read": 429888.42083333334,
+     "rss_end_bytes": 6463488,
+     "private_end_bytes": 1261568
+    },
+    "client": {
+     "cpu_us_per_read": 126.953125,
+     "cycles_per_read": 506639.87916666665,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 905216
+    }
+   }
+  },
+  {
+   "window": "coaptic-async-compareseal-seal-2-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "15c4c14687bc9f39bd3c436293ac0dbc722565a88bcc0cc31fc7b5616af6dc50",
+   "runtime": "coaptic-async",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1567507074636,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 53.4,
+    "p99": 175.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 78.125,
+     "cycles_per_read": 147606.325,
+     "rss_end_bytes": 6402048,
+     "private_end_bytes": 1236992
+    },
+    "client": {
+     "cpu_us_per_read": 136.71875,
+     "cycles_per_read": 205063.20833333334,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "compare-base-0-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "2c90798ce68bd07aa7b3d01c3598464bc8d76c6af7c224d2631011384b2057c4",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1141096072652,
+   "missed_starts": 18,
+   "latency_us": {
+    "p50": 155.3,
+    "p99": 508.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 491851.0125,
+     "rss_end_bytes": 6336512,
+     "private_end_bytes": 1179648
+    },
+    "client": {
+     "cpu_us_per_read": 74.86979166666667,
+     "cycles_per_read": 598673.1333333333,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compare-base-0-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "430bfa8a2d2721b4f526971bb6e07f6a48138aa3245bbd1eba6a9d562c9c31bc",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1127225473949,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 60.3,
+    "p99": 185.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 164457.64583333334,
+     "rss_end_bytes": 6299648,
+     "private_end_bytes": 1163264
+    },
+    "client": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 230769.82916666666,
+     "rss_end_bytes": 5259264,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "compare-base-0-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "b5e65b39ce9d3b16a731faaf4bb5687dafea97310dd033f026eeec4d2cd90466",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1031199571105,
+   "missed_starts": 62,
+   "latency_us": {
+    "p50": 124.5,
+    "p99": 532.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 175.78125,
+     "cycles_per_read": 424370.2916666667,
+     "rss_end_bytes": 6205440,
+     "private_end_bytes": 1179648
+    },
+    "client": {
+     "cpu_us_per_read": 198.56770833333334,
+     "cycles_per_read": 506453.1625,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compare-base-0-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "6411b47b7ba4f883ddad14f336d93c60d5a5c1242472efbce44bd05e639f08ee",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1399444762889,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 52.6,
+    "p99": 133.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 148716.85,
+     "rss_end_bytes": 6160384,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 97.65625,
+     "cycles_per_read": 206798.69583333333,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 864256
+    }
+   }
+  },
+  {
+   "window": "compare-base-1-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "a3b9454ea5bfb2567d3488e9edb653923a8cc573c5a733f37e824b48807bcfae",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1036400915132,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 143.0,
+    "p99": 354.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 143.22916666666666,
+     "cycles_per_read": 443402.1458333333,
+     "rss_end_bytes": 6324224,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 185.546875,
+     "cycles_per_read": 546019.7416666667,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compare-base-1-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "533ae7f3fb0446339e919ea0f3fba64c12f047ab6385210fe78b8557bfb036b3",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1500414686094,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 57.4,
+    "p99": 195.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 26.041666666666668,
+     "cycles_per_read": 156649.54583333334,
+     "rss_end_bytes": 6295552,
+     "private_end_bytes": 1163264
+    },
+    "client": {
+     "cpu_us_per_read": 22.786458333333332,
+     "cycles_per_read": 223515.29166666666,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "compare-base-1-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "ae1764bf9cc1039624f7e2ed18c5c04ab915534d310dc82ff649f9432712eb89",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.13150161229,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 119.0,
+    "p99": 371.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 100.91145833333333,
+     "cycles_per_read": 403238.2291666667,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 139.97395833333334,
+     "cycles_per_read": 489805.98333333334,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compare-base-1-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "3dfdacce7a1f527fa9ad5967619c19934d3c967c0fa6e5cb78e25d03daba56cd",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1139362245184,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 52.0,
+    "p99": 135.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 145665.5625,
+     "rss_end_bytes": 6160384,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 202335.0625,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 864256
+    }
+   }
+  },
+  {
+   "window": "compare-base-2-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f543e94f60006364de6547203c6960809dd520cbb8a57db6af685e54465fb3fa",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1105085964123,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 149.5,
+    "p99": 425.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 205.078125,
+     "cycles_per_read": 468769.19166666665,
+     "rss_end_bytes": 6311936,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 276.6927083333333,
+     "cycles_per_read": 577134.1333333333,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "compare-base-2-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "6bef30029b8fa786edd0755aec0c2154787a191b8c2f5a92a4df3a37bf259160",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1049337620628,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 56.1,
+    "p99": 143.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 153732.9125,
+     "rss_end_bytes": 6291456,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 74.86979166666667,
+     "cycles_per_read": 221004.8875,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "compare-base-2-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "3a86a66ccb7d0c9be2c195a5f179a96d417836d3c60edd6cf24c0b6d34d97194",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1312882088736,
+   "missed_starts": 100,
+   "latency_us": {
+    "p50": 116.8,
+    "p99": 415.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 397461.98333333334,
+     "rss_end_bytes": 6201344,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 156.25,
+     "cycles_per_read": 481632.0291666667,
+     "rss_end_bytes": 5218304,
+     "private_end_bytes": 860160
+    }
+   }
+  },
+  {
+   "window": "compare-base-2-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "0a76644bd101c743cb4c8c18588c17860ee88ca9028f706744940463f3523f01",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1345426233421,
+   "missed_starts": 16,
+   "latency_us": {
+    "p50": 57.1,
+    "p99": 228.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 3.2552083333333335,
+     "cycles_per_read": 159734.125,
+     "rss_end_bytes": 6164480,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 213959.37916666668,
+     "rss_end_bytes": 5189632,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-0-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "78cb411efc203f400a0e9d6a4c71b0ed25c83a15020d8e41799b3781709ed626",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.079154497685,
+   "missed_starts": 23,
+   "latency_us": {
+    "p50": 171.55,
+    "p99": 634.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 179.03645833333334,
+     "cycles_per_read": 528946.5,
+     "rss_end_bytes": 6307840,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 211.58854166666666,
+     "cycles_per_read": 639352.2208333333,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-0-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "cb41f0a7889efbaa8650e34f986dc12b06de70fbd557190b858e78a23fba2b49",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.093891018111,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 55.9,
+    "p99": 163.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 150541.87083333332,
+     "rss_end_bytes": 6270976,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 61.848958333333336,
+     "cycles_per_read": 218996.83333333334,
+     "rss_end_bytes": 5259264,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-0-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "b454b7c3bca8cd13bc8697af83295303d21fbb5b68e6c3ae0189d2127b57daf4",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1360364617991,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 115.4,
+    "p99": 365.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 84.63541666666667,
+     "cycles_per_read": 389955.5625,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 474551.95416666666,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-0-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "b585b95cd4533c6cae9760beb42acc6d375d1de3a0dae882ce3ef21216740bb8",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1111220996743,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 53.1,
+    "p99": 183.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 149572.44583333333,
+     "rss_end_bytes": 6156288,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 84.63541666666667,
+     "cycles_per_read": 206510.9,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-1-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "9e753464c2ce404080869c44a01fc0a1348cb4b037f913bf86ad6f2a521daa58",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0251607913069,
+   "missed_starts": 117,
+   "latency_us": {
+    "p50": 150.0,
+    "p99": 463.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 166.015625,
+     "cycles_per_read": 474851.7208333333,
+     "rss_end_bytes": 6311936,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 211.58854166666666,
+     "cycles_per_read": 578304.0875,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-1-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "b90d95af92e8deca3a66bf31c30746ecb43a1d524dd2eab15da47d1639b66b75",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0962382425233,
+   "missed_starts": 21,
+   "latency_us": {
+    "p50": 59.4,
+    "p99": 201.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 55.338541666666664,
+     "cycles_per_read": 163100.83333333334,
+     "rss_end_bytes": 6270976,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 84.63541666666667,
+     "cycles_per_read": 226583.65,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-1-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "871247f41ac8cdb27900759f4a955b453c9047935271845d7b8cc3e0b02723c1",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1294876220802,
+   "missed_starts": 26,
+   "latency_us": {
+    "p50": 135.3,
+    "p99": 544.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 117.1875,
+     "cycles_per_read": 442315.5625,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 526867.4708333333,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-1-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "1bee099ba45a59b97a441412c24383e958ed0c009e5b1d84ed805b1cbd29b84f",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0961582232825,
+   "missed_starts": 18,
+   "latency_us": {
+    "p50": 52.6,
+    "p99": 180.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 145338.45416666666,
+     "rss_end_bytes": 6160384,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 204229.075,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-2-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f0e3374591430e7c01a6e05e00e079e9ba91935365197d7fa817500aa2b35abb",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1374502783336,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 156.4,
+    "p99": 468.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 493776.9708333333,
+     "rss_end_bytes": 6307840,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 117.1875,
+     "cycles_per_read": 601034.575,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-2-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "4573d785c3b339a0aa24ed7348db0f14867f7cde81505b6f5070630353686d7f",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.128273897777,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 61.2,
+    "p99": 208.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 55.338541666666664,
+     "cycles_per_read": 168025.94583333333,
+     "rss_end_bytes": 6270976,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 235876.98333333334,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-2-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "89980aaf7f4e2f17f9eca1df0c362eac3c7f0515a2d9c8e0373ec7ecae6ae5aa",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1433056660447,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 118.05,
+    "p99": 395.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 397847.4583333333,
+     "rss_end_bytes": 6193152,
+     "private_end_bytes": 1163264
+    },
+    "client": {
+     "cpu_us_per_read": 139.97395833333334,
+     "cycles_per_read": 479050.29583333334,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "compare-last-option-2-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5aeb71ea377d73ed553f5bdc5e33f793bae9aee67f167953784c5365223bf212",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1491211245402,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 52.2,
+    "p99": 145.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 146994.60833333334,
+     "rss_end_bytes": 6156288,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 204232.40416666667,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-0-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "91c6e7064bdf84258d46d969ed3d68f9025b13df1bd9aee23c51b32cd2d8d537",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1449996096793,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 146.1,
+    "p99": 368.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 464530.0291666667,
+     "rss_end_bytes": 6320128,
+     "private_end_bytes": 1179648
+    },
+    "client": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 570164.3458333333,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-0-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "aace10d1a8192c64d7ff1df9b7c91b03d6957f683032e473c5ea0bb4e60b933b",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1117889521131,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 57.3,
+    "p99": 139.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 68.359375,
+     "cycles_per_read": 155133.5,
+     "rss_end_bytes": 6291456,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 220690.24583333332,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-0-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "df69c46eca24ccf6f176172ff2810e30f3871348ac42b9cc730d4a4c7b912eba",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1072143667251,
+   "missed_starts": 6,
+   "latency_us": {
+    "p50": 116.0,
+    "p99": 367.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 61.848958333333336,
+     "cycles_per_read": 384428.1541666667,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1175552
+    },
+    "client": {
+     "cpu_us_per_read": 74.86979166666667,
+     "cycles_per_read": 468603.0875,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-0-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "834edb747b644621d7eeac4d0d50fb6541d58a086e1545ab05aefe3be2eb26ec",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1363298950087,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 51.0,
+    "p99": 104.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 140366.94583333333,
+     "rss_end_bytes": 6164480,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 198951.2125,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-1-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "a70b0698792513b30deede1ddeedc0c9564274cfb6b5ccb8843cde5060d135cf",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0862492976743,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 150.6,
+    "p99": 370.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 201.82291666666666,
+     "cycles_per_read": 470924.8625,
+     "rss_end_bytes": 6316032,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 231.11979166666666,
+     "cycles_per_read": 579603.2416666667,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-1-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f90f20e162e1c96db69f863f9cd8468a212c532d6745603aeb77b6e09d581ecc",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1518288095166,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 58.65,
+    "p99": 143.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 161410.04166666666,
+     "rss_end_bytes": 6291456,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 84.63541666666667,
+     "cycles_per_read": 228012.35833333334,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-1-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "9cce1231045131abcff6c1a2274bf0a43be3d77e6bde0e25555d02f5bdb6886c",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0752870845147,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 116.6,
+    "p99": 334.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 81.38020833333333,
+     "cycles_per_read": 388884.9166666667,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1175552
+    },
+    "client": {
+     "cpu_us_per_read": 107.421875,
+     "cycles_per_read": 472239.67083333334,
+     "rss_end_bytes": 5230592,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-1-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "4823767d9dc35efd34e1779c867c25c1a9d87815feb252f2fa3272569aab6aa7",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.147947355466,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 51.4,
+    "p99": 105.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 13.020833333333334,
+     "cycles_per_read": 141213.475,
+     "rss_end_bytes": 6160384,
+     "private_end_bytes": 1163264
+    },
+    "client": {
+     "cpu_us_per_read": 22.786458333333332,
+     "cycles_per_read": 201398.22083333333,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-2-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "3fc29b13db15a793ee6101bf0d59741fc22fb8b1864fab5ecb5933f88018c475",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1096950391899,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 141.9,
+    "p99": 285.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 436578.4875,
+     "rss_end_bytes": 6316032,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 146.484375,
+     "cycles_per_read": 529862.0208333334,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-2-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "7fe36ea4d4b12284db6f4d14ddb48c6c0c6961309c9d5436d91405362d8605fd",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1225387668121,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 55.3,
+    "p99": 118.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 146005.27916666667,
+     "rss_end_bytes": 6295552,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 113.93229166666667,
+     "cycles_per_read": 214303.34583333333,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-2-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f652cf78d96b8672083280e06c7403095b6a7526385d4874c453805ba662b225",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0820084058616,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 111.1,
+    "p99": 287.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 126.953125,
+     "cycles_per_read": 354297.49583333335,
+     "rss_end_bytes": 6230016,
+     "private_end_bytes": 1204224
+    },
+    "client": {
+     "cpu_us_per_read": 169.27083333333334,
+     "cycles_per_read": 429990.9166666667,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 921600
+    }
+   }
+  },
+  {
+   "window": "compareseal-base-2-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "425d1902f0a3933ada0a2210b1df31d7cc6c95633cf0821a00889f0b6c0117b5",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1231122762089,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 51.0,
+    "p99": 110.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 141634.65,
+     "rss_end_bytes": 6164480,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 200485.60416666666,
+     "rss_end_bytes": 5177344,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-0-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "eb23a3d684a8f88f8c4905129abb16f0bd0c3b9ee11d4aa730e120f1c3ac5585",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1291675186097,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 156.2,
+    "p99": 496.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 97.65625,
+     "cycles_per_read": 494008.525,
+     "rss_end_bytes": 6320128,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 126.953125,
+     "cycles_per_read": 601606.2,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-0-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5dd991662a8220a26f03ce31e92319f199aa2d918ecceb14f20e59bba7ea4080",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.099785778283,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 60.95,
+    "p99": 199.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 165419.5625,
+     "rss_end_bytes": 6291456,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 68.359375,
+     "cycles_per_read": 230524.4625,
+     "rss_end_bytes": 5271552,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-0-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "fea90f28b0b5826d95e772c43261ae45470ada1f0ec3d0bcd8f67d764da8aa5a",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1037334490417,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 113.7,
+    "p99": 309.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 377347.2291666667,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 460630.725,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-0-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "bd5e4e0f4b548710e3ea72f7cfb48de5322969de215356f4ca8d9ceb4805eb66",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1450796386898,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 51.6,
+    "p99": 136.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 68.359375,
+     "cycles_per_read": 142066.6625,
+     "rss_end_bytes": 6160384,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 203396.57083333333,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-1-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "223036f3328dc492b484db1a251121b2acb3cb04a4c4886aa1baf6199b9eb1c1",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1057873201802,
+   "missed_starts": 8,
+   "latency_us": {
+    "p50": 152.95,
+    "p99": 402.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 172.52604166666666,
+     "cycles_per_read": 477994.7375,
+     "rss_end_bytes": 6316032,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 218.09895833333334,
+     "cycles_per_read": 587975.3166666667,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-1-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "9612a9769407fab68b47067865e876e6577824dffcd315a26569ba04d779604a",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1524823913944,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 58.9,
+    "p99": 190.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 61.848958333333336,
+     "cycles_per_read": 159767.84166666667,
+     "rss_end_bytes": 6295552,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 97.65625,
+     "cycles_per_read": 227081.5375,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-1-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "e716aeada88212e6708c8ac91cdcec42925770d347b2fbc944aba1749f35cf97",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0891432653788,
+   "missed_starts": 6,
+   "latency_us": {
+    "p50": 117.0,
+    "p99": 383.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 397331.0833333333,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 480748.17083333334,
+     "rss_end_bytes": 5230592,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-1-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "56c7e78a53211fb7c4ac27848a16d148b31b6091f939db35d85297004f3fbe84",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1402379123648,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 52.1,
+    "p99": 150.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 29.296875,
+     "cycles_per_read": 144966.65,
+     "rss_end_bytes": 6164480,
+     "private_end_bytes": 1146880
+    },
+    "client": {
+     "cpu_us_per_read": 39.0625,
+     "cycles_per_read": 204365.21666666667,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-2-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "935bc701632deb7f79cc1626eabbae4f7360f41571478de4a83b0a69e7ac60bb",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0920639268226,
+   "missed_starts": 17,
+   "latency_us": {
+    "p50": 142.1,
+    "p99": 505.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 87.890625,
+     "cycles_per_read": 456740.98333333334,
+     "rss_end_bytes": 6316032,
+     "private_end_bytes": 1163264
+    },
+    "client": {
+     "cpu_us_per_read": 100.91145833333333,
+     "cycles_per_read": 557464.6375,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-2-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "54a2fa06450acb342c2bb0ee0a0adcb376645bc5ae01cff7de63f51b18e0d04f",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0736601149746,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 55.1,
+    "p99": 89.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 91.14583333333333,
+     "cycles_per_read": 145068.225,
+     "rss_end_bytes": 6287360,
+     "private_end_bytes": 1146880
+    },
+    "client": {
+     "cpu_us_per_read": 110.67708333333333,
+     "cycles_per_read": 209428.525,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-2-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "fd23ac62af47dd6d687bb4a79bdaabe9c4adf284fa79a5248c58d831c281b184",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0825018406481,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 112.4,
+    "p99": 310.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 91.14583333333333,
+     "cycles_per_read": 366463.9,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 449900.25416666665,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "compareseal-seal-2-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5d4bad77f806bd9488ba6034c39f6d4b50a1170301a68714c8b2b704f21e54bb",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1160568340438,
+   "missed_starts": 2,
+   "latency_us": {
+    "p50": 50.5,
+    "p99": 102.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 137043.72916666666,
+     "rss_end_bytes": 6164480,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 81.38020833333333,
+     "cycles_per_read": 196175.325,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "phase-oscore-4096-0",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "49b3976e758c5727bd10384c58da85e623a2cdde8ec1850959fa329b5828c88a",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1279137824833,
+   "missed_starts": 7,
+   "latency_us": {
+    "p50": 152.35,
+    "p99": 395.1
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 175.78125,
+     "cycles_per_read": 480633.2083333333,
+     "rss_end_bytes": 6328320,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 201.82291666666666,
+     "cycles_per_read": 586550.0791666667,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "phase-oscore-4096-1",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "218faa8ec5e8a9322896b964a62a82bf8869307d51f0829b0a157712ee2bfd59",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0987321835514,
+   "missed_starts": 11,
+   "latency_us": {
+    "p50": 149.2,
+    "p99": 440.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 198.56770833333334,
+     "cycles_per_read": 511629.30833333335,
+     "rss_end_bytes": 6361088,
+     "private_end_bytes": 1175552
+    },
+    "client": {
+     "cpu_us_per_read": 224.609375,
+     "cycles_per_read": 609296.5041666667,
+     "rss_end_bytes": 5320704,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "phase-oscore-64-0",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "f7357892a6b5da208ca88563332818e583fd912beb2ed71be8dd6046f65974ce",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1500948219536,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 57.3,
+    "p99": 139.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 158266.03333333333,
+     "rss_end_bytes": 6307840,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 225014.975,
+     "rss_end_bytes": 5279744,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "phase-oscore-64-1",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "60a5b9e7f48607b4e3731e03d99845387491d35a56ecd2540ba230d993b3a535",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.072366545554,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 61.25,
+    "p99": 162.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 176943.15416666667,
+     "rss_end_bytes": 6324224,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 68.359375,
+     "cycles_per_read": 238287.86666666667,
+     "rss_end_bytes": 5271552,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "phase-unprotected-4096-0",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "6c0f81680983fa9a80f6e67290c2e0e8a0b08802d969060297bfd93f30b23e37",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1029599158918,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 113.2,
+    "p99": 308.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 366673.92083333334,
+     "rss_end_bytes": 6225920,
+     "private_end_bytes": 1175552
+    },
+    "client": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 453188.975,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 897024
+    }
+   }
+  },
+  {
+   "window": "phase-unprotected-4096-1",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "885d354eeb479d9d9d2357aa851fa0579407d01cd75f48000f734d8f566f16fc",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0755004580599,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 126.3,
+    "p99": 334.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 414628.3,
+     "rss_end_bytes": 6287360,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 500629.88333333336,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "phase-unprotected-64-0",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "fa04c9cfb15f5913ca95cf2a7af8d1dd68e193520ea1863abdd9b388d759d463",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1490277564196,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 53.1,
+    "p99": 111.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 3.2552083333333335,
+     "cycles_per_read": 150870.75,
+     "rss_end_bytes": 15130624,
+     "private_end_bytes": 1208320
+    },
+    "client": {
+     "cpu_us_per_read": 29.296875,
+     "cycles_per_read": 206825.6125,
+     "rss_end_bytes": 5160960,
+     "private_end_bytes": 835584
+    }
+   }
+  },
+  {
+   "window": "phase-unprotected-64-1",
+   "server": "972332461e5458cfaa5ce20a6174b4fb67f3661da881328d3161f91cef309e1d",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "b8e2ea7a466f94f7a1c9c559f2a9470a94fa896cb94bbcabe03dda265fbbd68d",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1484275333074,
+   "missed_starts": 0,
+   "latency_us": {
+    "p50": 56.0,
+    "p99": 150.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 168128.86666666667,
+     "rss_end_bytes": 6242304,
+     "private_end_bytes": 1142784
+    },
+    "client": {
+     "cpu_us_per_read": 81.38020833333333,
+     "cycles_per_read": 220736.21666666667,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-oscore-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "82bf90da45c3d84aba23e6966c936e28dd914bbdb97ba389915c8db665b84d6b",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1309280908666,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 145.8,
+    "p99": 362.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 94.40104166666667,
+     "cycles_per_read": 450346.3625,
+     "rss_end_bytes": 6320128,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 120.44270833333333,
+     "cycles_per_read": 556795.3333333334,
+     "rss_end_bytes": 5320704,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-oscore-4096-1",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "d6748cf4782b859be56a5a54c278a5f501db1327358c7151129092e26f30022d",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1329287505631,
+   "missed_starts": 1449,
+   "latency_us": {
+    "p50": 146.3,
+    "p99": 6610.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 130.20833333333331,
+     "cycles_per_read": 427511.9625,
+     "rss_end_bytes": 6676480,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 768.2291666666666,
+     "cycles_per_read": 2301939.683333333,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-oscore-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "920e1d836906b72855ffcb290bb8479c76ea99befe7db2364237924f3266b711",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0955714160057,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 55.3,
+    "p99": 83.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 152829.3625,
+     "rss_end_bytes": 6287360,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 211876.59583333333,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 872448
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-oscore-64-1",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "e2d6f30f1fa45f0c49188a39b4225dd6e6d5e949cbac38a56ecc5be2e1491c4d",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1266733878418,
+   "missed_starts": 632,
+   "latency_us": {
+    "p50": 64.5,
+    "p99": 2869.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 61.848958333333336,
+     "cycles_per_read": 148166.82916666666,
+     "rss_end_bytes": 6627328,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 556.640625,
+     "cycles_per_read": 1881988.6833333333,
+     "rss_end_bytes": 5267456,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-unprotected-4096-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "ba6b1d84d37a75aaddd547e296586cdc6dbf743a030e96b348e0d72b00aca7dd",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1429855515181,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 110.9,
+    "p99": 261.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 26.041666666666668,
+     "cycles_per_read": 349122.625,
+     "rss_end_bytes": 6193152,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 42.317708333333336,
+     "cycles_per_read": 426546.50416666665,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-unprotected-4096-1",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5bca8e08c380c8831dcbcab3ebfc26d73ec9293a2ac515b40b63c0c0c9ace724",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1366766799882,
+   "missed_starts": 1425,
+   "latency_us": {
+    "p50": 117.0,
+    "p99": 6687.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 123.69791666666667,
+     "cycles_per_read": 367810.2291666667,
+     "rss_end_bytes": 6541312,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 686.8489583333334,
+     "cycles_per_read": 2244332.7041666666,
+     "rss_end_bytes": 5234688,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-unprotected-64-0",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "0e14e064c37f18084992880931b39b9962e90d6e93ccc320bfecc3d644796e67",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.109828409113,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 51.1,
+    "p99": 107.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 58.59375,
+     "cycles_per_read": 144728.8625,
+     "rss_end_bytes": 15110144,
+     "private_end_bytes": 1191936
+    },
+    "client": {
+     "cpu_us_per_read": 87.890625,
+     "cycles_per_read": 203496.8,
+     "rss_end_bytes": 5189632,
+     "private_end_bytes": 880640
+    }
+   }
+  },
+  {
+   "window": "profile-base-0-unprotected-64-1",
+   "server": "35a03b3ea894b61e0328f3e9018ac07995925d713ba3470fb65fc74d70d6ec7f",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "ce2552a407a1e69970e06d075cbc04336cd4376c4d69762d0c8366f9e9e5b651",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1528425288037,
+   "missed_starts": 976,
+   "latency_us": {
+    "p50": 57.45,
+    "p99": 3338.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 26.041666666666668,
+     "cycles_per_read": 136419.6875,
+     "rss_end_bytes": 6524928,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 572.9166666666666,
+     "cycles_per_read": 2028651.8625,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-oscore-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "16ff0412f93fa93e10ab65a411d6b548e567299da19c87462d9c66daf35f5503",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0821684386987,
+   "missed_starts": 3,
+   "latency_us": {
+    "p50": 153.7,
+    "p99": 480.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 205.078125,
+     "cycles_per_read": 486318.2916666667,
+     "rss_end_bytes": 6299648,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 253.90625,
+     "cycles_per_read": 597151.8458333333,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-oscore-4096-1",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "50887c418f0f194613555bd7a5231f40371f1306655603ddec2e06b0a6e4a15c",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 799.8605976288433,
+   "missed_starts": 2198,
+   "latency_us": {
+    "p50": 150.8,
+    "p99": 7778.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 454417.50833333336,
+     "rss_end_bytes": 6676480,
+     "private_end_bytes": 1175552
+    },
+    "client": {
+     "cpu_us_per_read": 768.2291666666666,
+     "cycles_per_read": 2606778.3,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 892928
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-oscore-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "b1120584be490ec2ccb298cb7ee9e43e50e9deb187c308b679ac6965f422e40f",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.0943844675544,
+   "missed_starts": 1,
+   "latency_us": {
+    "p50": 54.4,
+    "p99": 85.8
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 52.083333333333336,
+     "cycles_per_read": 143640.36666666667,
+     "rss_end_bytes": 6275072,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 71.61458333333333,
+     "cycles_per_read": 208041.5375,
+     "rss_end_bytes": 5259264,
+     "private_end_bytes": 864256
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-oscore-64-1",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "627f4a75877e8463f6a7800321f1617d53110f4c0232f02472d7522cb00c7f38",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1548166211026,
+   "missed_starts": 755,
+   "latency_us": {
+    "p50": 64.0,
+    "p99": 3536.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 35.807291666666664,
+     "cycles_per_read": 159512.0625,
+     "rss_end_bytes": 6631424,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 579.4270833333334,
+     "cycles_per_read": 1911220.5375,
+     "rss_end_bytes": 5259264,
+     "private_end_bytes": 868352
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-unprotected-4096-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "ebc0fb07c9a4db4765d88e58e8ea255e4d8aafaf91ec9620294bc588769769b4",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1290208046047,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 112.0,
+    "p99": 371.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 107.421875,
+     "cycles_per_read": 359349.32916666666,
+     "rss_end_bytes": 6193152,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 113.93229166666667,
+     "cycles_per_read": 441126.2708333333,
+     "rss_end_bytes": 5238784,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-unprotected-4096-1",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "35091416461a69a4fd517a241dca365895c73a6ed17fcb45448741d998d44bb2",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.0603378838154,
+   "missed_starts": 1228,
+   "latency_us": {
+    "p50": 112.0,
+    "p99": 6182.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 139.97395833333334,
+     "cycles_per_read": 351069.19583333336,
+     "rss_end_bytes": 6545408,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 673.828125,
+     "cycles_per_read": 2158599.720833333,
+     "rss_end_bytes": 5242880,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-unprotected-64-0",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "653e774ae1ee581c7d54056f6a0f3f9cb964b65b9d3cfccc6c306333e7bcd19b",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1538562506594,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 50.9,
+    "p99": 113.5
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 138162.11666666667,
+     "rss_end_bytes": 15130624,
+     "private_end_bytes": 1212416
+    },
+    "client": {
+     "cpu_us_per_read": 48.828125,
+     "cycles_per_read": 198517.075,
+     "rss_end_bytes": 5177344,
+     "private_end_bytes": 860160
+    }
+   }
+  },
+  {
+   "window": "profile-last-option-0-unprotected-64-1",
+   "server": "75bdc4d3e4cb9d5b0b0c1d8bbbce7b4930c1adf9095a8d998c667d09edcb30f2",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "c76651f198b881d9b8825314aa4ec6c7b06ab63c2a0cbb1a9be31d5796d11dd4",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1505883407257,
+   "missed_starts": 785,
+   "latency_us": {
+    "p50": 54.2,
+    "p99": 3533.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 78.125,
+     "cycles_per_read": 139103.49166666667,
+     "rss_end_bytes": 6508544,
+     "private_end_bytes": 1155072
+    },
+    "client": {
+     "cpu_us_per_read": 582.6822916666666,
+     "cycles_per_read": 1896262.875,
+     "rss_end_bytes": 5181440,
+     "private_end_bytes": 860160
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-oscore-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "229b70e303709b76411adf018e9bf817635968e1a6c6b68c5616a9c1ef68aeec",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1380371470418,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 143.7,
+    "p99": 360.4
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 65.10416666666666,
+     "cycles_per_read": 443203.175,
+     "rss_end_bytes": 6320128,
+     "private_end_bytes": 1171456
+    },
+    "client": {
+     "cpu_us_per_read": 78.125,
+     "cycles_per_read": 549943.7666666667,
+     "rss_end_bytes": 5312512,
+     "private_end_bytes": 884736
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-oscore-4096-1",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5cb810a5bf7d687334e4f1a146882eb925f152def697c181160af668039c23d9",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1114155146104,
+   "missed_starts": 1913,
+   "latency_us": {
+    "p50": 140.55,
+    "p99": 7436.9
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 130.20833333333331,
+     "cycles_per_read": 424817.17916666664,
+     "rss_end_bytes": 6680576,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 735.6770833333334,
+     "cycles_per_read": 2492118.8958333335,
+     "rss_end_bytes": 5316608,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-oscore-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "893f1378c09112131bb9500aec3e1a6bda10bfcf5be99b424dbe844d7b4baa35",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1387707341377,
+   "missed_starts": 19,
+   "latency_us": {
+    "p50": 55.7,
+    "p99": 186.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 16.276041666666664,
+     "cycles_per_read": 150390.78333333333,
+     "rss_end_bytes": 6287360,
+     "private_end_bytes": 1146880
+    },
+    "client": {
+     "cpu_us_per_read": 19.53125,
+     "cycles_per_read": 214790.04166666666,
+     "rss_end_bytes": 5263360,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-oscore-64-1",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "67bf130769d10cbb05f1afc6872c414c0a5c696dbb8b5abebd760b0e6021d433",
+   "runtime": "coaptic-ready",
+   "security": "oscore",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1158967876497,
+   "missed_starts": 795,
+   "latency_us": {
+    "p50": 60.8,
+    "p99": 3661.2
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 153668.17083333334,
+     "rss_end_bytes": 6656000,
+     "private_end_bytes": 1159168
+    },
+    "client": {
+     "cpu_us_per_read": 452.4739583333333,
+     "cycles_per_read": 1891826.3,
+     "rss_end_bytes": 5271552,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-unprotected-4096-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "12c75c4d65093783567cf15ebb787e8bbfd94239eb293e4a9054acebaf724c84",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1374902920819,
+   "missed_starts": 4,
+   "latency_us": {
+    "p50": 114.15,
+    "p99": 371.0
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 143.22916666666666,
+     "cycles_per_read": 374763.44166666665,
+     "rss_end_bytes": 6197248,
+     "private_end_bytes": 1167360
+    },
+    "client": {
+     "cpu_us_per_read": 152.99479166666666,
+     "cycles_per_read": 459683.32916666666,
+     "rss_end_bytes": 5230592,
+     "private_end_bytes": 888832
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-unprotected-4096-1",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "7f117b5f74646225b5881684700f67a3ca52e335a838b7aa2ffeaacb473b96c1",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 4096,
+   "verified": 4800,
+   "sent_datagrams": 19200,
+   "achieved_ops_s": 800.1220986322513,
+   "missed_starts": 1366,
+   "latency_us": {
+    "p50": 108.3,
+    "p99": 6951.3
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 91.14583333333333,
+     "cycles_per_read": 339626.07083333336,
+     "rss_end_bytes": 6557696,
+     "private_end_bytes": 1175552
+    },
+    "client": {
+     "cpu_us_per_read": 605.46875,
+     "cycles_per_read": 2209140.2958333334,
+     "rss_end_bytes": 5242880,
+     "private_end_bytes": 901120
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-unprotected-64-0",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "6c6b9074768845dee20901c081fe073a037e2b61432189934be69157c357d03d",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1319017440024,
+   "missed_starts": 5,
+   "latency_us": {
+    "p50": 52.4,
+    "p99": 121.7
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 45.572916666666664,
+     "cycles_per_read": 146555.86666666667,
+     "rss_end_bytes": 15114240,
+     "private_end_bytes": 1208320
+    },
+    "client": {
+     "cpu_us_per_read": 68.359375,
+     "cycles_per_read": 207149.39166666666,
+     "rss_end_bytes": 5185536,
+     "private_end_bytes": 876544
+    }
+   }
+  },
+  {
+   "window": "profile-seal-0-unprotected-64-1",
+   "server": "ae9fec209d13755beff8e27b14e5dc7809fc02a3fa7386163d079da217e173d4",
+   "client": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+   "sha256": "5d4167e6dcbcbeb36c00300554990c6a6254d0d6eb01d04017a962ba84457a53",
+   "runtime": "coaptic-ready",
+   "security": "unprotected",
+   "bytes": 64,
+   "verified": 4800,
+   "sent_datagrams": 4800,
+   "achieved_ops_s": 800.1513086124586,
+   "missed_starts": 664,
+   "latency_us": {
+    "p50": 56.35,
+    "p99": 3227.6
+   },
+   "process": {
+    "server": {
+     "cpu_us_per_read": 29.296875,
+     "cycles_per_read": 142631.98333333334,
+     "rss_end_bytes": 6516736,
+     "private_end_bytes": 1150976
+    },
+    "client": {
+     "cpu_us_per_read": 550.1302083333334,
+     "cycles_per_read": 1869694.2125,
+     "rss_end_bytes": 5189632,
+     "private_end_bytes": 876544
+    }
+   }
+  }
+ ],
+ "stack_samples": {
+  "profile-base-0-oscore-4096-1": {
+   "stack_sha256": "f465ef139b8f490741437f014a8d5da0c76fa37fc3651a00ca349722e44e5d18",
+   "sample_count": 3479,
+   "path_counts": {
+    "other": 1143,
+    "sendto": 831,
+    "recvfrom": 203,
+    "completion_port": 1302
+   },
+   "selected_option_paths": 40,
+   "staged_sealing": 6,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1302
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1016
+    ],
+    [
+     "bench-rust-server!aes::backends::x86_aes::AesEnc::encrypt",
+     132
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     102
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     67
+    ],
+    [
+     "bench-rust-server!ccm::CbcMac::block_update",
+     59
+    ],
+    [
+     "bench-rust-server!coaptic::app::encode_response",
+     35
+    ],
+    [
+     "VCRUNTIME140!memmove",
+     28
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     27
+    ],
+    [
+     "bench-rust-server!coaptic::app::evict_one_dedup_pin",
+     24
+    ],
+    [
+     "bench-rust-server!coaptic::message::encode::encode",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::unprotect_request_wire",
+     19
+    ]
+   ]
+  },
+  "profile-base-0-oscore-64-1": {
+   "stack_sha256": "54620c265542b1ba382eaa29ca25d1e826662571c99d37e47b74fd79d214dbba",
+   "sample_count": 3547,
+   "path_counts": {
+    "other": 842,
+    "sendto": 832,
+    "recvfrom": 211,
+    "completion_port": 1662
+   },
+   "selected_option_paths": 45,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1662
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     967
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     102
+    ],
+    [
+     "bench-rust-server!aes::backends::x86_aes::AesEnc::encrypt",
+     55
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     38
+    ],
+    [
+     "bench-rust-server!cipher::stream::StreamCipher::try_apply_keystream_inout",
+     33
+    ],
+    [
+     "VCRUNTIME140!memmove",
+     32
+    ],
+    [
+     "bench-rust-server!coaptic::app::request_options",
+     29
+    ],
+    [
+     "bench-rust-server!coaptic::message::option::read_option",
+     25
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     25
+    ],
+    [
+     "bench-rust-server!coaptic::app::send_response",
+     24
+    ],
+    [
+     "bench-rust-server!coaptic::app::note_dedup_store",
+     23
+    ]
+   ]
+  },
+  "profile-base-0-unprotected-4096-1": {
+   "stack_sha256": "3d7745378d54e2b13661e36e0f619b3e48469448bb05c90ac4be757a5b1e0582",
+   "sample_count": 3565,
+   "path_counts": {
+    "other": 940,
+    "sendto": 890,
+    "recvfrom": 333,
+    "completion_port": 1402
+   },
+   "selected_option_paths": 28,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1402
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1179
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     121
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     60
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     48
+    ],
+    [
+     "bench-rust-server!coaptic::app::encode_response",
+     25
+    ],
+    [
+     "bench-rust-server!coaptic::storage::occupancy::HeapOccupancy::acquire",
+     24
+    ],
+    [
+     "ws2_32!recvfrom",
+     24
+    ],
+    [
+     "ntdll!RtlQueryPerformanceCounter",
+     23
+    ],
+    [
+     "bench-rust-server!coaptic::app::evict_one_dedup_pin",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::message::encode::encode",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::message::option::read_option",
+     21
+    ]
+   ]
+  },
+  "profile-base-0-unprotected-64-1": {
+   "stack_sha256": "dd72b322946e0e0182e5b94628a3dd8d4b64a64d569622e6a14137ce569dcc06",
+   "sample_count": 3594,
+   "path_counts": {
+    "other": 740,
+    "recvfrom": 328,
+    "sendto": 1215,
+    "completion_port": 1311
+   },
+   "selected_option_paths": 36,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1414
+    ],
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1311
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     104
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     57
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     51
+    ],
+    [
+     "bench-rust-server!coaptic::app::request_options",
+     23
+    ],
+    [
+     "bench-rust-server!coaptic::storage::occupancy::HeapOccupancy::acquire",
+     20
+    ],
+    [
+     "ws2_32!sendto",
+     20
+    ],
+    [
+     "mswsock!Tcpip6_WSHGetSocketInformation",
+     17
+    ],
+    [
+     "ws2_32!recvfrom",
+     17
+    ],
+    [
+     "bench-rust-server!coaptic::app::send_response",
+     16
+    ],
+    [
+     "bench-rust-server!coaptic::app::request::Request::from_decoded",
+     16
+    ]
+   ]
+  },
+  "profile-last-option-0-oscore-4096-1": {
+   "stack_sha256": "6b007412a4ffc953b682f53e0e2ee683604711471e2998b048f83998354343ca",
+   "sample_count": 3559,
+   "path_counts": {
+    "other": 1514,
+    "sendto": 829,
+    "recvfrom": 357,
+    "completion_port": 859
+   },
+   "selected_option_paths": 36,
+   "staged_sealing": 7,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1184
+    ],
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     859
+    ],
+    [
+     "bench-rust-server!aes::backends::x86_aes::AesEnc::encrypt",
+     176
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     141
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     73
+    ],
+    [
+     "bench-rust-server!ccm::CbcMac::block_update",
+     59
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     43
+    ],
+    [
+     "bench-rust-server!tokio::runtime::io::driver::Driver::turn",
+     36
+    ],
+    [
+     "bench-rust-server!coaptic::app::encode_response",
+     33
+    ],
+    [
+     "bench-rust-server!coaptic::app::start_outgoing",
+     25
+    ],
+    [
+     "ntdll!RtlQueryPerformanceCounter",
+     23
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::unprotect_request_wire",
+     22
+    ]
+   ]
+  },
+  "profile-last-option-0-oscore-64-1": {
+   "stack_sha256": "850dcaa591174aeb1de94463f75822055847b45f3ee8bbe6169d7b5a24199ccd",
+   "sample_count": 3462,
+   "path_counts": {
+    "other": 905,
+    "sendto": 673,
+    "recvfrom": 292,
+    "completion_port": 1592
+   },
+   "selected_option_paths": 39,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1592
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     904
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     85
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     62
+    ],
+    [
+     "bench-rust-server!aes::backends::x86_aes::AesEnc::encrypt",
+     37
+    ],
+    [
+     "VCRUNTIME140!memmove",
+     27
+    ],
+    [
+     "bench-rust-server!cipher::stream::StreamCipher::try_apply_keystream_inout",
+     24
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     22
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::unprotect_request_wire",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::app::request_options",
+     20
+    ],
+    [
+     "bench-rust-server!coaptic::app::admission::refuse_new_request",
+     19
+    ],
+    [
+     "bench-rust-server!coaptic::message::option::read_option",
+     18
+    ]
+   ]
+  },
+  "profile-last-option-0-unprotected-4096-1": {
+   "stack_sha256": "78c14d124c04cfc2183102f247b81cbd40bdc18412be03e78d6de7e6fdd5a8b0",
+   "sample_count": 3439,
+   "path_counts": {
+    "other": 748,
+    "sendto": 1010,
+    "recvfrom": 220,
+    "completion_port": 1461
+   },
+   "selected_option_paths": 20,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1461
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1193
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     85
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     56
+    ],
+    [
+     "bench-rust-server!coaptic::app::encode_response",
+     34
+    ],
+    [
+     "bench-rust-server!coaptic::app::admission::refuse_new_request",
+     26
+    ],
+    [
+     "bench-rust-server!coaptic::message::encode::encode",
+     23
+    ],
+    [
+     "bench-rust-server!coaptic::app::start_outgoing",
+     22
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     22
+    ],
+    [
+     "bench-rust-server!coaptic::app::evict_one_dedup_pin",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::storage::occupancy::HeapOccupancy::acquire",
+     18
+    ],
+    [
+     "bench-rust-server!coaptic::app::acquire_tx_or_evict",
+     17
+    ]
+   ]
+  },
+  "profile-last-option-0-unprotected-64-1": {
+   "stack_sha256": "74de9ff3fdc1622be3d843f32c964bf6020f22798ebaa2e08aa73e288fc8d476",
+   "sample_count": 3610,
+   "path_counts": {
+    "other": 743,
+    "recvfrom": 411,
+    "sendto": 836,
+    "completion_port": 1620
+   },
+   "selected_option_paths": 24,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1620
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1127
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     105
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     49
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     46
+    ],
+    [
+     "bench-rust-server!coaptic::storage::occupancy::HeapOccupancy::acquire",
+     27
+    ],
+    [
+     "ntdll!RtlQueryPerformanceCounter",
+     25
+    ],
+    [
+     "ws2_32!recvfrom",
+     22
+    ],
+    [
+     "bench-rust-server!coaptic::app::note_dedup_store",
+     17
+    ],
+    [
+     "bench-rust-server!coaptic::app::replay_con_request",
+     17
+    ],
+    [
+     "bench-rust-server!coaptic::message::option::read_option",
+     17
+    ],
+    [
+     "bench-rust-server!coaptic::app::request_options",
+     16
+    ]
+   ]
+  },
+  "profile-seal-0-oscore-4096-1": {
+   "stack_sha256": "ff9f5cb86bb1f8fa72e98b707b622ff691b4fdc48fd47ba9f618a83d8a6bc1a1",
+   "sample_count": 3579,
+   "path_counts": {
+    "other": 1353,
+    "recvfrom": 319,
+    "sendto": 904,
+    "completion_port": 1003
+   },
+   "selected_option_paths": 32,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1160
+    ],
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1003
+    ],
+    [
+     "bench-rust-server!aes::backends::x86_aes::AesEnc::encrypt",
+     175
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     117
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     70
+    ],
+    [
+     "bench-rust-server!ccm::CbcMac::block_update",
+     43
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     43
+    ],
+    [
+     "bench-rust-server!coaptic::message::option::read_option",
+     33
+    ],
+    [
+     "bench-rust-server!tokio::runtime::io::driver::Driver::turn",
+     28
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::stitch_inner",
+     23
+    ],
+    [
+     "bench-rust-server!coaptic::app::replay_con_request",
+     22
+    ],
+    [
+     "ws2_32!recvfrom",
+     22
+    ]
+   ]
+  },
+  "profile-seal-0-oscore-64-1": {
+   "stack_sha256": "cdbaacce1d12554e088a122c44a86f07d78ef511ba5e51adbb69db8e413d0a34",
+   "sample_count": 3566,
+   "path_counts": {
+    "other": 896,
+    "sendto": 657,
+    "recvfrom": 304,
+    "completion_port": 1709
+   },
+   "selected_option_paths": 35,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1709
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     854
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     106
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     56
+    ],
+    [
+     "bench-rust-server!aes::backends::x86_aes::AesEnc::encrypt",
+     51
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     43
+    ],
+    [
+     "VCRUNTIME140!memmove",
+     27
+    ],
+    [
+     "bench-rust-server!cipher::stream::StreamCipher::try_apply_keystream_inout",
+     25
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::stitch_inner",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::encode_outer",
+     20
+    ],
+    [
+     "bench-rust-server!coaptic::oscore::protect::unprotect_request_wire",
+     20
+    ],
+    [
+     "bench-rust-server!coaptic::message::option::read_option",
+     19
+    ]
+   ]
+  },
+  "profile-seal-0-unprotected-4096-1": {
+   "stack_sha256": "65af197b1133bb509a917d33cccc09926fe9042d40ca940510077de5e8910b6e",
+   "sample_count": 3663,
+   "path_counts": {
+    "other": 999,
+    "recvfrom": 376,
+    "sendto": 882,
+    "completion_port": 1406
+   },
+   "selected_option_paths": 32,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1406
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1193
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     132
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     65
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     40
+    ],
+    [
+     "bench-rust-server!coaptic::app::encode_response",
+     29
+    ],
+    [
+     "ntdll!RtlQueryPerformanceCounter",
+     27
+    ],
+    [
+     "bench-rust-server!coaptic::storage::occupancy::HeapOccupancy::acquire",
+     26
+    ],
+    [
+     "ws2_32!recvfrom",
+     26
+    ],
+    [
+     "bench-rust-server!tokio::runtime::io::driver::Driver::turn",
+     24
+    ],
+    [
+     "bench-rust-server!coaptic::app::request_options",
+     23
+    ],
+    [
+     "bench-rust-server!coaptic::app::send_response",
+     22
+    ]
+   ]
+  },
+  "profile-seal-0-unprotected-64-1": {
+   "stack_sha256": "b0f0d9dc54a1e9011b227aaddb7549608a26030294e863fb2fa0ea9dfb39f531",
+   "sample_count": 3474,
+   "path_counts": {
+    "other": 698,
+    "sendto": 888,
+    "recvfrom": 300,
+    "completion_port": 1588
+   },
+   "selected_option_paths": 25,
+   "staged_sealing": 0,
+   "frequent_leaf_symbols": [
+    [
+     "ntdll!ZwRemoveIoCompletionEx",
+     1588
+    ],
+    [
+     "ntdll!NtDeviceIoControlFile",
+     1072
+    ],
+    [
+     "bench-rust-server!coaptic::app::poll_engine",
+     103
+    ],
+    [
+     "VCRUNTIME140!_NLG_Return2",
+     52
+    ],
+    [
+     "mswsock!Tcpip6_WSHSetSocketInformation",
+     39
+    ],
+    [
+     "ntdll!RtlQueryPerformanceCounter",
+     25
+    ],
+    [
+     "bench-rust-server!coaptic::app::request_options",
+     22
+    ],
+    [
+     "ws2_32!recvfrom",
+     21
+    ],
+    [
+     "bench-rust-server!coaptic::app::admission::refuse_new_request",
+     19
+    ],
+    [
+     "VCRUNTIME140!memcpy",
+     17
+    ],
+    [
+     "bench-rust-server!coaptic::app::send_response",
+     15
+    ],
+    [
+     "bench-rust-server!coaptic::app::replay_con_request",
+     15
+    ]
+   ]
+  }
+ },
+ "phases": {
+  "phase-oscore-4096-1": {
+   "recv": {
+    "calls": 4097,
+    "wall_us_per_send": 3.565495363591996,
+    "thread_cycles_per_send": 11772.894094680332
+   },
+   "send": {
+    "calls": 2049,
+    "wall_us_per_send": 10.862420693020985,
+    "thread_cycles_per_send": 36581.112737920936
+   },
+   "burst": {
+    "calls": 2048,
+    "wall_us_per_send": 22.386822840409955,
+    "thread_cycles_per_send": 74842.97706198145
+   },
+   "wait": {
+    "calls": 2048,
+    "wall_us_per_send": 288.7677891654465,
+    "thread_cycles_per_send": 41081.75695461201
+   },
+   "empty_probe": {
+    "calls": 2048,
+    "wall_us_per_send": 0.3443631039531479,
+    "thread_cycles_per_send": 1069.6144460712542
+   }
+  },
+  "phase-oscore-64-1": {
+   "recv": {
+    "calls": 4096,
+    "wall_us_per_send": 5.3580078125,
+    "thread_cycles_per_send": 17769.814453125
+   },
+   "send": {
+    "calls": 2048,
+    "wall_us_per_send": 16.5013671875,
+    "thread_cycles_per_send": 55614.404296875
+   },
+   "burst": {
+    "calls": 2048,
+    "wall_us_per_send": 30.760302734375,
+    "thread_cycles_per_send": 102784.755859375
+   },
+   "wait": {
+    "calls": 2048,
+    "wall_us_per_send": 1217.470263671875,
+    "thread_cycles_per_send": 62945.986328125
+   },
+   "empty_probe": {
+    "calls": 2048,
+    "wall_us_per_send": 0.352294921875,
+    "thread_cycles_per_send": 1162.939453125
+   }
+  },
+  "phase-unprotected-4096-1": {
+   "recv": {
+    "calls": 4098,
+    "wall_us_per_send": 3.5146341463414634,
+    "thread_cycles_per_send": 11232.770731707316
+   },
+   "send": {
+    "calls": 2050,
+    "wall_us_per_send": 10.193560975609756,
+    "thread_cycles_per_send": 34337.678048780486
+   },
+   "burst": {
+    "calls": 2048,
+    "wall_us_per_send": 18.50258536585366,
+    "thread_cycles_per_send": 60999.48292682927
+   },
+   "wait": {
+    "calls": 2048,
+    "wall_us_per_send": 292.3289268292683,
+    "thread_cycles_per_send": 36733.6
+   },
+   "empty_probe": {
+    "calls": 2048,
+    "wall_us_per_send": 0.45414634146341465,
+    "thread_cycles_per_send": 1084.019512195122
+   }
+  },
+  "phase-unprotected-64-1": {
+   "recv": {
+    "calls": 4096,
+    "wall_us_per_send": 5.457568359375,
+    "thread_cycles_per_send": 18041.083984375
+   },
+   "send": {
+    "calls": 2048,
+    "wall_us_per_send": 16.938330078125,
+    "thread_cycles_per_send": 56879.27734375
+   },
+   "burst": {
+    "calls": 2048,
+    "wall_us_per_send": 29.02109375,
+    "thread_cycles_per_send": 96804.375
+   },
+   "wait": {
+    "calls": 2048,
+    "wall_us_per_send": 1219.19091796875,
+    "thread_cycles_per_send": 64819.970703125
+   },
+   "empty_probe": {
+    "calls": 2048,
+    "wall_us_per_send": 0.351611328125,
+    "thread_cycles_per_send": 1155.966796875
+   }
+  }
+ },
+ "candidate_source": {
+  "last-option": "diff --git a/src/message/decode.rs b/src/message/decode.rs\nindex 152e631..dbb2ee4 100644\n--- a/src/message/decode.rs\n+++ b/src/message/decode.rs\n@@ -11,6 +11,7 @@ use super::{Code, Header, MessageId, OwnedToken, Token, Type};\n #[derive(Clone, Copy, Debug, Eq, PartialEq)]\n pub struct ParsedMessage<'a, T: OwnedToken = Token> {\n     header: Header,\n+    last_option: OptionNumber,\n     token: T,\n     options: &'a [u8],\n     payload: &'a [u8],\n@@ -23,6 +24,7 @@ pub struct ParsedMessage<'a, T: OwnedToken = Token> {\n #[derive(Clone, Copy)]\n pub(crate) struct MessageLayout<T: OwnedToken> {\n     header: Header,\n+    last_option: OptionNumber,\n     token: T,\n     wire_len: usize,\n     options_len: usize,\n@@ -42,6 +44,7 @@ impl<T: OwnedToken> MessageLayout<T> {\n         let options_start = options_end.checked_sub(self.options_len)?;\n         Some(ParsedMessage {\n             header: self.header,\n+            last_option: self.last_option,\n             token: self.token,\n             options: &wire[options_start..options_end],\n             payload: &wire[payload_start..],\n@@ -55,6 +58,7 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {\n     pub(crate) fn layout(self, wire_len: usize) -> MessageLayout<T> {\n         MessageLayout {\n             header: self.header,\n+            last_option: self.last_option,\n             token: self.token,\n             wire_len,\n             options_len: self.options.len(),\n@@ -67,6 +71,10 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {\n         &self.options\n     }\n \n+    pub(super) const fn last_option(self) -> OptionNumber {\n+        self.last_option\n+    }\n+\n     /// Parsed header.\n     #[must_use]\n     pub const fn header(self) -> Header {\n@@ -196,6 +204,7 @@ pub fn decode(buf: &[u8]) -> Result<ParsedMessage<'_>, ParseError> {\n     let parts = decode_parts(buf, false)?;\n     Ok(ParsedMessage {\n         header: parts.header,\n+        last_option: parts.last_option,\n         token: Token::from_checked(parts.token),\n         options: parts.options,\n         payload: parts.payload,\n@@ -223,6 +232,7 @@ pub fn decode_with_token<T: OwnedToken>(\n     let token = T::try_from_bytes(parts.token).map_err(TokenDecodeError::Capacity)?;\n     Ok(ParsedMessage {\n         header: parts.header,\n+        last_option: parts.last_option,\n         token,\n         options: parts.options,\n         payload: parts.payload,\n@@ -239,6 +249,7 @@ pub(crate) fn decode_without_token<T: OwnedToken>(\n     let parts = decode_parts(buf, true)?;\n     Ok(ParsedMessage {\n         header: parts.header,\n+        last_option: parts.last_option,\n         token: T::EMPTY,\n         options: parts.options,\n         payload: parts.payload,\n@@ -247,6 +258,7 @@ pub(crate) fn decode_without_token<T: OwnedToken>(\n \n pub(super) struct Parts<'a> {\n     pub header: Header,\n+    last_option: OptionNumber,\n     pub token: &'a [u8],\n     pub options: &'a [u8],\n     pub payload: &'a [u8],\n@@ -301,15 +313,17 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars\n         return Ok(Parts {\n             header: Header::new(version, ty, tkl, code, id),\n             token: token_bytes,\n+            last_option: OptionNumber::new(0),\n             options: &[],\n             payload: &[],\n         });\n     }\n \n-    let (options, payload) = split_options_and_payload(buf, options_start)?;\n+    let (options, payload, last_option) = split_options_and_payload(buf, options_start)?;\n     Ok(Parts {\n         header: Header::new(version, ty, tkl, code, id),\n         token: token_bytes,\n+        last_option,\n         options,\n         payload,\n     })\n@@ -317,11 +331,14 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars\n \n #[cfg(feature = \"oscore\")]\n pub(crate) fn decode_options_payload(bytes: &[u8]) -> Result<(Options<'_>, &[u8]), ParseError> {\n-    let (options, payload) = split_options_and_payload(bytes, 0)?;\n+    let (options, payload, _) = split_options_and_payload(bytes, 0)?;\n     Ok((Options::new(options), payload))\n }\n \n-fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]), ParseError> {\n+fn split_options_and_payload(\n+    bytes: &[u8],\n+    start: usize,\n+) -> Result<(&[u8], &[u8], OptionNumber), ParseError> {\n     let mut i = start;\n     let mut prev = 0u32;\n     while i < bytes.len() {\n@@ -330,10 +347,10 @@ fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]\n                 return Err(ParseError::PayloadMarkerWithoutPayload);\n             }\n             let options = bytes.get(start..i).ok_or(ParseError::TruncatedOption)?;\n-            return Ok((options, &bytes[i + 1..]));\n+            return Ok((options, &bytes[i + 1..], OptionNumber::new(prev as u16)));\n         }\n         let _ = read_option(bytes, &mut i, &mut prev)?;\n     }\n     let options = bytes.get(start..).ok_or(ParseError::TruncatedOption)?;\n-    Ok((options, &[]))\n+    Ok((options, &[], OptionNumber::new(prev as u16)))\n }\ndiff --git a/src/message/value.rs b/src/message/value.rs\nindex 0f19eb6..b80bd99 100644\n--- a/src/message/value.rs\n+++ b/src/message/value.rs\n@@ -841,7 +841,12 @@ impl<'a, T: super::OwnedToken> ParsedMessage<'a, T> {\n     #[must_use]\n     pub fn get_options(self, number: OptionNumber) -> OptionsByNumber<'a> {\n         OptionsByNumber {\n-            inner: self.options(),\n+            // The decoder already validated the cumulative option numbers.\n+            inner: if number > self.last_option() {\n+                Options::new(&[])\n+            } else {\n+                self.options()\n+            },\n             number,\n         }\n     }\n",
+  "seal": "diff --git a/src/oscore/protect.rs b/src/oscore/protect.rs\nindex 5da70d1..31d9ee2 100644\n--- a/src/oscore/protect.rs\n+++ b/src/oscore/protect.rs\n@@ -470,6 +470,7 @@ fn seal_message<T: OwnedToken>(\n     kid: Option<&[u8]>,\n     out: &mut [u8],\n ) -> Result<usize, Error> {\n+    let mut full_inner_capacity = false;\n     let direct: Result<usize, Error> = (|| {\n         let prefix = encode_outer(\n             plain.ty(),\n@@ -488,6 +489,7 @@ fn seal_message<T: OwnedToken>(\n         *marker = 0xff;\n         // INNER includes the authentication tag, exactly as in the staging path.\n         let capacity = ciphertext.len().min(INNER);\n+        full_inner_capacity = capacity == INNER;\n         let ciphertext = &mut ciphertext[..capacity];\n         let pt_len = encode_plaintext(plain, ciphertext)?;\n         let ct_len = aead::seal_in_place(key, nonce, aad, pt_len, ciphertext)?;\n@@ -495,6 +497,8 @@ fn seal_message<T: OwnedToken>(\n     })();\n     match direct {\n         Ok(n) => Ok(n),\n+        // Staging repeats the same inner encoding and seal at this capacity.\n+        Err(error) if full_inner_capacity => Err(error),\n         Err(_) => seal_message_staged(plain, key, nonce, aad, piv, kid_context, kid, out),\n     }\n }\n"
+ },
+ "sampling_interval": {
+  "thread": "single Tokio primary thread",
+  "duration_ms": 3800,
+  "max_frames": 20,
+  "requested_delay_us": [
+   200,
+   850
+  ]
+ },
+ "workload": {
+  "operations_per_window": 4800,
+  "warmups": 32,
+  "offered_per_second": 800,
+  "concurrency": 1,
+  "message_type": "CON",
+  "transport": "UDP/IPv4 loopback",
+  "profile": "host-control",
+  "client_policy": "spin",
+  "clean_pair_orders": [
+   "control/candidate",
+   "candidate/control",
+   "control/candidate"
+  ]
+ }
+}

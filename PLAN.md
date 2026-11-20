@@ -1,7 +1,7 @@
 # Project plan
 
-Updated 2026-11-20 after measuring accepted core `753beb0` with companion
-`5d55676` in the allocated Service long-window comparison.
+Updated 2026-11-20 after profiling checkout `f8ffae4` with companion
+`8215e25` on Windows.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
@@ -210,6 +210,17 @@ for actual stop or transfer conditions.
     fail three pair medians and the pooled median. Retain the control
     and keep the existing placement. The next qualifying CPU comparison
     needs repeatable matched windows under the original latency guards.
+28. The [Windows read profile](architecture/requirements/WINDOWS-READ-PROFILE-20261120.md)
+    verifies 614,400 reads and measures thread cycles in App bursts, socket
+    calls and the readiness path. Neither the option lookup nor the OSCORE
+    sealing candidate reduces CPU time consistently. Both were reverted.
+29. The [Windows async adapter profile](architecture/requirements/WINDOWS-TOKIO-ADAPTER-PROFILE-20261120.md)
+    measures send and receive polls on the production Tokio adapter. Direct
+    polling did not repeat a server CPU-time gain across complete reads.
+    With the original project fixture, unprotected server cycles fell in all
+    six pairs and CPU time varied in direction. Established OSCORE server
+    CPU time fell in all three small-read pairs and rose in all three
+    blockwise pairs. Both original #650 CPU-time targets remain open.
 
 ## Blocked and deferred work
 

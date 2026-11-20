@@ -126,6 +126,23 @@ fn oversized_packet_refuses_then_exact_capacity_and_empty_packet_recover() {
 }
 
 #[test]
+fn oversized_send_refuses_then_reuses_the_bound_socket() {
+    run(async {
+        let mut sender = socket::<16>();
+        let mut receiver = socket::<16>();
+        let dest = receiver.local_endpoint().unwrap();
+        let source = sender.local_endpoint().unwrap();
+        let oversized = vec![0; 65_536];
+        assert!(sender.send(dest, &oversized).await.is_err());
+        assert_eq!(sender.send(dest, b"next").await.unwrap(), 4);
+        let mut bytes = [0; 15];
+        let (len, peer) = receiver.recv(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[..len], b"next");
+        assert_eq!(peer, source);
+    });
+}
+
+#[test]
 fn insufficient_scratch_refuses_before_receiving() {
     run(async {
         let mut receiver = socket::<8>();
