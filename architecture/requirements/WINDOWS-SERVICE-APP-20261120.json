@@ -1,0 +1,1351 @@
+{
+  "schema": 1,
+  "inputs": {
+    "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)\n",
+    "flags": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+      "CARGO_PROFILE_RELEASE_DEBUG": "0",
+      "CARGO_PROFILE_RELEASE_LTO": "thin",
+      "RUSTFLAGS": null
+    },
+    "profile": "release, thin LTO, one codegen unit, debug 0, incremental off, two jobs",
+    "runs": {
+      "current": {
+        "binary_bytes": 1296896,
+        "binary_sha256": "b58b2ec64c3b35ec4c94eef02cff5120913e07cf2be512b9f1c16491cb0c8254",
+        "build_checkout_head": "912ac866adb0c8b590a2bf13cd6ab92dea81c174",
+        "core_rust_source": "753beb0269de31f806ff9e42f9b50412c6eb86e4",
+        "lock": "Cargo.syn3.lock",
+        "lock_sha256": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+        "rust_features": [
+          "alloc",
+          "diagnostics",
+          "oscore",
+          "std"
+        ]
+      },
+      "original": {
+        "binary_bytes": 1304576,
+        "binary_sha256": "7b8f108c77f630b2cf4cd4aa80e05e643a40ba5d68a2bf5a2c1218d6e8bace67",
+        "build_checkout_head": null,
+        "core_rust_source": "b8f44fa16b3e16f4c9c6cc5f1205d2aee9cb0b57",
+        "lock": "Cargo.aes093.lock",
+        "lock_sha256": "d34db2341809ab9afddf530b086400f2985aa7d9d9afaf2cf2eb16104abf9f42",
+        "rust_features": [
+          "alloc",
+          "diagnostics",
+          "oscore",
+          "std"
+        ]
+      }
+    },
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+    "sources": {
+      "servers/src/bin/bench-core.rs": {
+        "git_blob": "75275f7c3698a736462eddcda5cfafb222dc220f",
+        "sha256": "2c5c708baa794765ea9e7c0a21ec0178fb8cb01c14b64785ff9452bd0c63f6d3"
+      },
+      "servers/src/bin/bench_core/admission_pressure.rs": {
+        "git_blob": "451cdf6345fc4c5d4669efbc0fefa6ff34b37902",
+        "sha256": "4c897faa722b6504d4b9e1524da67e8de0a49aa8afe0e00870db375e9f5c3e12"
+      },
+      "servers/src/bin/bench_core/live_c1.rs": {
+        "git_blob": "f03cc3f91b432e0fa7cdfcb00dbdf6abf23610c1",
+        "sha256": "ca4696f687ab8b1f78a67c0df85874bf232eee87ebc87f205480968bb1286123"
+      }
+    },
+    "suite": "78630ac16aef90ed782c85c614aed41e410808cb",
+    "verified_original_export_members": 157
+  },
+  "host": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "windows_build": 26200,
+    "cpu": "Ryzen 7 5800X3D",
+    "logical_cpus": 16
+  },
+  "measured": 72000,
+  "warmup": 6144,
+  "calibrated_intervals": 196608,
+  "verified_tests_per_core": 6,
+  "capacities": [
+    {
+      "associations": 1,
+      "blockwise": true,
+      "body_bytes": 16384,
+      "calls": 4,
+      "datagram_bytes": 1472,
+      "dedup": 64,
+      "deferred": 8,
+      "observe": 32,
+      "populated_routes": 1,
+      "routes": 32,
+      "rx_body_slots": 4,
+      "rx_slots": 32,
+      "security_requests": 4,
+      "tx_body_slots": 4,
+      "tx_slots": 32
+    },
+    {
+      "associations": 1,
+      "blockwise": true,
+      "calls": 4,
+      "datagram_bytes": 1472,
+      "dedup": 8,
+      "deferred": 0,
+      "observe": 4,
+      "populated_routes": 0,
+      "routes": 1,
+      "rx_body_bytes": 16384,
+      "rx_body_slots": 1,
+      "rx_slots": 4,
+      "security_requests": 4,
+      "tx_body_bytes": 1024,
+      "tx_body_slots": 1,
+      "tx_slots": 4
+    }
+  ],
+  "measurement": "sum of all server App poll wall intervals per verified operation, with fixture receive/send copies",
+  "clock": "wall Instant, single separate clock calibration never subtracted",
+  "workload": {
+    "concurrency": 1,
+    "con": true,
+    "fixed_service": true,
+    "offered_starts": "serial unpaced",
+    "common_fixture": true
+  },
+  "windows": {
+    "pair0-unprotected-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1400.0,
+      "p99_nearest_rank_ns": 4800,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-unprotected-64-original.json",
+      "security": "unprotected",
+      "sha256": "b196d4ed28d0be00b20fdc75d1b6ef558d974f5828496d06e5629a3f7f8f134a",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair0-unprotected-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 800.0,
+      "p99_nearest_rank_ns": 900,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-unprotected-64-current.json",
+      "security": "unprotected",
+      "sha256": "40fc2cdce5d35d8778a4320b2151c25e10d8e55d1d25e5422ee42556639d4c09",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair0-unprotected-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1700.0,
+      "p99_nearest_rank_ns": 2300,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-unprotected-1024-original.json",
+      "security": "unprotected",
+      "sha256": "44f2411a7fa7d52e9dc3d96918ac1a043ab7876c57e40ea71ef8f4f946e59edf",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair0-unprotected-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1100.0,
+      "p99_nearest_rank_ns": 2700,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-unprotected-1024-current.json",
+      "security": "unprotected",
+      "sha256": "278a63e991591fd7cabdca03fa1e24d59a2cd6e745e2398fb3ec1b4159199c7f",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair0-unprotected-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 31900.0,
+      "p99_nearest_rank_ns": 61300,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-unprotected-16384-original.json",
+      "security": "unprotected",
+      "sha256": "34a33f45c9a76c0b37ce0f48c559ef9ee6fe6fe913d1e4686b490dbed2dfc25a",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair0-unprotected-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 19300.0,
+      "p99_nearest_rank_ns": 42800,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-unprotected-16384-current.json",
+      "security": "unprotected",
+      "sha256": "35796b73a8088bccf981cee4758bec54396d0f58d56873994cb45745f2bded89",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair0-oscore-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2300.0,
+      "p99_nearest_rank_ns": 5000,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-oscore-64-original.json",
+      "security": "oscore",
+      "sha256": "6886730ec16c8ef4d93b9ee92148e2c8ec2bb1f6ce0344bceeec4a6ba3135ba1",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair0-oscore-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1600.0,
+      "p99_nearest_rank_ns": 4800,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-oscore-64-current.json",
+      "security": "oscore",
+      "sha256": "69f153f0809e84ba3279abf4796a9a70442266557cfaa1ca22ba5420277f0646",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair0-oscore-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 5400.0,
+      "p99_nearest_rank_ns": 6900,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-oscore-1024-original.json",
+      "security": "oscore",
+      "sha256": "902afeb03f82a3010b783b4a06dcb58e89aa6a74cb20ee6ee8eb5a008fa2dd65",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair0-oscore-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2900.0,
+      "p99_nearest_rank_ns": 7200,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-oscore-1024-current.json",
+      "security": "oscore",
+      "sha256": "787844c5b6ec53791be23ff6a072f151c55e08a26cc33ceab32f20c0503d350f",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair0-oscore-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 64400.0,
+      "p99_nearest_rank_ns": 117000,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-oscore-16384-original.json",
+      "security": "oscore",
+      "sha256": "30a819856a9667027e8ded30ec4dae866f77e59562b758ee903ed487ead09c70",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair0-oscore-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 51300.0,
+      "p99_nearest_rank_ns": 107200,
+      "pair": 0,
+      "pool_requested_bytes": 0,
+      "raw": "pair0-oscore-16384-current.json",
+      "security": "oscore",
+      "sha256": "600681af28be645b951a7275ae2f4b96b3793a27faea3146c56e2624d38ec0d4",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-oscore-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 3000.0,
+      "p99_nearest_rank_ns": 8100,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-oscore-1024-current.json",
+      "security": "oscore",
+      "sha256": "c137b4a20dba1888103e05c30e6b2c9e0bffcf0bb98609f68ff542c6e360d43b",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-oscore-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 3700.0,
+      "p99_nearest_rank_ns": 9100,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-oscore-1024-original.json",
+      "security": "oscore",
+      "sha256": "fa7a2ca329cbca5ad9079cc667d5c4625c83a57d6c7c3a493fc0074893da8a1f",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair1-oscore-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 49500.0,
+      "p99_nearest_rank_ns": 84700,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-oscore-16384-current.json",
+      "security": "oscore",
+      "sha256": "00930b4f9cf9d8057250c88feb9fab6b096ea1486bf2554ea2838eb4f1b231ea",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-oscore-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 64500.0,
+      "p99_nearest_rank_ns": 113700,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-oscore-16384-original.json",
+      "security": "oscore",
+      "sha256": "c016bdf12f3ee997803af6c458fdc394193d8eac335bcbe1549fba770e6b394d",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair1-oscore-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1600.0,
+      "p99_nearest_rank_ns": 1700,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-oscore-64-current.json",
+      "security": "oscore",
+      "sha256": "62633fef802aba672d5b998327d2b05b596a8d59bdae082a92047b4098d9a713",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-oscore-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2400.0,
+      "p99_nearest_rank_ns": 5700,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-oscore-64-original.json",
+      "security": "oscore",
+      "sha256": "3128378183ed5a988869a204d799e9429e7630a36fe4bdfbd69c6f1cf0d449c5",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair1-unprotected-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1100.0,
+      "p99_nearest_rank_ns": 1500,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-unprotected-1024-current.json",
+      "security": "unprotected",
+      "sha256": "d1122e60e186d00f375c72a91d938443e0ee43114b6cf0568b1fb6f72450e453",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-unprotected-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1700.0,
+      "p99_nearest_rank_ns": 5300,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-unprotected-1024-original.json",
+      "security": "unprotected",
+      "sha256": "b12d5e6c01c1f90e4fd18c91c9f78a54da5ccf3018cae6f7dd5a96b50f9a382c",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair1-unprotected-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 19200.0,
+      "p99_nearest_rank_ns": 36900,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-unprotected-16384-current.json",
+      "security": "unprotected",
+      "sha256": "2cabd2e4699d5d4c776730e70dc0c94d22ec64aa77670a1dc412e09724e287a3",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-unprotected-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 32300.0,
+      "p99_nearest_rank_ns": 47900,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-unprotected-16384-original.json",
+      "security": "unprotected",
+      "sha256": "5f0f3d6ea17916057e4634eaf0d4134c5a5492a1daad12a544ed998069dd2d8c",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair1-unprotected-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 800.0,
+      "p99_nearest_rank_ns": 900,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-unprotected-64-current.json",
+      "security": "unprotected",
+      "sha256": "e2142ba75c37290017a6677caf052baa980d8790fd5b36748379cb2f953c1dfa",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair1-unprotected-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1400.0,
+      "p99_nearest_rank_ns": 1900,
+      "pair": 1,
+      "pool_requested_bytes": 0,
+      "raw": "pair1-unprotected-64-original.json",
+      "security": "unprotected",
+      "sha256": "926e3aae7a17daf19072f1681ec1d4245cf28d44e13eac9a5e65a3e3bcf1b78f",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-unprotected-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 32200.0,
+      "p99_nearest_rank_ns": 62700,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-unprotected-16384-original.json",
+      "security": "unprotected",
+      "sha256": "9b0fc06989f7655c92547406ff2f438b160e4d144dbc25966a8e58f6ffef688c",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-unprotected-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 19200.0,
+      "p99_nearest_rank_ns": 40300,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-unprotected-16384-current.json",
+      "security": "unprotected",
+      "sha256": "eec3e02bb60e855cd1561e2069fec75285426f03eaed6e5f34a34f5d28aa51a4",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair2-unprotected-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1400.0,
+      "p99_nearest_rank_ns": 1800,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-unprotected-64-original.json",
+      "security": "unprotected",
+      "sha256": "df2a7d9073a94fdacbe95e21938dc2ad29fade1156db640a73c234edf76b9db2",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-unprotected-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 800.0,
+      "p99_nearest_rank_ns": 900,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-unprotected-64-current.json",
+      "security": "unprotected",
+      "sha256": "2b95ae93d8598a61ca8c70f522f517b425df2ab6358a0a1a96d7433344cd3309",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair2-unprotected-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1700.0,
+      "p99_nearest_rank_ns": 1900,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-unprotected-1024-original.json",
+      "security": "unprotected",
+      "sha256": "618b3ed25723cda1216bb219b69c85e91bf98a61ae1b56e941196229ba0342d8",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-unprotected-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1100.0,
+      "p99_nearest_rank_ns": 1200,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-unprotected-1024-current.json",
+      "security": "unprotected",
+      "sha256": "918f8738ef934a7f0ab890cab3d962bc54f8e62f41af258d2ef158cccd523b6e",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair2-oscore-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 64200.0,
+      "p99_nearest_rank_ns": 111000,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-oscore-16384-original.json",
+      "security": "oscore",
+      "sha256": "a51405372b56751fa9201d4108d70438358d3268ab744f11c86b64c63da697f7",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-oscore-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 49500.0,
+      "p99_nearest_rank_ns": 117200,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-oscore-16384-current.json",
+      "security": "oscore",
+      "sha256": "a4cc32b370c696878f71e014eba502ac159922af45ac0fc39240b155e209c589",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair2-oscore-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2300.0,
+      "p99_nearest_rank_ns": 7200,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-oscore-64-original.json",
+      "security": "oscore",
+      "sha256": "af9901e99aa86626faa1c92b1120f7d955760969304ea2b2cae65a3a35a4bb84",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-oscore-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1600.0,
+      "p99_nearest_rank_ns": 2200,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-oscore-64-current.json",
+      "security": "oscore",
+      "sha256": "29743c36b15af11122ae64ffb2a0843349fb8d225ade1a5df7bcfc507c01de0a",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair2-oscore-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 3600.0,
+      "p99_nearest_rank_ns": 5600,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-oscore-1024-original.json",
+      "security": "oscore",
+      "sha256": "0d9d3eed07b45113ddd8c9f7658918241943d87a607428eb69363f7bdfabc961",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair2-oscore-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2900.0,
+      "p99_nearest_rank_ns": 6700,
+      "pair": 2,
+      "pool_requested_bytes": 0,
+      "raw": "pair2-oscore-1024-current.json",
+      "security": "oscore",
+      "sha256": "ce7fd0aeba96fe7ac28c002183a3a37fd7c9a67de9b7635dfbaafdc3dc801787",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-oscore-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1600.0,
+      "p99_nearest_rank_ns": 2000,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-oscore-64-current.json",
+      "security": "oscore",
+      "sha256": "07b1f34dde8ae85e754bef27d57ee4805cd8721343f9370a85d15a3c96781672",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-oscore-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2300.0,
+      "p99_nearest_rank_ns": 2500,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-oscore-64-original.json",
+      "security": "oscore",
+      "sha256": "929bc0d27f7023a031785c5ece9ae1cefeae1cb35b2a26fc7d8253a623e22e13",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair3-oscore-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 2900.0,
+      "p99_nearest_rank_ns": 3100,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-oscore-1024-current.json",
+      "security": "oscore",
+      "sha256": "409510bf4aed807c0ab81272cece311994c9ba6afd5370d8febd9fba63b8c87e",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-oscore-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 3700.0,
+      "p99_nearest_rank_ns": 6500,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-oscore-1024-original.json",
+      "security": "oscore",
+      "sha256": "396c1fe2f6c9f5883f306e68342549d2018633de676be290c22c6f481f7ae70b",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair3-oscore-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 50200.0,
+      "p99_nearest_rank_ns": 81100,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-oscore-16384-current.json",
+      "security": "oscore",
+      "sha256": "4f7f88848314fcdee7669ac5451a88cf75af5b39e243f1fe761f1c720690f7e3",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-oscore-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 63500.0,
+      "p99_nearest_rank_ns": 138800,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-oscore-16384-original.json",
+      "security": "oscore",
+      "sha256": "14660e4424c471a0fcb5ca863ea50d4c31c155f1c909b04e9ace624549ee683d",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair3-unprotected-64-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 800.0,
+      "p99_nearest_rank_ns": 1800,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-unprotected-64-current.json",
+      "security": "unprotected",
+      "sha256": "d67550d66fc110db682d85486470c648e18f475b25b0d35edbe4e7d34e0b496e",
+      "size": 64,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-unprotected-64-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1400.0,
+      "p99_nearest_rank_ns": 2700,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-unprotected-64-original.json",
+      "security": "unprotected",
+      "sha256": "00bd550a6027d809f9da3ae2b5fbb5e29e7b574bb8cb7d71c35d0ab1fa10dee6",
+      "size": 64,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair3-unprotected-1024-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1100.0,
+      "p99_nearest_rank_ns": 2500,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-unprotected-1024-current.json",
+      "security": "unprotected",
+      "sha256": "2442b6956e175ec5abb568b682a2ec489c717ff800de8dc5f94e01a9305ae9a2",
+      "size": 1024,
+      "source": "current",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-unprotected-1024-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 1700.0,
+      "p99_nearest_rank_ns": 3400,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-unprotected-1024-original.json",
+      "security": "unprotected",
+      "sha256": "c31ec3b49a4cf5464866acd02190f976497d2a969fa8bf76c393d04eb2357c45",
+      "size": 1024,
+      "source": "original",
+      "sends": {
+        "client": 1628,
+        "server": 1628,
+        "combined": 3256,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    },
+    "pair3-unprotected-16384-current.json": {
+      "app_inline_bytes": 315336,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 19200.0,
+      "p99_nearest_rank_ns": 32500,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-unprotected-16384-current.json",
+      "security": "unprotected",
+      "sha256": "bdc9cc747a93bc798b4a2923fc076b66a25aeb858845e5ef27323226c9949673",
+      "size": 16384,
+      "source": "current",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16944,
+      "client_pool_requested_bytes": 37060
+    },
+    "pair3-unprotected-16384-original.json": {
+      "app_inline_bytes": 315784,
+      "calibration_median_ns": 0.0,
+      "calibration_p99_nearest_rank_ns": 100,
+      "median_ns": 31900.0,
+      "p99_nearest_rank_ns": 73000,
+      "pair": 3,
+      "pool_requested_bytes": 0,
+      "raw": "pair3-unprotected-16384-original.json",
+      "security": "unprotected",
+      "sha256": "184b9ee19d77ee5d752c8f817b21b29796ffefbd4668d1a56e5277833b942ddd",
+      "size": 16384,
+      "source": "original",
+      "sends": {
+        "client": 26048,
+        "server": 26048,
+        "combined": 52096,
+        "per_port_limit": 30000,
+        "combined_limit": 60000
+      },
+      "client_app_inline_bytes": 16936,
+      "client_pool_requested_bytes": 37076
+    }
+  },
+  "pairs": {
+    "unprotected/64/0": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -3900,
+      "median_ratio": 0.5714285714285714
+    },
+    "unprotected/1024/0": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": 400,
+      "median_ratio": 0.6470588235294118
+    },
+    "unprotected/16384/0": {
+      "median_delta_ns": -12600.0,
+      "p99_delta_ns": -18500,
+      "median_ratio": 0.6050156739811913
+    },
+    "oscore/64/0": {
+      "median_delta_ns": -700.0,
+      "p99_delta_ns": -200,
+      "median_ratio": 0.6956521739130435
+    },
+    "oscore/1024/0": {
+      "median_delta_ns": -2500.0,
+      "p99_delta_ns": 300,
+      "median_ratio": 0.5370370370370371
+    },
+    "oscore/16384/0": {
+      "median_delta_ns": -13100.0,
+      "p99_delta_ns": -9800,
+      "median_ratio": 0.796583850931677
+    },
+    "oscore/1024/1": {
+      "median_delta_ns": -700.0,
+      "p99_delta_ns": -1000,
+      "median_ratio": 0.8108108108108109
+    },
+    "oscore/16384/1": {
+      "median_delta_ns": -15000.0,
+      "p99_delta_ns": -29000,
+      "median_ratio": 0.7674418604651163
+    },
+    "oscore/64/1": {
+      "median_delta_ns": -800.0,
+      "p99_delta_ns": -4000,
+      "median_ratio": 0.6666666666666666
+    },
+    "unprotected/1024/1": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -3800,
+      "median_ratio": 0.6470588235294118
+    },
+    "unprotected/16384/1": {
+      "median_delta_ns": -13100.0,
+      "p99_delta_ns": -11000,
+      "median_ratio": 0.5944272445820433
+    },
+    "unprotected/64/1": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -1000,
+      "median_ratio": 0.5714285714285714
+    },
+    "unprotected/16384/2": {
+      "median_delta_ns": -13000.0,
+      "p99_delta_ns": -22400,
+      "median_ratio": 0.5962732919254659
+    },
+    "unprotected/64/2": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -900,
+      "median_ratio": 0.5714285714285714
+    },
+    "unprotected/1024/2": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -700,
+      "median_ratio": 0.6470588235294118
+    },
+    "oscore/16384/2": {
+      "median_delta_ns": -14700.0,
+      "p99_delta_ns": 6200,
+      "median_ratio": 0.7710280373831776
+    },
+    "oscore/64/2": {
+      "median_delta_ns": -700.0,
+      "p99_delta_ns": -5000,
+      "median_ratio": 0.6956521739130435
+    },
+    "oscore/1024/2": {
+      "median_delta_ns": -700.0,
+      "p99_delta_ns": 1100,
+      "median_ratio": 0.8055555555555556
+    },
+    "oscore/64/3": {
+      "median_delta_ns": -700.0,
+      "p99_delta_ns": -500,
+      "median_ratio": 0.6956521739130435
+    },
+    "oscore/1024/3": {
+      "median_delta_ns": -800.0,
+      "p99_delta_ns": -3400,
+      "median_ratio": 0.7837837837837838
+    },
+    "oscore/16384/3": {
+      "median_delta_ns": -13300.0,
+      "p99_delta_ns": -57700,
+      "median_ratio": 0.7905511811023622
+    },
+    "unprotected/64/3": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -900,
+      "median_ratio": 0.5714285714285714
+    },
+    "unprotected/1024/3": {
+      "median_delta_ns": -600.0,
+      "p99_delta_ns": -900,
+      "median_ratio": 0.6470588235294118
+    },
+    "unprotected/16384/3": {
+      "median_delta_ns": -12700.0,
+      "p99_delta_ns": -40500,
+      "median_ratio": 0.6018808777429467
+    }
+  },
+  "retention": {
+    "raw_windows": 48,
+    "owner": "active continuation",
+    "root_budget_bytes": 8388608
+  }
+}
