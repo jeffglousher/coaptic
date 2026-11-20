@@ -152,6 +152,12 @@ clocks supplement ticks; they do not rescue an ineligible window or include
 descendants/unattributed kernel workers. Do not subtract empty controls or
 socket-free timings. Keep profiling separate from clean measurement.
 
+The [Linux fixed Service C4 comparison](LINUX-SERVICE-C4-CPU-20261120.md)
+verifies four independent CON endpoints, 16 KiB responses and 50 aggregate
+starts/s. The accepted source uses 11.9% less server CPU time in the eligible
+unprotected stratum against the original baseline. Established OSCORE fails
+the median latency guard. Both 50% targets and the rest of the matrix stay open.
+
 Companion #194 supplies bounded inline caller and per-sample readouts, with
 functional Linux proof in diagnostic run `40096580435`. Availability does not
 establish App ancestry, inline completeness, exposure or eligible sample counts.
