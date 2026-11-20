@@ -1,0 +1,2894 @@
+{
+  "schema": 1,
+  "source": {
+    "core": "416ffc369672baddea4ad0dcc0092e411d0e9d07",
+    "core_main": "42100e19d65f690cebba4f09c8195c7515aa1407",
+    "core_rust": "b8750885f8bd10d2f5dd73c92807df00c7f2f0a8",
+    "companion_frozen": "a5e49ed64e9270a1c33900870840da11d83c0b08",
+    "diagnostic_companion": "9019751b09d53d0ef3f9fbed7b3a6f4bd5832c88",
+    "coaptic_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c",
+    "libcoap_sha256": "0d7d3a1d7b08fa30c52f5158beaf63d25ed0edf76d339fb9fa940af72aa17b3c",
+    "frozen_cohort": "WINDOWS-PAIRED-PEERS-20261119.json",
+    "files": {
+      "paired_C2_driver_input": "e0a51c8e0200ec4bb770768a8bd8d1bedf7724b0343dea429c73f4b817d6b8ec",
+      "campaign": "ed4742054de2516b6012f094ec3d03fe1047bd18f91e5480e3fe9405ea27cf65",
+      "driver": "6eb74d3560cf3c6f023cf01cf455dca0154dd1aab2deeae81c4ae06fed85d796",
+      "context": "e346765aa83e396b2b01881f2ce4896bf565cf6692a74c3820574df208bf2d7d",
+      "preparation": "cb3d0cd49f1cf77ba7e4f3dfaac3dceff11a0563c334b563b7032d44804f4264",
+      "launcher": "1a0a847fb4e6c51026b609b00d2bb64279637f1e291e530e13b2a1b90bb30a50",
+      "assessment": "051610e04ef645cbb98366d3350e753d85db3823d64f5845602dedbb3ec1502e"
+    }
+  },
+  "workload": {
+    "offered": 50,
+    "operations": 800,
+    "warmups_per_endpoint": 8,
+    "bytes": 16384,
+    "concurrency": 4,
+    "endpoint_policy": "four independent CON endpoints; NSTART=1 per endpoint",
+    "pacing": "four requests per absolute 80 ms start group; no dropped starts",
+    "coaptic_caps": {
+      "resource_profile": "service-fixed",
+      "storage": "fixed",
+      "routes": 32,
+      "populated_routes": 1,
+      "calls": 4,
+      "deferred": 8,
+      "associations": 1,
+      "security_requests": 4,
+      "blockwise": true,
+      "rx_slots": 32,
+      "tx_slots": 32,
+      "rx_datagram_bytes": 1472,
+      "tx_datagram_bytes": 1472,
+      "dedup": 64,
+      "observe": 32,
+      "rx_body_slots": 4,
+      "tx_body_slots": 4,
+      "rx_body_bytes": 16384,
+      "tx_body_bytes": 16384,
+      "representation_bytes": 16384,
+      "representation_heap_bytes": 16384
+    },
+    "bounds": {
+      "output_bytes": 2097152,
+      "overlap_group_fraction": 0.9,
+      "max_rate_delta": 0.005,
+      "missed_periods": 0
+    }
+  },
+  "windows": {
+    "preflight-unprotected-coaptic-mio": {
+      "raw_sha256": "8ce5399351a0bf7a738d6feee772d5171f4334936bd1ceaf4f15cad4e56841af",
+      "available": true,
+      "eligible": false,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 32,
+        "warmup": 4,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 32,
+      "verified_by_endpoint": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 8,
+      "groups": 8,
+      "positive_intersection_median_ns": 3776350.0,
+      "period_misses": 0,
+      "rate": 56.665109556676974,
+      "elapsed_ns": 564721400,
+      "client_process_cpu_ns": 93750000,
+      "client_core_equivalent": 0.16601106315432707,
+      "server_tree_cpu": {
+        "user_seconds": 0.0,
+        "system_seconds": 0.015625,
+        "window_seconds": 0.8962883000494912
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6836224,
+          "vms": 1888256,
+          "private": 1888256
+        },
+        "after": {
+          "rss": 6840320,
+          "vms": 1888256,
+          "private": 1888256
+        }
+      },
+      "p50_ns": 4274400.0,
+      "p99_ns": 4913200
+    },
+    "preflight-unprotected-coaptic-async": {
+      "raw_sha256": "9a81174ef41a68ee32d0216d537d781ec9c50546346e0844a6d78d66c2459a10",
+      "available": true,
+      "eligible": false,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 32,
+        "warmup": 4,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 32,
+      "verified_by_endpoint": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 8,
+      "groups": 8,
+      "positive_intersection_median_ns": 3710600.0,
+      "period_misses": 0,
+      "rate": 56.67767512427466,
+      "elapsed_ns": 564596200,
+      "client_process_cpu_ns": 31250000,
+      "client_core_equivalent": 0.05534929211354947,
+      "server_tree_cpu": {
+        "user_seconds": 0.015625,
+        "system_seconds": 0.0,
+        "window_seconds": 0.8900182000361383
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6979584,
+          "vms": 1798144,
+          "private": 1798144
+        },
+        "after": {
+          "rss": 6983680,
+          "vms": 1798144,
+          "private": 1798144
+        }
+      },
+      "p50_ns": 4196350.0,
+      "p99_ns": 5030600
+    },
+    "preflight-unprotected-libcoap": {
+      "raw_sha256": "bec6c8baa19a0db5f16032f7c406e7a6a15d8b260f01a528958a74efc4a91941",
+      "available": true,
+      "eligible": false,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 32,
+        "warmup": 4,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 32,
+      "verified_by_endpoint": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 8,
+      "groups": 8,
+      "positive_intersection_median_ns": 3918250.0,
+      "period_misses": 0,
+      "rate": 56.69277723388144,
+      "elapsed_ns": 564445800,
+      "client_process_cpu_ns": 78125000,
+      "client_core_equivalent": 0.13841010066865586,
+      "server_tree_cpu": {
+        "user_seconds": 0.0,
+        "system_seconds": 0.015625,
+        "window_seconds": 0.8906274000182748
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 5677056,
+          "vms": 978944,
+          "private": 978944
+        },
+        "after": {
+          "rss": 5677056,
+          "vms": 978944,
+          "private": 978944
+        }
+      },
+      "p50_ns": 4354250.0,
+      "p99_ns": 4873400
+    },
+    "preflight-OSCORE-AES-CCM-16-64-128-coaptic-mio": {
+      "raw_sha256": "9c680a240996c36a2b355f0b53239f168d9bbbd4ea60ce455b1fabba078d54db",
+      "available": true,
+      "eligible": false,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 32,
+        "warmup": 4,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 32,
+      "verified_by_endpoint": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 8,
+      "groups": 8,
+      "positive_intersection_median_ns": 12054250.0,
+      "period_misses": 0,
+      "rate": 55.70111339563039,
+      "elapsed_ns": 574494800,
+      "client_process_cpu_ns": 109375000,
+      "client_core_equivalent": 0.19038466492647105,
+      "server_tree_cpu": {
+        "user_seconds": 0.0,
+        "system_seconds": 0.03125,
+        "window_seconds": 0.9454164999770001
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6967296,
+          "vms": 1896448,
+          "private": 1896448
+        },
+        "after": {
+          "rss": 6967296,
+          "vms": 1896448,
+          "private": 1896448
+        }
+      },
+      "p50_ns": 13451100.0,
+      "p99_ns": 13976500
+    },
+    "preflight-OSCORE-AES-CCM-16-64-128-coaptic-async": {
+      "raw_sha256": "8f445734bfcb0a2b9e07dfc6b91a053a38bc0a1395ff8c8738d80019dad48e66",
+      "available": true,
+      "eligible": false,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 32,
+        "warmup": 4,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 32,
+      "verified_by_endpoint": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 8,
+      "groups": 8,
+      "positive_intersection_median_ns": 12059000.0,
+      "period_misses": 0,
+      "rate": 55.74225339452904,
+      "elapsed_ns": 574070800,
+      "client_process_cpu_ns": 156250000,
+      "client_core_equivalent": 0.27217897165297383,
+      "server_tree_cpu": {
+        "user_seconds": 0.0625,
+        "system_seconds": 0.0,
+        "window_seconds": 0.948177499929443
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 7110656,
+          "vms": 1794048,
+          "private": 1794048
+        },
+        "after": {
+          "rss": 7110656,
+          "vms": 1794048,
+          "private": 1794048
+        }
+      },
+      "p50_ns": 13486950.0,
+      "p99_ns": 13847000
+    },
+    "preflight-OSCORE-AES-CCM-16-64-128-libcoap": {
+      "raw_sha256": "d60be070245aba86320ad3cfbcae0aca369bf0db19b4324255ceda262ca65103",
+      "available": true,
+      "eligible": false,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 32,
+        "warmup": 4,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 32,
+      "verified_by_endpoint": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 8,
+      "groups": 8,
+      "positive_intersection_median_ns": 15483400.0,
+      "period_misses": 0,
+      "rate": 54.84481060972861,
+      "elapsed_ns": 583464500,
+      "client_process_cpu_ns": 171875000,
+      "client_core_equivalent": 0.294576619485847,
+      "server_tree_cpu": {
+        "user_seconds": 0.046875,
+        "system_seconds": 0.03125,
+        "window_seconds": 0.9827814999734983
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 5816320,
+          "vms": 991232,
+          "private": 991232
+        },
+        "after": {
+          "rss": 5849088,
+          "vms": 1024000,
+          "private": 1024000
+        }
+      },
+      "p50_ns": 17294200.0,
+      "p99_ns": 23033500
+    },
+    "1-unprotected-coaptic-mio": {
+      "raw_sha256": "123dc6901482320e91d93c4480af075b7522cb6dbc2c7ebd2173a4d8fbce3b60",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 3957800.0,
+      "period_misses": 0,
+      "rate": 50.231405095153505,
+      "elapsed_ns": 15926291500,
+      "client_process_cpu_ns": 1500000000,
+      "client_core_equivalent": 0.09418388455341282,
+      "server_tree_cpu": {
+        "user_seconds": 0.15625,
+        "system_seconds": 0.203125,
+        "window_seconds": 16.290379000012763
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6840320,
+          "vms": 1888256,
+          "private": 1888256
+        },
+        "after": {
+          "rss": 6844416,
+          "vms": 1888256,
+          "private": 1888256
+        }
+      },
+      "p50_ns": 4411700.0,
+      "p99_ns": 5957800
+    },
+    "1-unprotected-coaptic-async": {
+      "raw_sha256": "c252518c5e4e4f8a60490dab5c724aea65f797600521453ce1b2c096ba0deb5b",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 4092550.0,
+      "period_misses": 0,
+      "rate": 50.23561318914423,
+      "elapsed_ns": 15924957400,
+      "client_process_cpu_ns": 1578125000,
+      "client_core_equivalent": 0.0990975963301478,
+      "server_tree_cpu": {
+        "user_seconds": 0.1875,
+        "system_seconds": 0.234375,
+        "window_seconds": 16.314427300007083
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6979584,
+          "vms": 1794048,
+          "private": 1794048
+        },
+        "after": {
+          "rss": 6987776,
+          "vms": 1794048,
+          "private": 1794048
+        }
+      },
+      "p50_ns": 4506400.0,
+      "p99_ns": 5480700
+    },
+    "1-unprotected-libcoap": {
+      "raw_sha256": "c567f0153c67fb170f1c88609e41f8e6e9070574e5481c678eeac4ca1c2ae8cf",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 4303100.0,
+      "period_misses": 0,
+      "rate": 50.235049167114816,
+      "elapsed_ns": 15925136200,
+      "client_process_cpu_ns": 1671875000,
+      "client_core_equivalent": 0.1049834035328376,
+      "server_tree_cpu": {
+        "user_seconds": 0.1875,
+        "system_seconds": 0.109375,
+        "window_seconds": 16.282204299932346
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 5672960,
+          "vms": 974848,
+          "private": 974848
+        },
+        "after": {
+          "rss": 5705728,
+          "vms": 1007616,
+          "private": 1007616
+        }
+      },
+      "p50_ns": 4755650.0,
+      "p99_ns": 6730300
+    },
+    "1-OSCORE-AES-CCM-16-64-128-coaptic-mio": {
+      "raw_sha256": "e0a4c5d02424371e6d1786e2c1340a9c3e795360065f333910a08e87235bcae8",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 12554800.0,
+      "period_misses": 0,
+      "rate": 50.20586759112404,
+      "elapsed_ns": 15934392500,
+      "client_process_cpu_ns": 3343750000,
+      "client_core_equivalent": 0.20984483719727626,
+      "server_tree_cpu": {
+        "user_seconds": 0.28125,
+        "system_seconds": 0.25,
+        "window_seconds": 16.41002519999165
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6971392,
+          "vms": 1904640,
+          "private": 1904640
+        },
+        "after": {
+          "rss": 6971392,
+          "vms": 1904640,
+          "private": 1904640
+        }
+      },
+      "p50_ns": 14129550.0,
+      "p99_ns": 16906000
+    },
+    "1-OSCORE-AES-CCM-16-64-128-coaptic-async": {
+      "raw_sha256": "d6c7870bc5c4d0774d49a15ab83bf5e3c5aead99b8c213049f4f2ed7d12d731b",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 12388650.0,
+      "period_misses": 0,
+      "rate": 50.20651288047774,
+      "elapsed_ns": 15934187700,
+      "client_process_cpu_ns": 3500000000,
+      "client_core_equivalent": 0.21965349385209013,
+      "server_tree_cpu": {
+        "user_seconds": 0.21875,
+        "system_seconds": 0.390625,
+        "window_seconds": 16.390861500054598
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 7102464,
+          "vms": 1798144,
+          "private": 1798144
+        },
+        "after": {
+          "rss": 7102464,
+          "vms": 1798144,
+          "private": 1798144
+        }
+      },
+      "p50_ns": 13916950.0,
+      "p99_ns": 17161800
+    },
+    "1-OSCORE-AES-CCM-16-64-128-libcoap": {
+      "raw_sha256": "82db525b2780492c1c6f66aa53170625add7a630625f3cbef1d13ff9caa2a97a",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 15084150.0,
+      "period_misses": 0,
+      "rate": 50.19543907927008,
+      "elapsed_ns": 15937703000,
+      "client_process_cpu_ns": 4546875000,
+      "client_core_equivalent": 0.28529048382944516,
+      "server_tree_cpu": {
+        "user_seconds": 0.625,
+        "system_seconds": 0.515625,
+        "window_seconds": 16.415862799971364
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 5808128,
+          "vms": 970752,
+          "private": 970752
+        },
+        "after": {
+          "rss": 5877760,
+          "vms": 1040384,
+          "private": 1040384
+        }
+      },
+      "p50_ns": 17353800.0,
+      "p99_ns": 20757100
+    },
+    "2-unprotected-coaptic-mio": {
+      "raw_sha256": "246541214c077c5d9be8a425e43801f3574e59078b735b7a6c6a73c606faa448",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 4229050.0,
+      "period_misses": 0,
+      "rate": 50.23564757344711,
+      "elapsed_ns": 15924946500,
+      "client_process_cpu_ns": 1609375000,
+      "client_core_equivalent": 0.10105999414189555,
+      "server_tree_cpu": {
+        "user_seconds": 0.046875,
+        "system_seconds": 0.28125,
+        "window_seconds": 16.325365400058217
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6840320,
+          "vms": 1888256,
+          "private": 1888256
+        },
+        "after": {
+          "rss": 6844416,
+          "vms": 1888256,
+          "private": 1888256
+        }
+      },
+      "p50_ns": 4695850.0,
+      "p99_ns": 6013300
+    },
+    "2-unprotected-coaptic-async": {
+      "raw_sha256": "396badb5f6c9ef5f1b12b631bec862674e02c6ec58e89075d57d4aecfea9f97e",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 4476550.0,
+      "period_misses": 0,
+      "rate": 50.23446023816572,
+      "elapsed_ns": 15925322900,
+      "client_process_cpu_ns": 1453125000,
+      "client_core_equivalent": 0.0912461875419807,
+      "server_tree_cpu": {
+        "user_seconds": 0.140625,
+        "system_seconds": 0.515625,
+        "window_seconds": 16.324502699892037
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6987776,
+          "vms": 1806336,
+          "private": 1806336
+        },
+        "after": {
+          "rss": 6991872,
+          "vms": 1806336,
+          "private": 1806336
+        }
+      },
+      "p50_ns": 4962600.0,
+      "p99_ns": 6510400
+    },
+    "2-unprotected-libcoap": {
+      "raw_sha256": "90a815cc26eaa1b4a90113537a4ce188c905ca423fedf73054cfc162eae186ad",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "unprotected",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 4435900.0,
+      "period_misses": 0,
+      "rate": 50.23230305289082,
+      "elapsed_ns": 15926006800,
+      "client_process_cpu_ns": 1468750000,
+      "client_core_equivalent": 0.09222336888616675,
+      "server_tree_cpu": {
+        "user_seconds": 0.09375,
+        "system_seconds": 0.234375,
+        "window_seconds": 16.299150599981658
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 5672960,
+          "vms": 978944,
+          "private": 978944
+        },
+        "after": {
+          "rss": 5709824,
+          "vms": 1024000,
+          "private": 1024000
+        }
+      },
+      "p50_ns": 4929350.0,
+      "p99_ns": 7170500
+    },
+    "2-OSCORE-AES-CCM-16-64-128-coaptic-mio": {
+      "raw_sha256": "f23a923484a996643bdebf9ac508b4505e0d2531f31c64554c7bf63706861bee",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 12776500.0,
+      "period_misses": 0,
+      "rate": 50.20420655147701,
+      "elapsed_ns": 15934919700,
+      "client_process_cpu_ns": 3453125000,
+      "client_core_equivalent": 0.21670175093508628,
+      "server_tree_cpu": {
+        "user_seconds": 0.1875,
+        "system_seconds": 0.1875,
+        "window_seconds": 16.396222300012596
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 6971392,
+          "vms": 1904640,
+          "private": 1904640
+        },
+        "after": {
+          "rss": 6971392,
+          "vms": 1904640,
+          "private": 1904640
+        }
+      },
+      "p50_ns": 14424400.0,
+      "p99_ns": 19196400
+    },
+    "2-OSCORE-AES-CCM-16-64-128-coaptic-async": {
+      "raw_sha256": "87eaca4185eaaf7ab9afc5c6a309cb9399892052ab05259991355df32a7ecdb4",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 12877800.0,
+      "period_misses": 0,
+      "rate": 50.20426578241224,
+      "elapsed_ns": 15934900900,
+      "client_process_cpu_ns": 3640625000,
+      "client_core_equivalent": 0.2284686313926182,
+      "server_tree_cpu": {
+        "user_seconds": 0.28125,
+        "system_seconds": 0.34375,
+        "window_seconds": 16.38452690001577
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 7110656,
+          "vms": 1802240,
+          "private": 1802240
+        },
+        "after": {
+          "rss": 7110656,
+          "vms": 1802240,
+          "private": 1802240
+        }
+      },
+      "p50_ns": 14498800.0,
+      "p99_ns": 20103500
+    },
+    "2-OSCORE-AES-CCM-16-64-128-libcoap": {
+      "raw_sha256": "05a29cc2f2617475ea51ccef784bb75aac1b7f6d88d3bdc5831fad1a0d28dce6",
+      "available": true,
+      "eligible": true,
+      "case": {
+        "protocol": "coap",
+        "security": "OSCORE-AES-CCM-16-64-128",
+        "bytes": 16384,
+        "concurrency": 4,
+        "operations": 800,
+        "warmup": 8,
+        "timeout_ms": 300,
+        "mode": "con"
+      },
+      "verified": 800,
+      "verified_by_endpoint": [
+        200,
+        200,
+        200,
+        200
+      ],
+      "explicit_driver_failures": 0,
+      "warmup_failures": 0,
+      "overlap_groups": 200,
+      "groups": 200,
+      "positive_intersection_median_ns": 15358550.0,
+      "period_misses": 0,
+      "rate": 50.18951938942843,
+      "elapsed_ns": 15939582800,
+      "client_process_cpu_ns": 4750000000,
+      "client_core_equivalent": 0.29800027137473134,
+      "server_tree_cpu": {
+        "user_seconds": 0.296875,
+        "system_seconds": 1.015625,
+        "window_seconds": 16.442218400072306
+      },
+      "server_tree_memory": {
+        "before": {
+          "rss": 5816320,
+          "vms": 987136,
+          "private": 987136
+        },
+        "after": {
+          "rss": 5869568,
+          "vms": 1040384,
+          "private": 1040384
+        }
+      },
+      "p50_ns": 17587450.0,
+      "p99_ns": 22789500
+    }
+  },
+  "pairs": {
+    "1-unprotected-coaptic-mio": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 7.254042788307213e-05,
+      "median_percent_delta": -7.232449822842302,
+      "p99_percent_delta": -11.477943033742921,
+      "median_delta_ns": -343950.0,
+      "p99_delta_ns": -772500
+    },
+    "1-unprotected-coaptic-async": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 1.1227659547863311e-05,
+      "median_percent_delta": -5.2411342298108625,
+      "p99_percent_delta": -18.56678008409729,
+      "median_delta_ns": -249250.0,
+      "p99_delta_ns": -1249600
+    },
+    "1-OSCORE-AES-CCM-16-64-128-coaptic-mio": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 0.00020775815582552148,
+      "median_percent_delta": -18.579504200809048,
+      "p99_percent_delta": -18.55316975878133,
+      "median_delta_ns": -3224250.0,
+      "p99_delta_ns": -3851100
+    },
+    "1-OSCORE-AES-CCM-16-64-128-coaptic-async": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 0.0002206136934108649,
+      "median_percent_delta": -19.804596111514485,
+      "p99_percent_delta": -17.320820345809384,
+      "median_delta_ns": -3436850.0,
+      "p99_delta_ns": -3595300
+    },
+    "2-unprotected-coaptic-mio": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 6.658107140267155e-05,
+      "median_percent_delta": -4.736932861330601,
+      "p99_percent_delta": -16.138344606373334,
+      "median_delta_ns": -233500.0,
+      "p99_delta_ns": -1157200
+    },
+    "2-unprotected-coaptic-async": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 4.294418419603652e-05,
+      "median_percent_delta": 0.6745311247933206,
+      "p99_percent_delta": -9.205773655951466,
+      "median_delta_ns": 33250.0,
+      "p99_delta_ns": -660100
+    },
+    "2-OSCORE-AES-CCM-16-64-128-coaptic-mio": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 0.00029263404446289165,
+      "median_percent_delta": -17.984699316842413,
+      "p99_percent_delta": -15.766471401303228,
+      "median_delta_ns": -3163050.0,
+      "p99_delta_ns": -3593100
+    },
+    "2-OSCORE-AES-CCM-16-64-128-coaptic-async": {
+      "eligible": true,
+      "achieved_rate_relative_delta": 0.0002938141899584412,
+      "median_percent_delta": -17.56167039565144,
+      "p99_percent_delta": -11.786129577217574,
+      "median_delta_ns": -3088650.0,
+      "p99_delta_ns": -2686000
+    }
+  },
+  "ladder": {
+    "OSCORE-AES-CCM-16-64-128-100": {
+      "1": {
+        "coaptic-async": {
+          "path": "100-1-OSCORE-AES-CCM-16-64-128-coaptic-async.json",
+          "raw_sha256": "20062f18645911eb00b403559148b7d64b9733e3b86936f4d7dc64afb4f5c3c3",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.31405949569188,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3281250000,
+          "client_core_equivalent": 0.41144438465029876,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.34375,
+            "system_seconds": 0.375
+          },
+          "server_tree_cpu_window_seconds": 8.430562400026247,
+          "server_tree_memory": {
+            "before": {
+              "rss": 7118848,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 7118848,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 14302200.0,
+          "p99_ns": 16860700,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -17.10527459725446,
+            "p99_ns": -19.06540261610464
+          }
+        },
+        "coaptic-mio": {
+          "path": "100-1-OSCORE-AES-CCM-16-64-128-coaptic-mio.json",
+          "raw_sha256": "308309454e232d47c83c402054c4a59b133c3c75752b7855a1a93d004b378773",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.31734765948656,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3640625000,
+          "client_core_equivalent": 0.4565223047785228,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.265625,
+            "system_seconds": 0.140625
+          },
+          "server_tree_cpu_window_seconds": 8.435930800042115,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6971392,
+              "vms": 1896448,
+              "private": 1896448
+            },
+            "after": {
+              "rss": 6971392,
+              "vms": 1896448,
+              "private": 1896448
+            }
+          },
+          "median_ns": 14635800.0,
+          "p99_ns": 19457100,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -15.171748259043838,
+            "p99_ns": -6.602184087363494
+          }
+        },
+        "libcoap": {
+          "path": "100-1-OSCORE-AES-CCM-16-64-128-libcoap.json",
+          "raw_sha256": "ec5d7ce1535924e9140a6ecd6cd8b3e076a8fc9a568f26e93d4a733126d1b477",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.26188781078255,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 4453125000,
+          "client_core_equivalent": 0.5580983989467388,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.328125,
+            "system_seconds": 0.84375
+          },
+          "server_tree_cpu_window_seconds": 8.503696399973705,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5808128,
+              "vms": 978944,
+              "private": 978944
+            },
+            "after": {
+              "rss": 5877760,
+              "vms": 1048576,
+              "private": 1048576
+            }
+          },
+          "median_ns": 17253450.0,
+          "p99_ns": 20832500,
+          "eligible": true
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "100-2-OSCORE-AES-CCM-16-64-128-coaptic-async.json",
+          "raw_sha256": "9f475adaa94bfdc81e797c052e56173e7cd373ac59e3561c9f1a17f5ec683e35",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.32353965324899,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3531250000,
+          "client_core_equivalent": 0.44283437425066935,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.21875,
+            "system_seconds": 0.453125
+          },
+          "server_tree_cpu_window_seconds": 8.461353400023654,
+          "server_tree_memory": {
+            "before": {
+              "rss": 7114752,
+              "vms": 1810432,
+              "private": 1810432
+            },
+            "after": {
+              "rss": 7114752,
+              "vms": 1810432,
+              "private": 1810432
+            }
+          },
+          "median_ns": 13991450.0,
+          "p99_ns": 15680600,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -21.313019686578205,
+            "p99_ns": -26.84956685217926
+          }
+        },
+        "coaptic-mio": {
+          "path": "100-2-OSCORE-AES-CCM-16-64-128-coaptic-mio.json",
+          "raw_sha256": "19ba08f7cbb51345835c207f7e6a6499defb16f9da0175155ef2b22f843216b2",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.3238944391481,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3609375000,
+          "client_core_equivalent": 0.45263319561412524,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.140625,
+            "system_seconds": 0.109375
+          },
+          "server_tree_cpu_window_seconds": 8.435215700068511,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6967296,
+              "vms": 1896448,
+              "private": 1896448
+            },
+            "after": {
+              "rss": 6967296,
+              "vms": 1896448,
+              "private": 1896448
+            }
+          },
+          "median_ns": 14149050.0,
+          "p99_ns": 17249500,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -20.42668781265554,
+            "p99_ns": -19.53060491414017
+          }
+        },
+        "libcoap": {
+          "path": "100-2-OSCORE-AES-CCM-16-64-128-libcoap.json",
+          "raw_sha256": "48d7e7c49faae202b684b6c284958b41aec4eee9bdd49658c02c7029c9806d33",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.27177913696731,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 4500000000,
+          "client_core_equivalent": 0.5640287576454411,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.34375,
+            "system_seconds": 0.703125
+          },
+          "server_tree_cpu_window_seconds": 8.493771499954164,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5820416,
+              "vms": 983040,
+              "private": 983040
+            },
+            "after": {
+              "rss": 5873664,
+              "vms": 1036288,
+              "private": 1036288
+            }
+          },
+          "median_ns": 17781150.0,
+          "p99_ns": 21436100,
+          "eligible": true
+        }
+      }
+    },
+    "unprotected-100": {
+      "1": {
+        "coaptic-async": {
+          "path": "100-1-unprotected-coaptic-async.json",
+          "raw_sha256": "2c0758df039ad81e79f0c73c651c81301eae95138239663c2530be259df16a5b",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.4404703833131,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1359375000,
+          "client_core_equivalent": 0.17067033053414532,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.140625,
+            "system_seconds": 0.3125
+          },
+          "server_tree_cpu_window_seconds": 8.355335199972615,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6979584,
+              "vms": 1789952,
+              "private": 1789952
+            },
+            "after": {
+              "rss": 6983680,
+              "vms": 1789952,
+              "private": 1789952
+            }
+          },
+          "median_ns": 4820200.0,
+          "p99_ns": 6137000,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": 0.32573289902280145,
+            "p99_ns": 1.8538496008497551
+          }
+        },
+        "coaptic-mio": {
+          "path": "100-1-unprotected-coaptic-mio.json",
+          "raw_sha256": "38dbd998ddec11b56ade11c1eeec6a5e3cb9cdc1248a7436ad2ed49595569f13",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.43391846761945,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1562500000,
+          "client_core_equivalent": 0.19615999700706924,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.09375
+          },
+          "server_tree_cpu_window_seconds": 8.334349300013855,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6836224,
+              "vms": 1896448,
+              "private": 1896448
+            },
+            "after": {
+              "rss": 6840320,
+              "vms": 1896448,
+              "private": 1896448
+            }
+          },
+          "median_ns": 4795250.0,
+          "p99_ns": 6315200,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -0.1935665150742505,
+            "p99_ns": 4.811378686538426
+          }
+        },
+        "libcoap": {
+          "path": "100-1-unprotected-libcoap.json",
+          "raw_sha256": "73628d59e165b5281a54d85b0953cc2eff923e1984c131c4da5ed02cd7cd2022",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.43014734257562,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1531250000,
+          "client_core_equivalent": 0.19222957889789866,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.203125
+          },
+          "server_tree_cpu_window_seconds": 8.349607900017872,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5672960,
+              "vms": 974848,
+              "private": 974848
+            },
+            "after": {
+              "rss": 5705728,
+              "vms": 1007616,
+              "private": 1007616
+            }
+          },
+          "median_ns": 4804550.0,
+          "p99_ns": 6025300,
+          "eligible": true
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "100-2-unprotected-coaptic-async.json",
+          "raw_sha256": "09f62d85bddda666e6e5ac7583164d48b13bccbd0614d4d68e9eecaacc6b0169",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.4330825167747,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1625000000,
+          "client_core_equivalent": 0.20400469886219863,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.25
+          },
+          "server_tree_cpu_window_seconds": 8.36292899993714,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6979584,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 6983680,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 4341050.0,
+          "p99_ns": 6795900,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -9.229578981484387,
+            "p99_ns": 14.063444108761324
+          }
+        },
+        "coaptic-mio": {
+          "path": "100-2-unprotected-coaptic-mio.json",
+          "raw_sha256": "6ff52d887292d56515e487f7c587d2df96e54298eff4a4deef7c779e4186bacc",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.43807573302094,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1625000000,
+          "client_core_equivalent": 0.20401484133269876,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.296875
+          },
+          "server_tree_cpu_window_seconds": 8.372021299903281,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6836224,
+              "vms": 1892352,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6840320,
+              "vms": 1892352,
+              "private": 1892352
+            }
+          },
+          "median_ns": 4770550.0,
+          "p99_ns": 6441200,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -0.24882643833181728,
+            "p99_ns": 8.11010406176569
+          }
+        },
+        "libcoap": {
+          "path": "100-2-unprotected-libcoap.json",
+          "raw_sha256": "6775f94bd56f063eea208b225726f4ed4e8a1da89c9a571ec8b1c2498c604584",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 100.42915512102762,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1578125000,
+          "client_core_equivalent": 0.19811220053171463,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.171875
+          },
+          "server_tree_cpu_window_seconds": 8.35678349994123,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5677056,
+              "vms": 978944,
+              "private": 978944
+            },
+            "after": {
+              "rss": 5705728,
+              "vms": 1011712,
+              "private": 1011712
+            }
+          },
+          "median_ns": 4782450.0,
+          "p99_ns": 5958000,
+          "eligible": true
+        }
+      }
+    },
+    "OSCORE-AES-CCM-16-64-128-200": {
+      "1": {
+        "coaptic-async": {
+          "path": "200-1-OSCORE-AES-CCM-16-64-128-coaptic-async.json",
+          "raw_sha256": "77dbbedd883ea6cc7884fe782181148e39a3e0a1836678086ee9b31f85e17e2c",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.287768458527,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3484375000,
+          "client_core_equivalent": 0.8723471165283501,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.234375,
+            "system_seconds": 0.234375
+          },
+          "server_tree_cpu_window_seconds": 4.475926699931733,
+          "server_tree_memory": {
+            "before": {
+              "rss": 7110656,
+              "vms": 1798144,
+              "private": 1798144
+            },
+            "after": {
+              "rss": 7110656,
+              "vms": 1798144,
+              "private": 1798144
+            }
+          },
+          "median_ns": 13915950.0,
+          "p99_ns": 15949500,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -19.718760816891656,
+            "p99_ns": -30.708575897123993
+          }
+        },
+        "coaptic-mio": {
+          "path": "200-1-OSCORE-AES-CCM-16-64-128-coaptic-mio.json",
+          "raw_sha256": "2f6e70ef2d4b8c88bb1e4887a0574a47ce78c5705ca5d6047e6def4f87959578",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.28973412213773,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3562500000,
+          "client_core_equivalent": 0.8919152222626446,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.25,
+            "system_seconds": 0.203125
+          },
+          "server_tree_cpu_window_seconds": 4.437146499985829,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6967296,
+              "vms": 1900544,
+              "private": 1900544
+            },
+            "after": {
+              "rss": 6967296,
+              "vms": 1900544,
+              "private": 1900544
+            }
+          },
+          "median_ns": 13680400.0,
+          "p99_ns": 17512800,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -21.07765085958232,
+            "p99_ns": -23.916934572942917
+          }
+        },
+        "libcoap": {
+          "path": "200-1-OSCORE-AES-CCM-16-64-128-libcoap.json",
+          "raw_sha256": "684e19063195d939543dbf00ebc06ec7e042105da62be6d4fb3e752fc232f951",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 199.96855494473493,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 4843750000,
+          "client_core_equivalent": 1.2107471100169498,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.546875,
+            "system_seconds": 0.828125
+          },
+          "server_tree_cpu_window_seconds": 4.462846199981868,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5808128,
+              "vms": 974848,
+              "private": 974848
+            },
+            "after": {
+              "rss": 5873664,
+              "vms": 1044480,
+              "private": 1044480
+            }
+          },
+          "median_ns": 17334000.0,
+          "p99_ns": 23018000,
+          "eligible": true
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "200-2-OSCORE-AES-CCM-16-64-128-coaptic-async.json",
+          "raw_sha256": "275c27a1c76fc9e93e6686b3c93e3b8e0e17072022183993e298ef70fdf015de",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.30559121760135,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3484375000,
+          "client_core_equivalent": 0.8724247429985371,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.25,
+            "system_seconds": 0.296875
+          },
+          "server_tree_cpu_window_seconds": 4.479825699934736,
+          "server_tree_memory": {
+            "before": {
+              "rss": 7114752,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 7114752,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 13966850.0,
+          "p99_ns": 16564500,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -17.922446545001513,
+            "p99_ns": -28.420183827183433
+          }
+        },
+        "coaptic-mio": {
+          "path": "200-2-OSCORE-AES-CCM-16-64-128-coaptic-mio.json",
+          "raw_sha256": "5966ca7e33233c0647b875b0d578c04301b5285f8ee6893e6a2fc5ca0333d38b",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.23095639665573,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3562500000,
+          "client_core_equivalent": 0.8916534777038575,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.21875,
+            "system_seconds": 0.171875
+          },
+          "server_tree_cpu_window_seconds": 4.430759500013664,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6967296,
+              "vms": 1896448,
+              "private": 1896448
+            },
+            "after": {
+              "rss": 6967296,
+              "vms": 1896448,
+              "private": 1896448
+            }
+          },
+          "median_ns": 13627750.0,
+          "p99_ns": 17300200,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -19.9152007004904,
+            "p99_ns": -25.241019303150647
+          }
+        },
+        "libcoap": {
+          "path": "200-2-OSCORE-AES-CCM-16-64-128-libcoap.json",
+          "raw_sha256": "b8390250d89ac42266d5c06548dd85141f9b018ae347b8c3d20161675c57d0b8",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.12425214505055,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 4359375000,
+          "client_core_equivalent": 1.0905208271185372,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.5,
+            "system_seconds": 0.8125
+          },
+          "server_tree_cpu_window_seconds": 4.492058400064707,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5799936,
+              "vms": 966656,
+              "private": 966656
+            },
+            "after": {
+              "rss": 5865472,
+              "vms": 1032192,
+              "private": 1032192
+            }
+          },
+          "median_ns": 17016650.0,
+          "p99_ns": 23141300,
+          "eligible": true
+        }
+      }
+    },
+    "unprotected-200": {
+      "1": {
+        "coaptic-async": {
+          "path": "200-1-unprotected-coaptic-async.json",
+          "raw_sha256": "d6cd078c05f61c9751c5e85228f34e42fcd54835009f3b52cf37437af6d23c32",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.7256684547393,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1500000000,
+          "client_core_equivalent": 0.3763606283526362,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.140625,
+            "system_seconds": 0.34375
+          },
+          "server_tree_cpu_window_seconds": 4.3627793999621645,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6979584,
+              "vms": 1806336,
+              "private": 1806336
+            },
+            "after": {
+              "rss": 6983680,
+              "vms": 1806336,
+              "private": 1806336
+            }
+          },
+          "median_ns": 5016400.0,
+          "p99_ns": 6712900,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": 7.133094139757379,
+            "p99_ns": 13.40315905059548
+          }
+        },
+        "coaptic-mio": {
+          "path": "200-1-unprotected-coaptic-mio.json",
+          "raw_sha256": "04a7bbce357e7fb33c50d154cfdefd59c1fab984b4619ced653aa5eccaf98e7c",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.75947308668694,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1265625000,
+          "client_core_equivalent": 0.3176077601566727,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.140625
+          },
+          "server_tree_cpu_window_seconds": 4.341130900080316,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6836224,
+              "vms": 1892352,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6840320,
+              "vms": 1892352,
+              "private": 1892352
+            }
+          },
+          "median_ns": 4411700.0,
+          "p99_ns": 5218000,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -5.781223304288396,
+            "p99_ns": -11.85066306275868
+          }
+        },
+        "libcoap": {
+          "path": "200-1-unprotected-libcoap.json",
+          "raw_sha256": "e461cfa88eb24017fd75520607803c0ea81ab5439c3fa9607dd4df1c6daef64d",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.72294382678092,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1375000000,
+          "client_core_equivalent": 0.3449925597022797,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.125
+          },
+          "server_tree_cpu_window_seconds": 4.394855999969877,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5677056,
+              "vms": 978944,
+              "private": 978944
+            },
+            "after": {
+              "rss": 5705728,
+              "vms": 1011712,
+              "private": 1011712
+            }
+          },
+          "median_ns": 4682400.0,
+          "p99_ns": 5919500,
+          "eligible": true
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "200-2-unprotected-coaptic-async.json",
+          "raw_sha256": "743198e3269dcc747fb8003497fedaa96de80f8ffd3ab075dbe798f1aeedcfad",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.78102816049292,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1578125000,
+          "client_core_equivalent": 0.39607195008222235,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.34375
+          },
+          "server_tree_cpu_window_seconds": 4.366224400000647,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6983680,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 6987776,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 4695150.0,
+          "p99_ns": 5946800,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -1.6186824239376452,
+            "p99_ns": -9.168945029096854
+          }
+        },
+        "coaptic-mio": {
+          "path": "200-2-unprotected-coaptic-mio.json",
+          "raw_sha256": "a95c33fc8677a9a96fc8dab8800bd3ac79dd9c2c3a2b718c9ad701107b13a6eb",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.74819353601356,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1546875000,
+          "client_core_equivalent": 0.3881654523450262,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.203125
+          },
+          "server_tree_cpu_window_seconds": 4.356990200001746,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6844416,
+              "vms": 1900544,
+              "private": 1900544
+            },
+            "after": {
+              "rss": 6848512,
+              "vms": 1900544,
+              "private": 1900544
+            }
+          },
+          "median_ns": 4465200.0,
+          "p99_ns": 5306600,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -6.437012823736488,
+            "p99_ns": -18.947320187563953
+          }
+        },
+        "libcoap": {
+          "path": "200-2-unprotected-libcoap.json",
+          "raw_sha256": "48a3e1c2c362316ad594a971d827b2a628916ad0097ca7aac7c39121200790d9",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 200.73616979228774,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1421875000,
+          "client_core_equivalent": 0.3567771767792614,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.21875
+          },
+          "server_tree_cpu_window_seconds": 4.340732499957085,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5672960,
+              "vms": 974848,
+              "private": 974848
+            },
+            "after": {
+              "rss": 5701632,
+              "vms": 1003520,
+              "private": 1003520
+            }
+          },
+          "median_ns": 4772400.0,
+          "p99_ns": 6547100,
+          "eligible": true
+        }
+      }
+    },
+    "OSCORE-AES-CCM-16-64-128-400": {
+      "1": {
+        "coaptic-async": {
+          "path": "400-1-OSCORE-AES-CCM-16-64-128-coaptic-async.json",
+          "raw_sha256": "55f03d9f5fb1b74241764c3c632a693a976dbc2f71a772f9540e4a1d613f63ed",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 788,
+          "overlap_groups": 19,
+          "achieved": 293.079874926698,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3281250000,
+          "client_core_equivalent": 1.2020854245040347,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.28125,
+            "system_seconds": 0.359375
+          },
+          "server_tree_cpu_window_seconds": 3.1888309000059962,
+          "server_tree_memory": {
+            "before": {
+              "rss": 7118848,
+              "vms": 1798144,
+              "private": 1798144
+            },
+            "after": {
+              "rss": 7118848,
+              "vms": 1798144,
+              "private": 1798144
+            }
+          },
+          "median_ns": 13567550.0,
+          "p99_ns": 15411900,
+          "eligible": false
+        },
+        "coaptic-mio": {
+          "path": "400-1-OSCORE-AES-CCM-16-64-128-coaptic-mio.json",
+          "raw_sha256": "1c69b02fea2589295901067499ad7ffeec32ae4515ef3d03078206fed70ae2d6",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 790,
+          "overlap_groups": 8,
+          "achieved": 286.4374789692232,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3406250000,
+          "client_core_equivalent": 1.2195970784236458,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.265625
+          },
+          "server_tree_cpu_window_seconds": 3.2818035000236705,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6963200,
+              "vms": 1892352,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6963200,
+              "vms": 1892352,
+              "private": 1892352
+            }
+          },
+          "median_ns": 13822300.0,
+          "p99_ns": 16365000,
+          "eligible": false
+        },
+        "libcoap": {
+          "path": "400-1-OSCORE-AES-CCM-16-64-128-libcoap.json",
+          "raw_sha256": "802c3db220996c73af9e8a69aad7b4082ff9f8961b28f3f2893fec44d5b0cc4f",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 792,
+          "overlap_groups": 11,
+          "achieved": 234.2310736973817,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 4296875000,
+          "client_core_equivalent": 1.2580770559917962,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.390625,
+            "system_seconds": 0.5
+          },
+          "server_tree_cpu_window_seconds": 3.8811901999870315,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5808128,
+              "vms": 978944,
+              "private": 978944
+            },
+            "after": {
+              "rss": 5873664,
+              "vms": 1044480,
+              "private": 1044480
+            }
+          },
+          "median_ns": 16968250.0,
+          "p99_ns": 21009200,
+          "eligible": false
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "400-2-OSCORE-AES-CCM-16-64-128-coaptic-async.json",
+          "raw_sha256": "c605f585be30eeb5ff98721d9b4c08054c632055c80faf0ca9c2731820967368",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 791,
+          "overlap_groups": 7,
+          "achieved": 277.7605045464013,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3468750000,
+          "client_core_equivalent": 1.2043521876816619,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.265625
+          },
+          "server_tree_cpu_window_seconds": 3.33297460002359,
+          "server_tree_memory": {
+            "before": {
+              "rss": 7118848,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 7118848,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 14125700.0,
+          "p99_ns": 17492600,
+          "eligible": false
+        },
+        "coaptic-mio": {
+          "path": "400-2-OSCORE-AES-CCM-16-64-128-coaptic-mio.json",
+          "raw_sha256": "d36de2c3915ce57dbba025c9ac89f99a0786242ac383349ab88a5c911fbfe30e",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 789,
+          "overlap_groups": 12,
+          "achieved": 283.4991549421752,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 3312500000,
+          "client_core_equivalent": 1.1738636884324443,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.203125,
+            "system_seconds": 0.25
+          },
+          "server_tree_cpu_window_seconds": 3.290112000075169,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6967296,
+              "vms": 1900544,
+              "private": 1900544
+            },
+            "after": {
+              "rss": 6967296,
+              "vms": 1900544,
+              "private": 1900544
+            }
+          },
+          "median_ns": 14112300.0,
+          "p99_ns": 16011900,
+          "eligible": false
+        },
+        "libcoap": {
+          "path": "400-2-OSCORE-AES-CCM-16-64-128-libcoap.json",
+          "raw_sha256": "6dc3c0b6fbb5fd821dd7af122ffa758365a9f7827a3810dab0ef027d30b14522",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 793,
+          "overlap_groups": 15,
+          "achieved": 226.2736967603801,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 4484375000,
+          "client_core_equivalent": 1.2683701361372868,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.359375,
+            "system_seconds": 0.625
+          },
+          "server_tree_cpu_window_seconds": 4.013754399958998,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5812224,
+              "vms": 978944,
+              "private": 978944
+            },
+            "after": {
+              "rss": 5865472,
+              "vms": 1036288,
+              "private": 1036288
+            }
+          },
+          "median_ns": 17505500.0,
+          "p99_ns": 23113000,
+          "eligible": false
+        }
+      }
+    },
+    "unprotected-400": {
+      "1": {
+        "coaptic-async": {
+          "path": "400-1-unprotected-coaptic-async.json",
+          "raw_sha256": "7a9a9a6e6977dadc54b21ca8ee2ffded681fbb3f8a2a09d5eef54fa09c1f1d9d",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 401.00333038278427,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1453125000,
+          "client_core_equivalent": 0.7283849555781042,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.203125
+          },
+          "server_tree_cpu_window_seconds": 2.376941700000316,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6983680,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 6987776,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 4419800.0,
+          "p99_ns": 5302100,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -6.3472723998008185,
+            "p99_ns": -9.625349423876727
+          }
+        },
+        "coaptic-mio": {
+          "path": "400-1-unprotected-coaptic-mio.json",
+          "raw_sha256": "6b78a16903301dfb65ef74a6190a51e77b5cadb51cec0ee3564cb5c76ee28792",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 400.9619277126791,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1250000000,
+          "client_core_equivalent": 0.6265030120510611,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.140625
+          },
+          "server_tree_cpu_window_seconds": 2.3518148999428377,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6828032,
+              "vms": 1875968,
+              "private": 1875968
+            },
+            "after": {
+              "rss": 6832128,
+              "vms": 1875968,
+              "private": 1875968
+            }
+          },
+          "median_ns": 4343950.0,
+          "p99_ns": 5128300,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -7.954485257503685,
+            "p99_ns": -12.587782095861455
+          }
+        },
+        "libcoap": {
+          "path": "400-1-unprotected-libcoap.json",
+          "raw_sha256": "9cef38e37393a9e0f305be7fb0ff9fe6e468c6f526ce1b79983e974564b00f7a",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 400.9821054217041,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1421875000,
+          "client_core_equivalent": 0.7126830389331069,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.171875
+          },
+          "server_tree_cpu_window_seconds": 2.3603298000525683,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5677056,
+              "vms": 978944,
+              "private": 978944
+            },
+            "after": {
+              "rss": 5705728,
+              "vms": 1011712,
+              "private": 1011712
+            }
+          },
+          "median_ns": 4719350.0,
+          "p99_ns": 5866800,
+          "eligible": true
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "400-2-unprotected-coaptic-async.json",
+          "raw_sha256": "05a8be18663b1271841f798999abb17f72d2975cdb8d41a828a20660d3881e12",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 401.09430559395196,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1468750000,
+          "client_core_equivalent": 0.7363840766763962,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.203125
+          },
+          "server_tree_cpu_window_seconds": 2.4018528999295086,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6979584,
+              "vms": 1789952,
+              "private": 1789952
+            },
+            "after": {
+              "rss": 6983680,
+              "vms": 1789952,
+              "private": 1789952
+            }
+          },
+          "median_ns": 4442100.0,
+          "p99_ns": 5988300,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -3.5091720699879425,
+            "p99_ns": 4.925357443229594
+          }
+        },
+        "coaptic-mio": {
+          "path": "400-2-unprotected-coaptic-mio.json",
+          "raw_sha256": "61f296f6203f9ae67570ee06f7d2d3bb51dab29810de3488cd82b41834dbf25e",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 401.0328400278497,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1140625000,
+          "client_core_equivalent": 0.5717851039459576,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.140625
+          },
+          "server_tree_cpu_window_seconds": 2.3463733999524266,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6840320,
+              "vms": 1904640,
+              "private": 1904640
+            },
+            "after": {
+              "rss": 6844416,
+              "vms": 1904640,
+              "private": 1904640
+            }
+          },
+          "median_ns": 4416500.0,
+          "p99_ns": 5154800,
+          "eligible": true,
+          "peer_latency_percent_delta": {
+            "median_ns": -4.065252571329269,
+            "p99_ns": -9.67900196243342
+          }
+        },
+        "libcoap": {
+          "path": "400-2-unprotected-libcoap.json",
+          "raw_sha256": "5dae80ceee330c41cd729aa96ad85154c8ea43efa2ef2ff505b1e1b20a08ab3e",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 400.9835525067662,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1531250000,
+          "client_core_equivalent": 0.7675075809699822,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.203125,
+            "system_seconds": 0.171875
+          },
+          "server_tree_cpu_window_seconds": 2.356714399997145,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5677056,
+              "vms": 983040,
+              "private": 983040
+            },
+            "after": {
+              "rss": 5705728,
+              "vms": 1015808,
+              "private": 1015808
+            }
+          },
+          "median_ns": 4603650.0,
+          "p99_ns": 5707200,
+          "eligible": true
+        }
+      }
+    },
+    "unprotected-800": {
+      "1": {
+        "coaptic-async": {
+          "path": "800-1-unprotected-coaptic-async.json",
+          "raw_sha256": "754c271fcdbefa6e15ea66afc7373feb2fa5f19a6ee43606816def6054d31df6",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 799.9960000199999,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1187500000,
+          "client_core_equivalent": 1.1874940625296873,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.25
+          },
+          "server_tree_cpu_window_seconds": 1.3565090000629425,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6983680,
+              "vms": 1802240,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 6987776,
+              "vms": 1802240,
+              "private": 1802240
+            }
+          },
+          "median_ns": 4365400.0,
+          "p99_ns": 5818100,
+          "eligible": true
+        },
+        "coaptic-mio": {
+          "path": "800-1-unprotected-coaptic-mio.json",
+          "raw_sha256": "a279bd66148747b3021f21052e90d232adc424a89133303e8968fb55b4ff1525",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 799.8557060306321,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 968750000,
+          "client_core_equivalent": 0.9685752690214685,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.171875
+          },
+          "server_tree_cpu_window_seconds": 1.3826015000231564,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6836224,
+              "vms": 1892352,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6840320,
+              "vms": 1892352,
+              "private": 1892352
+            }
+          },
+          "median_ns": 4205850.0,
+          "p99_ns": 5372800,
+          "eligible": true
+        },
+        "libcoap": {
+          "path": "800-1-unprotected-libcoap.json",
+          "raw_sha256": "366fa5bde1005954947367cfe7efff473e27a56963a220a1b1780a73572e5398",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 22,
+          "overlap_groups": 173,
+          "achieved": 799.8276371441955,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1484375000,
+          "client_core_equivalent": 1.4840551861073938,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.234375
+          },
+          "server_tree_cpu_window_seconds": 1.3626798000186682,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5672960,
+              "vms": 970752,
+              "private": 970752
+            },
+            "after": {
+              "rss": 5705728,
+              "vms": 1003520,
+              "private": 1003520
+            }
+          },
+          "median_ns": 4678950.0,
+          "p99_ns": 5921900,
+          "eligible": false
+        }
+      },
+      "2": {
+        "coaptic-async": {
+          "path": "800-2-unprotected-coaptic-async.json",
+          "raw_sha256": "d7a03d9f183c458d5977f66435baed9805e530040b797432d98cb4570076453b",
+          "peer": "coaptic-async",
+          "verified": 800,
+          "pacing_misses": 1,
+          "overlap_groups": 196,
+          "achieved": 798.8802096101894,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1343750000,
+          "client_core_equivalent": 1.341869102079615,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.28125
+          },
+          "server_tree_cpu_window_seconds": 1.3745319000445306,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6983680,
+              "vms": 1798144,
+              "private": 1798144
+            },
+            "after": {
+              "rss": 6987776,
+              "vms": 1798144,
+              "private": 1798144
+            }
+          },
+          "median_ns": 4546950.0,
+          "p99_ns": 5971700,
+          "eligible": false
+        },
+        "coaptic-mio": {
+          "path": "800-2-unprotected-coaptic-mio.json",
+          "raw_sha256": "0dcf4b600cc2235f94847d873a2f55742e8e14c8b3e4a6d16faaf81f2cbac3c0",
+          "peer": "coaptic-mio",
+          "verified": 800,
+          "pacing_misses": 359,
+          "overlap_groups": 118,
+          "achieved": 800.3499930519616,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1468750000,
+          "client_core_equivalent": 1.4693925653688358,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.15625
+          },
+          "server_tree_cpu_window_seconds": 1.398900100030005,
+          "server_tree_memory": {
+            "before": {
+              "rss": 6836224,
+              "vms": 1888256,
+              "private": 1888256
+            },
+            "after": {
+              "rss": 6840320,
+              "vms": 1888256,
+              "private": 1888256
+            }
+          },
+          "median_ns": 4551300.0,
+          "p99_ns": 6356900,
+          "eligible": false
+        },
+        "libcoap": {
+          "path": "800-2-unprotected-libcoap.json",
+          "raw_sha256": "4177565e8c3608c9d911926e9753653fd16394ffc942a964cb8479864162b5fd",
+          "peer": "libcoap",
+          "verified": 800,
+          "pacing_misses": 0,
+          "overlap_groups": 200,
+          "achieved": 800.4342355727982,
+          "completed_by_endpoint": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "client_cpu_ns": 1562500000,
+          "client_core_equivalent": 1.5633481163531215,
+          "server_tree_cpu_seconds": {
+            "user_seconds": 0.140625,
+            "system_seconds": 0.125
+          },
+          "server_tree_cpu_window_seconds": 1.3662942999508232,
+          "server_tree_memory": {
+            "before": {
+              "rss": 5672960,
+              "vms": 974848,
+              "private": 974848
+            },
+            "after": {
+              "rss": 5701632,
+              "vms": 1003520,
+              "private": 1003520
+            }
+          },
+          "median_ns": 4365250.0,
+          "p99_ns": 5456600,
+          "eligible": true
+        }
+      }
+    }
+  },
+  "ladder_sources": {
+    "initial": {
+      "driver_sha256": "66abfcb6abca675026afc147fcbbecf8157a44e3526f649e776c5860d3c8146c",
+      "launcher_sha256": "d9941e15543dd719f61edb7a6aac507df79e31aaaed98d259ad4ba32e029b2c2",
+      "raw_decision_sha256": "0e9c40f5c90640dcf8659f5f1c65e3aae37220625c4099c47040411bf473e4f2"
+    },
+    "extension": {
+      "driver_sha256": "41ed5fd5af9379aaff6f4e04e9eed1af0a40fa084d47b629c5be6067bbcd75c2",
+      "launcher_sha256": "6ce24123ed250a44056bbde5f013f6ea3d030568f2bb231a8b63a387fd974203",
+      "raw_decision_sha256": "c1c7fd8229d1460f4027d2bd33ca8be305b67d3178e57fc6f590b45dee99a49e"
+    }
+  },
+  "wire_shape": {
+    "driver_sha256": "5dcc1c538b0f68bb92046cb194df3b74e8d2799be2d665245582af8777cefa21",
+    "launcher_sha256": "12c872bf57bbca582a9d9cf945d01bf01b887269e1483fc1d498b4d3404f884e",
+    "results": {
+      "preflight-unprotected-coaptic-mio.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 10240,
+          "received_bytes": 537088,
+          "empty_ack": 0,
+          "separate_con": 0,
+          "piggyback_ack": 512
+        },
+        "raw_sha256": "0fa0c53b83aea52a48d8bbbabf92328ceeff1d05c2c1acc78401eb4cd308ee45"
+      },
+      "preflight-unprotected-coaptic-async.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 10240,
+          "received_bytes": 537088,
+          "empty_ack": 0,
+          "separate_con": 0,
+          "piggyback_ack": 512
+        },
+        "raw_sha256": "d711228d9b28de533bb2f236c92eb19b3a17a01694f6a58c2330cf84c1946d69"
+      },
+      "preflight-unprotected-libcoap.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 10240,
+          "received_bytes": 536064,
+          "empty_ack": 0,
+          "separate_con": 0,
+          "piggyback_ack": 512
+        },
+        "raw_sha256": "1a04460b48f3a62115194d2c5b15f7bfae0665810036b90b25c7cab16fd0c03e"
+      },
+      "preflight-OSCORE-AES-CCM-16-64-128-coaptic-mio.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 18944,
+          "received_bytes": 542720,
+          "empty_ack": 0,
+          "separate_con": 0,
+          "piggyback_ack": 512
+        },
+        "raw_sha256": "9b417985ee642367ea03b9d1014088d0f0d81b850c9bd2ca0afc6efb7a6547bd"
+      },
+      "preflight-OSCORE-AES-CCM-16-64-128-coaptic-async.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 18944,
+          "received_bytes": 542720,
+          "empty_ack": 0,
+          "separate_con": 0,
+          "piggyback_ack": 512
+        },
+        "raw_sha256": "22b44ad715bc3892e463ff4557aedc237e0ab1958d14566fe2038d1160e66d0a"
+      },
+      "preflight-OSCORE-AES-CCM-16-64-128-libcoap.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 512,
+          "received": 1024,
+          "data_sent_bytes": 18944,
+          "received_bytes": 543744,
+          "empty_ack": 512,
+          "separate_con": 512,
+          "piggyback_ack": 0
+        },
+        "raw_sha256": "81c2b9f964c7a41d47ed3cff6ba8d89115e4988c7f428e61d4284acca63ac714"
+      }
+    }
+  },
+  "independent_wire_counts": {
+    "driver_sha256": "1b37e0960beeb639d9c30f700dfb6861adb00a757b4794158234bdab11c181c9",
+    "launcher_sha256": "ef8c69bcb6927409f20d2751ba577382918f53cdc9fb9b96536329ed4a2428cb",
+    "results": {
+      "preflight-unprotected-coaptic-mio.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 10240,
+          "received_bytes": 537088
+        },
+        "sixteen_exchanges_per_operation": true,
+        "raw_sha256": "42fe0bc8846e8aea070e9bbb46b7b473ef29de43bdfd03dafae8f9b76ada7668"
+      },
+      "preflight-unprotected-coaptic-async.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 10240,
+          "received_bytes": 537088
+        },
+        "sixteen_exchanges_per_operation": true,
+        "raw_sha256": "c597859f39d12beee535afba9619f69985978f4d7e0832f5a3ac8607ad29e3c2"
+      },
+      "preflight-unprotected-libcoap.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 10240,
+          "received_bytes": 536064
+        },
+        "sixteen_exchanges_per_operation": true,
+        "raw_sha256": "d47a0ddb5c5f8be4347fa72e629ae9cae7df8469d8556328986fa1c3a0f04098"
+      },
+      "preflight-OSCORE-AES-CCM-16-64-128-coaptic-mio.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 18944,
+          "received_bytes": 542720
+        },
+        "sixteen_exchanges_per_operation": true,
+        "raw_sha256": "502a2c216bca1ccb01609831ada9d7d060cf051e058757802f3075272c457b1d"
+      },
+      "preflight-OSCORE-AES-CCM-16-64-128-coaptic-async.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 0,
+          "received": 512,
+          "data_sent_bytes": 18944,
+          "received_bytes": 542720
+        },
+        "sixteen_exchanges_per_operation": true,
+        "raw_sha256": "24dc631034eb515738d03e09249519d43b5623ed9c4efa47acf909775c8576f9"
+      },
+      "preflight-OSCORE-AES-CCM-16-64-128-libcoap.json": {
+        "wire": {
+          "data_sent": 512,
+          "control_sent": 512,
+          "received": 1024,
+          "data_sent_bytes": 18944,
+          "received_bytes": 543744
+        },
+        "sixteen_exchanges_per_operation": false,
+        "raw_sha256": "54359ad58719d7f0027b4aeecf7a8f77c9b98df253d817394452a01ad2aaf011"
+      }
+    }
+  },
+  "memory_scope": "server process-tree snapshots at separate boundaries; shared pages may overlap",
+  "cpu_scope": "client process time across measured threads; server tree window includes driver startup, per-endpoint warmup and shutdown"
+}

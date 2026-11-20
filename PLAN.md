@@ -121,10 +121,13 @@ for actual stop or transfer conditions.
    receives as InvalidData. The same App completes a 2,000-byte Block2
    read after that refusal. Preserve the fixed and allocated host
    recovery evidence with the async adapter proofs.
-8. Exercise 16 KiB blockwise reads from four independent endpoints at
-   the fixed Service pool bounds. Verify simultaneous client I/O
-   intervals, per-endpoint progress, matched protection and explicit
-   pacing before comparing latency or advancing the offered load.
+8. The [fixed Service peer screen](architecture/requirements/WINDOWS-SERVICE-PEERS-20261120.md)
+   verifies 16 KiB reads with four overlapping endpoints. The 400/s
+   unprotected and 200/s OSCORE rungs pass. Both modes complete all
+   reads at their next rungs and miss pacing or overlap. The protected
+   peer comparison includes libcoap's separate responses and Coaptic's
+   piggybacked responses. Make verified group starts repeatable in the
+   companion driver and retain the accounting needed to match response shape.
 
 ## Blocked and deferred work
 
