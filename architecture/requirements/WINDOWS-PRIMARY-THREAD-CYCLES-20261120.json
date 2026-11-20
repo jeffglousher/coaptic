@@ -1,0 +1,3819 @@
+{
+  "schema": 1,
+  "plan": {
+    "operations": 3600,
+    "warmup": 32,
+    "rate": 800,
+    "control": "process observations only",
+    "experiment": "primary thread snapshots of owned server, bracketed by process cycles",
+    "max_threads": 16,
+    "wrapper_sha256": "68ca5c419d3b5073358ecb0729d94dfb2a66ff0c82a141eafd94f1254621609f",
+    "script_sha256": "3db2ef9ebb373a917bebfbce6c61bd8239f2388e29d21730bc43c08669a2f586",
+    "build": {
+      "core": "285b7fbbf4d25581297ad5df34a963649ded3909",
+      "suite": "7636b2279efb9338735ac060c21452a3a963d77e",
+      "core_tree": "d6c959894327d6ad46dace6fe62f7b7a678bd96a",
+      "suite_tree": "f60c92639c90228ca4fcf943e336d9832279e80b",
+      "selected_lock": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+      "server_sha256": "b869869d21e0ea12083ae89d84c86bc3f995f1988ed314a3a70ce68b7fdfecc6",
+      "frozen_client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "fixture_files": {
+        "servers/src/bin/bench-core.rs": "2c5c708baa794765ea9e7c0a21ec0178fb8cb01c14b64785ff9452bd0c63f6d3",
+        "servers/src/bin/bench-native-client.rs": "02c1f11b6a9c67a0927f7126d3a2f830232334692b90d9cca0890988888ccb18",
+        "servers/src/bin/bench-observe-proof.rs": "a4ceed6058a893e4c5c7d7721fb1edb765b390b1b6dfadf2c232bbc8af1a04d3",
+        "servers/src/bin/bench_core/admission_pressure.rs": "4c897faa722b6504d4b9e1524da67e8de0a49aa8afe0e00870db375e9f5c3e12",
+        "servers/src/bin/bench_core/live_c1.rs": "ca4696f687ab8b1f78a67c0df85874bf232eee87ebc87f205480968bb1286123",
+        "servers/src/client_endpoint_tests.rs": "1ab567614e4272705b99ec3f9606bf99e71c445de8bae84f43d9f2a7aeede7ac",
+        "servers/src/client_endpoint_udp.rs": "d14594ce321b31ed76c74dd7b528c2cbbebf5b54c9bef3ef443df165bb03c717",
+        "servers/src/direct_udp.rs": "b00875271ec27e30b0a421cdafcb19487689bc81c1ec957f406dbaaf6000e600",
+        "servers/src/main.rs": "e59f808e18ad462d06215091ea6afd605e7f37f0cc5e00069329292c01ca6e4c",
+        "servers/src/staged_mio.rs": "eeb55845691954d344dcbf7cff7a4df4f4502bf2f34a18e52d0e9bd7da6e0f5f",
+        "servers/src/staged_ready.rs": "eab78807c3b68f9a57b3228b5efd554f0eb615bd252ca9dd4583732f0949d092",
+        "servers/src/staged_udp.rs": "df4945508594994b47712aa4922976bc217c75fe88f368b3f3b8b16f347100f6",
+        "servers/Cargo.toml": "f6443999a7b2747d0e3b2b348ddc82ecb4f0e93f026836303f8fa3fffbe28343",
+        "profile/Cargo.toml": "df6c34cafe5653e9cf9fc80393bfc2ea9aa40183cba215f6d3a636448701c76c"
+      },
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+      "hatch_flags": {
+        "CARGO_PROFILE_RELEASE_LTO": "thin",
+        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+        "CARGO_PROFILE_RELEASE_DEBUG": "0",
+        "CARGO_BUILD_JOBS": "2",
+        "CARGO_INCREMENTAL": "0",
+        "RUSTFLAGS": null
+      }
+    }
+  },
+  "resumed_plan": {
+    "operations": 3600,
+    "warmup": 32,
+    "rate": 800,
+    "control": "process observations only",
+    "experiment": "primary thread snapshots of owned server, bracketed by process cycles",
+    "max_threads": 16,
+    "wrapper_sha256": "68ca5c419d3b5073358ecb0729d94dfb2a66ff0c82a141eafd94f1254621609f",
+    "script_sha256": "04f4065ed5cf3874d80b3d8474633e09851811064c8aee3e7c4421b439be1750",
+    "build": {
+      "core": "285b7fbbf4d25581297ad5df34a963649ded3909",
+      "suite": "7636b2279efb9338735ac060c21452a3a963d77e",
+      "core_tree": "d6c959894327d6ad46dace6fe62f7b7a678bd96a",
+      "suite_tree": "f60c92639c90228ca4fcf943e336d9832279e80b",
+      "selected_lock": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+      "server_sha256": "b869869d21e0ea12083ae89d84c86bc3f995f1988ed314a3a70ce68b7fdfecc6",
+      "frozen_client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+      "fixture_files": {
+        "servers/src/bin/bench-core.rs": "2c5c708baa794765ea9e7c0a21ec0178fb8cb01c14b64785ff9452bd0c63f6d3",
+        "servers/src/bin/bench-native-client.rs": "02c1f11b6a9c67a0927f7126d3a2f830232334692b90d9cca0890988888ccb18",
+        "servers/src/bin/bench-observe-proof.rs": "a4ceed6058a893e4c5c7d7721fb1edb765b390b1b6dfadf2c232bbc8af1a04d3",
+        "servers/src/bin/bench_core/admission_pressure.rs": "4c897faa722b6504d4b9e1524da67e8de0a49aa8afe0e00870db375e9f5c3e12",
+        "servers/src/bin/bench_core/live_c1.rs": "ca4696f687ab8b1f78a67c0df85874bf232eee87ebc87f205480968bb1286123",
+        "servers/src/client_endpoint_tests.rs": "1ab567614e4272705b99ec3f9606bf99e71c445de8bae84f43d9f2a7aeede7ac",
+        "servers/src/client_endpoint_udp.rs": "d14594ce321b31ed76c74dd7b528c2cbbebf5b54c9bef3ef443df165bb03c717",
+        "servers/src/direct_udp.rs": "b00875271ec27e30b0a421cdafcb19487689bc81c1ec957f406dbaaf6000e600",
+        "servers/src/main.rs": "e59f808e18ad462d06215091ea6afd605e7f37f0cc5e00069329292c01ca6e4c",
+        "servers/src/staged_mio.rs": "eeb55845691954d344dcbf7cff7a4df4f4502bf2f34a18e52d0e9bd7da6e0f5f",
+        "servers/src/staged_ready.rs": "eab78807c3b68f9a57b3228b5efd554f0eb615bd252ca9dd4583732f0949d092",
+        "servers/src/staged_udp.rs": "df4945508594994b47712aa4922976bc217c75fe88f368b3f3b8b16f347100f6",
+        "servers/Cargo.toml": "f6443999a7b2747d0e3b2b348ddc82ecb4f0e93f026836303f8fa3fffbe28343",
+        "profile/Cargo.toml": "df6c34cafe5653e9cf9fc80393bfc2ea9aa40183cba215f6d3a636448701c76c"
+      },
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+      "hatch_flags": {
+        "CARGO_PROFILE_RELEASE_LTO": "thin",
+        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+        "CARGO_PROFILE_RELEASE_DEBUG": "0",
+        "CARGO_BUILD_JOBS": "2",
+        "CARGO_INCREMENTAL": "0",
+        "RUSTFLAGS": null
+      }
+    }
+  },
+  "cells": {
+    "0/coaptic-async/oscore/4096": {
+      "case": "0/coaptic-async/oscore/4096",
+      "process": {
+        "path": "0-coaptic-async-oscore-4096-process.json",
+        "sha256": "7dd2a6761730d66102b99fdbeb70778b0db33ee6007c3dbe8129493978698bdc",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1721259150858,
+        "missed": 3,
+        "median_ns": 144400.0,
+        "p99_ns": 367200,
+        "server": {
+          "cycles": 458602.76666666666,
+          "cpu_time": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.4375,
+            "total_seconds": 0.53125,
+            "ns_per_verified_operation": 147569.44444444444
+          },
+          "memory": [
+            {
+              "rss": 6569984,
+              "private": 1257472
+            },
+            {
+              "rss": 6569984,
+              "private": 1257472
+            }
+          ]
+        },
+        "client": {
+          "cycles": 550341.2833333333,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.75,
+            "total_seconds": 0.75,
+            "ns_per_verified_operation": 208333.33333333334
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 884736
+            },
+            {
+              "rss": 5308416,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-async-oscore-4096-threads.json",
+        "sha256": "6e5d998298bab4a4084b5c452899b2eca6830751f95ca59015c01a817aeb9607",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1591605476902,
+        "missed": 1,
+        "median_ns": 149900.0,
+        "p99_ns": 405800,
+        "server": {
+          "cycles": 481151.56666666665,
+          "cpu_time": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.515625,
+            "total_seconds": 0.6875,
+            "ns_per_verified_operation": 190972.22222222222
+          },
+          "memory": [
+            {
+              "rss": 6574080,
+              "private": 1257472
+            },
+            {
+              "rss": 6574080,
+              "private": 1257472
+            }
+          ]
+        },
+        "client": {
+          "cycles": 576723.5833333334,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.75,
+            "total_seconds": 0.765625,
+            "ns_per_verified_operation": 212673.61111111112
+          },
+          "memory": [
+            {
+              "rss": 5267456,
+              "private": 880640
+            },
+            {
+              "rss": 5300224,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 16576,
+                "creation_filetime": 134396335335725664,
+                "cycles": 26205160,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 29976100,
+              "process_cycles_after": 29976100,
+              "snapshot_wall_ns": 43700
+            },
+            {
+              "primary_thread": {
+                "tid": 16576,
+                "creation_filetime": 134396335335725664,
+                "cycles": 1758350800,
+                "user_100ns": 1718750,
+                "system_100ns": 5156250
+              },
+              "process_cycles_before": 1762121740,
+              "process_cycles_after": 1762121740,
+              "snapshot_wall_ns": 47600
+            }
+          ],
+          "cycles_per_verified": 481151.56666666665,
+          "snapshot_ns": [
+            43700,
+            47600
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 190972.22222222222,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 5500.0,
+      "p99_delta_ns": 38600,
+      "server_cycle_change_fraction": 0.04916847790495238,
+      "client_cycle_change_fraction": 0.04793807188188115,
+      "within_probe_guards": false
+    },
+    "0/coaptic-async/oscore/64": {
+      "case": "0/coaptic-async/oscore/64",
+      "process": {
+        "path": "0-coaptic-async-oscore-64-process.json",
+        "sha256": "e0b6689bec59b04bf6a3c9df9f2fa81872a8b6b030d84e351a2fd7ceca33363b",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1928642623509,
+        "missed": 1,
+        "median_ns": 58900.0,
+        "p99_ns": 121700,
+        "server": {
+          "cycles": 164373.47222222222,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.03125,
+            "total_seconds": 0.0625,
+            "ns_per_verified_operation": 17361.11111111111
+          },
+          "memory": [
+            {
+              "rss": 6512640,
+              "private": 1241088
+            },
+            {
+              "rss": 6512640,
+              "private": 1241088
+            }
+          ]
+        },
+        "client": {
+          "cycles": 228704.02222222224,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.0625,
+            "total_seconds": 0.0625,
+            "ns_per_verified_operation": 17361.11111111111
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 868352
+            },
+            {
+              "rss": 5255168,
+              "private": 868352
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-async-oscore-64-threads.json",
+        "sha256": "b1b6dd2675a969e92b8eac28d0f554bc0c5025732423f3a9c2c37e0f6ecb2350",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1519577473535,
+        "missed": 1,
+        "median_ns": 58000.0,
+        "p99_ns": 159300,
+        "server": {
+          "cycles": 158573.07222222222,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.125,
+            "total_seconds": 0.125,
+            "ns_per_verified_operation": 34722.22222222222
+          },
+          "memory": [
+            {
+              "rss": 6516736,
+              "private": 1241088
+            },
+            {
+              "rss": 6516736,
+              "private": 1241088
+            }
+          ]
+        },
+        "client": {
+          "cycles": 225347.9388888889,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.15625,
+            "ns_per_verified_operation": 43402.77777777778
+          },
+          "memory": [
+            {
+              "rss": 5226496,
+              "private": 868352
+            },
+            {
+              "rss": 5263360,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 30180,
+                "creation_filetime": 134396335240308058,
+                "cycles": 23109460,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 27990160,
+              "process_cycles_after": 27990160,
+              "snapshot_wall_ns": 42800
+            },
+            {
+              "primary_thread": {
+                "tid": 30180,
+                "creation_filetime": 134396335240308058,
+                "cycles": 593972520,
+                "user_100ns": 0,
+                "system_100ns": 1250000
+              },
+              "process_cycles_before": 598853220,
+              "process_cycles_after": 598853220,
+              "snapshot_wall_ns": 47100
+            }
+          ],
+          "cycles_per_verified": 158573.07222222222,
+          "snapshot_ns": [
+            42800,
+            47100
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 34722.22222222222,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -900.0,
+      "p99_delta_ns": 37600,
+      "server_cycle_change_fraction": -0.035287932545211675,
+      "client_cycle_change_fraction": -0.014674352032481464,
+      "within_probe_guards": false
+    },
+    "0/coaptic-async/unprotected/4096": {
+      "case": "0/coaptic-async/unprotected/4096",
+      "process": {
+        "path": "0-coaptic-async-unprotected-4096-process.json",
+        "sha256": "6ad9fe982dbea9bdcf24d1f9a279d6c639e9ab4041f1104aa7a94698e405b749",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1650829473351,
+        "missed": 5,
+        "median_ns": 130650.0,
+        "p99_ns": 425700,
+        "server": {
+          "cycles": 448427.22777777776,
+          "cpu_time": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.46875,
+            "total_seconds": 0.640625,
+            "ns_per_verified_operation": 177951.38888888888
+          },
+          "memory": [
+            {
+              "rss": 6447104,
+              "private": 1249280
+            },
+            {
+              "rss": 6447104,
+              "private": 1249280
+            }
+          ]
+        },
+        "client": {
+          "cycles": 524893.2277777778,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.765625,
+            "total_seconds": 0.765625,
+            "ns_per_verified_operation": 212673.61111111112
+          },
+          "memory": [
+            {
+              "rss": 5193728,
+              "private": 876544
+            },
+            {
+              "rss": 5218304,
+              "private": 876544
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-async-unprotected-4096-threads.json",
+        "sha256": "84d7f38c0dcd1cdf6fee68a9416ad25be756aef61eb3ffcfdfefd2e32f9d630c",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1850205586425,
+        "missed": 4,
+        "median_ns": 122350.0,
+        "p99_ns": 357700,
+        "server": {
+          "cycles": 406774.3,
+          "cpu_time": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.140625,
+            "total_seconds": 0.296875,
+            "ns_per_verified_operation": 82465.27777777778
+          },
+          "memory": [
+            {
+              "rss": 6455296,
+              "private": 1261568
+            },
+            {
+              "rss": 6455296,
+              "private": 1261568
+            }
+          ]
+        },
+        "client": {
+          "cycles": 486318.90555555554,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.390625,
+            "total_seconds": 0.421875,
+            "ns_per_verified_operation": 117187.5
+          },
+          "memory": [
+            {
+              "rss": 5193728,
+              "private": 880640
+            },
+            {
+              "rss": 5222400,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 20084,
+                "creation_filetime": 134396335144535121,
+                "cycles": 25948120,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 30114140,
+              "process_cycles_after": 30114140,
+              "snapshot_wall_ns": 43000
+            },
+            {
+              "primary_thread": {
+                "tid": 20084,
+                "creation_filetime": 134396335144535121,
+                "cycles": 1490335600,
+                "user_100ns": 1562500,
+                "system_100ns": 1406250
+              },
+              "process_cycles_before": 1494501620,
+              "process_cycles_after": 1494501620,
+              "snapshot_wall_ns": 51400
+            }
+          ],
+          "cycles_per_verified": 406774.3,
+          "snapshot_ns": [
+            43000,
+            51400
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 82465.27777777778,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": -8300.0,
+      "p99_delta_ns": -68000,
+      "server_cycle_change_fraction": -0.09288670535059318,
+      "client_cycle_change_fraction": -0.07348984551683602,
+      "within_probe_guards": false
+    },
+    "0/coaptic-async/unprotected/64": {
+      "case": "0/coaptic-async/unprotected/64",
+      "process": {
+        "path": "0-coaptic-async-unprotected-64-process.json",
+        "sha256": "8525228ef61a3e3ef104c4035f7f2844d75e90ed1aad3b3b8feef65e371f2af2",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1915836471603,
+        "missed": 0,
+        "median_ns": 53600.0,
+        "p99_ns": 120900,
+        "server": {
+          "cycles": 149482.7,
+          "cpu_time": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.1875,
+            "total_seconds": 0.265625,
+            "ns_per_verified_operation": 73784.72222222222
+          },
+          "memory": [
+            {
+              "rss": 6397952,
+              "private": 1241088
+            },
+            {
+              "rss": 6397952,
+              "private": 1241088
+            }
+          ]
+        },
+        "client": {
+          "cycles": 206854.11111111112,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.328125,
+            "total_seconds": 0.34375,
+            "ns_per_verified_operation": 95486.11111111111
+          },
+          "memory": [
+            {
+              "rss": 5136384,
+              "private": 868352
+            },
+            {
+              "rss": 5169152,
+              "private": 868352
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-async-unprotected-64-threads.json",
+        "sha256": "59f5ce4273b55b0bc22c104f86c5511d9d2e211fc3e489249bee05f0132050e3",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.2039275253525,
+        "missed": 2,
+        "median_ns": 54100.0,
+        "p99_ns": 157400,
+        "server": {
+          "cycles": 152146.22222222222,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.296875,
+            "ns_per_verified_operation": 82465.27777777778
+          },
+          "memory": [
+            {
+              "rss": 6397952,
+              "private": 1228800
+            },
+            {
+              "rss": 6397952,
+              "private": 1228800
+            }
+          ]
+        },
+        "client": {
+          "cycles": 210801.98333333334,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.46875,
+            "total_seconds": 0.484375,
+            "ns_per_verified_operation": 134548.61111111112
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 864256
+            },
+            {
+              "rss": 5173248,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 20452,
+                "creation_filetime": 134396335049148593,
+                "cycles": 22066000,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 26965400,
+              "process_cycles_after": 26965400,
+              "snapshot_wall_ns": 44600
+            },
+            {
+              "primary_thread": {
+                "tid": 20452,
+                "creation_filetime": 134396335049148593,
+                "cycles": 569792400,
+                "user_100ns": 312500,
+                "system_100ns": 2656250
+              },
+              "process_cycles_before": 574691800,
+              "process_cycles_after": 574691800,
+              "snapshot_wall_ns": 46700
+            }
+          ],
+          "cycles_per_verified": 152146.22222222222,
+          "snapshot_ns": [
+            44600,
+            46700
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 82465.27777777778,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 500.0,
+      "p99_delta_ns": 36500,
+      "server_cycle_change_fraction": 0.017818264068164558,
+      "client_cycle_change_fraction": 0.01908529736738762,
+      "within_probe_guards": false
+    },
+    "0/coaptic-mio/oscore/4096": {
+      "case": "0/coaptic-mio/oscore/4096",
+      "process": {
+        "path": "0-coaptic-mio-oscore-4096-process.json",
+        "sha256": "d410dc77d3ecb6d9c8b5e568b643602749f051bc7ffb37b1dac0047914b496de",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.0696593983449,
+        "missed": 3,
+        "median_ns": 138300.0,
+        "p99_ns": 365800,
+        "server": {
+          "cycles": 340348.40555555554,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.203125,
+            "total_seconds": 0.234375,
+            "ns_per_verified_operation": 65104.166666666664
+          },
+          "memory": [
+            {
+              "rss": 6316032,
+              "private": 1228800
+            },
+            {
+              "rss": 6316032,
+              "private": 1228800
+            }
+          ]
+        },
+        "client": {
+          "cycles": 527280.2166666667,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.3125,
+            "total_seconds": 0.3125,
+            "ns_per_verified_operation": 86805.55555555556
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 884736
+            },
+            {
+              "rss": 5308416,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-mio-oscore-4096-threads.json",
+        "sha256": "428f4a5815f98f1bf723dd9e7802b8289509ceb7c52c03c3258045f3a8d791ba",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1678396497434,
+        "missed": 2,
+        "median_ns": 141500.0,
+        "p99_ns": 361200,
+        "server": {
+          "cycles": 349411.5777777778,
+          "cpu_time": {
+            "user_seconds": 0.046875,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.3125,
+            "ns_per_verified_operation": 86805.55555555556
+          },
+          "memory": [
+            {
+              "rss": 6324224,
+              "private": 1241088
+            },
+            {
+              "rss": 6324224,
+              "private": 1241088
+            }
+          ]
+        },
+        "client": {
+          "cycles": 540672.4388888889,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.5,
+            "total_seconds": 0.5,
+            "ns_per_verified_operation": 138888.88888888888
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 892928
+            },
+            {
+              "rss": 5308416,
+              "private": 892928
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 34852,
+                "creation_filetime": 134396334572573467,
+                "cycles": 25269820,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 29343360,
+              "process_cycles_after": 29343360,
+              "snapshot_wall_ns": 43000
+            },
+            {
+              "primary_thread": {
+                "tid": 34852,
+                "creation_filetime": 134396334572573467,
+                "cycles": 1283151500,
+                "user_100ns": 625000,
+                "system_100ns": 2656250
+              },
+              "process_cycles_before": 1287225040,
+              "process_cycles_after": 1287225040,
+              "snapshot_wall_ns": 52700
+            }
+          ],
+          "cycles_per_verified": 349411.5777777778,
+          "snapshot_ns": [
+            43000,
+            52700
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 86805.55555555556,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 3200.0,
+      "p99_delta_ns": -4600,
+      "server_cycle_change_fraction": 0.026629101456868254,
+      "client_cycle_change_fraction": 0.025398681382139632,
+      "within_probe_guards": false
+    },
+    "0/coaptic-mio/oscore/64": {
+      "case": "0/coaptic-mio/oscore/64",
+      "process": {
+        "path": "0-coaptic-mio-oscore-64-process.json",
+        "sha256": "3dd7925a0fe7686c4ebb89c8c9fadbc8d8059f48acc968cdc457f05512f97d2e",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1116244617416,
+        "missed": 2,
+        "median_ns": 52000.0,
+        "p99_ns": 81900,
+        "server": {
+          "cycles": 106470.15,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.03125,
+            "total_seconds": 0.03125,
+            "ns_per_verified_operation": 8680.555555555555
+          },
+          "memory": [
+            {
+              "rss": 6287360,
+              "private": 1216512
+            },
+            {
+              "rss": 6287360,
+              "private": 1216512
+            }
+          ]
+        },
+        "client": {
+          "cycles": 198265.42777777778,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.078125,
+            "ns_per_verified_operation": 21701.38888888889
+          },
+          "memory": [
+            {
+              "rss": 5230592,
+              "private": 872448
+            },
+            {
+              "rss": 5271552,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-mio-oscore-64-threads.json",
+        "sha256": "74487d0efdb9899e1daad287b76de366b47913fd1b2b6bee11692a023d2286bb",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.17646558321,
+        "missed": 3,
+        "median_ns": 52100.0,
+        "p99_ns": 93400,
+        "server": {
+          "cycles": 104474.82222222222,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.015625,
+            "total_seconds": 0.046875,
+            "ns_per_verified_operation": 13020.833333333334
+          },
+          "memory": [
+            {
+              "rss": 6287360,
+              "private": 1216512
+            },
+            {
+              "rss": 6287360,
+              "private": 1216512
+            }
+          ]
+        },
+        "client": {
+          "cycles": 196692.55,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.0625,
+            "total_seconds": 0.0625,
+            "ns_per_verified_operation": 17361.11111111111
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 864256
+            },
+            {
+              "rss": 5255168,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 1620,
+                "creation_filetime": 134396334477703505,
+                "cycles": 19067200,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 22988760,
+              "process_cycles_after": 22988760,
+              "snapshot_wall_ns": 62900
+            },
+            {
+              "primary_thread": {
+                "tid": 1620,
+                "creation_filetime": 134396334477703505,
+                "cycles": 395176560,
+                "user_100ns": 312500,
+                "system_100ns": 156250
+              },
+              "process_cycles_before": 399098120,
+              "process_cycles_after": 399098120,
+              "snapshot_wall_ns": 61600
+            }
+          ],
+          "cycles_per_verified": 104474.82222222222,
+          "snapshot_ns": [
+            62900,
+            61600
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 13020.833333333334,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 100.0,
+      "p99_delta_ns": 11500,
+      "server_cycle_change_fraction": -0.018740724773824158,
+      "client_cycle_change_fraction": -0.00793319236443335,
+      "within_probe_guards": false
+    },
+    "0/coaptic-mio/unprotected/4096": {
+      "case": "0/coaptic-mio/unprotected/4096",
+      "process": {
+        "path": "0-coaptic-mio-unprotected-4096-process.json",
+        "sha256": "81bb98e4a75638c211b8222e6d5aef53371320220dc3923e62ea42652bf7b3d0",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1694758949945,
+        "missed": 0,
+        "median_ns": 118600.0,
+        "p99_ns": 295600,
+        "server": {
+          "cycles": 299142.5777777778,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.25,
+            "total_seconds": 0.3125,
+            "ns_per_verified_operation": 86805.55555555556
+          },
+          "memory": [
+            {
+              "rss": 6205440,
+              "private": 1220608
+            },
+            {
+              "rss": 6205440,
+              "private": 1220608
+            }
+          ]
+        },
+        "client": {
+          "cycles": 456273.76666666666,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.578125,
+            "total_seconds": 0.59375,
+            "ns_per_verified_operation": 164930.55555555556
+          },
+          "memory": [
+            {
+              "rss": 5189632,
+              "private": 872448
+            },
+            {
+              "rss": 5218304,
+              "private": 872448
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-mio-unprotected-4096-threads.json",
+        "sha256": "e1176a5ad8ebd29b8c543cf2360a38171b87fd09a18f215b92bce41937c42d7e",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1977911117897,
+        "missed": 2,
+        "median_ns": 115600.0,
+        "p99_ns": 272800,
+        "server": {
+          "cycles": 284892.0444444445,
+          "cpu_time": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.359375,
+            "total_seconds": 0.4375,
+            "ns_per_verified_operation": 121527.77777777778
+          },
+          "memory": [
+            {
+              "rss": 6201344,
+              "private": 1220608
+            },
+            {
+              "rss": 6201344,
+              "private": 1220608
+            }
+          ]
+        },
+        "client": {
+          "cycles": 435372.1722222222,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.625,
+            "total_seconds": 0.640625,
+            "ns_per_verified_operation": 177951.38888888888
+          },
+          "memory": [
+            {
+              "rss": 5201920,
+              "private": 880640
+            },
+            {
+              "rss": 5226496,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 26872,
+                "creation_filetime": 134396333734978686,
+                "cycles": 23468160,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 28199600,
+              "process_cycles_after": 28199600,
+              "snapshot_wall_ns": 42300
+            },
+            {
+              "primary_thread": {
+                "tid": 26872,
+                "creation_filetime": 134396333734978686,
+                "cycles": 1049079520,
+                "user_100ns": 937500,
+                "system_100ns": 3593750
+              },
+              "process_cycles_before": 1053810960,
+              "process_cycles_after": 1053810960,
+              "snapshot_wall_ns": 50300
+            }
+          ],
+          "cycles_per_verified": 284892.0444444445,
+          "snapshot_ns": [
+            42300,
+            50300
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 121527.77777777778,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -3000.0,
+      "p99_delta_ns": -22800,
+      "server_cycle_change_fraction": -0.04763793051191645,
+      "client_cycle_change_fraction": -0.045809327582302606,
+      "within_probe_guards": false
+    },
+    "0/coaptic-mio/unprotected/64": {
+      "case": "0/coaptic-mio/unprotected/64",
+      "process": {
+        "path": "0-coaptic-mio-unprotected-64-process.json",
+        "sha256": "6318e7dffe9ff99f30556125f6e39bf4a8734fb4777bedd65ae27f0a8250a455",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1993029730605,
+        "missed": 0,
+        "median_ns": 47900.0,
+        "p99_ns": 77400,
+        "server": {
+          "cycles": 99670.62222222223,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.046875,
+            "total_seconds": 0.078125,
+            "ns_per_verified_operation": 21701.38888888889
+          },
+          "memory": [
+            {
+              "rss": 6176768,
+              "private": 1216512
+            },
+            {
+              "rss": 6176768,
+              "private": 1216512
+            }
+          ]
+        },
+        "client": {
+          "cycles": 184025.56666666668,
+          "cpu_time": {
+            "user_seconds": 0.046875,
+            "system_seconds": 0.09375,
+            "total_seconds": 0.140625,
+            "ns_per_verified_operation": 39062.5
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 860160
+            },
+            {
+              "rss": 5173248,
+              "private": 860160
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-mio-unprotected-64-threads.json",
+        "sha256": "46c350ca6d69c4b6a31d92ed1432aa09c044cdef81a996de783667d70b053b6b",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1587514962969,
+        "missed": 1,
+        "median_ns": 47700.0,
+        "p99_ns": 74300,
+        "server": {
+          "cycles": 98931.12222222223,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.109375,
+            "ns_per_verified_operation": 30381.944444444445
+          },
+          "memory": [
+            {
+              "rss": 6168576,
+              "private": 1200128
+            },
+            {
+              "rss": 6168576,
+              "private": 1200128
+            }
+          ]
+        },
+        "client": {
+          "cycles": 182292.7,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.171875,
+            "total_seconds": 0.171875,
+            "ns_per_verified_operation": 47743.055555555555
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 864256
+            },
+            {
+              "rss": 5173248,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 19972,
+                "creation_filetime": 134396333639906846,
+                "cycles": 17471240,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 22960200,
+              "process_cycles_after": 22960200,
+              "snapshot_wall_ns": 58900
+            },
+            {
+              "primary_thread": {
+                "tid": 19972,
+                "creation_filetime": 134396333639906846,
+                "cycles": 373623280,
+                "user_100ns": 312500,
+                "system_100ns": 781250
+              },
+              "process_cycles_before": 379112240,
+              "process_cycles_after": 379112240,
+              "snapshot_wall_ns": 73800
+            }
+          ],
+          "cycles_per_verified": 98931.12222222223,
+          "snapshot_ns": [
+            58900,
+            73800
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 30381.944444444445,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -200.0,
+      "p99_delta_ns": -3100,
+      "server_cycle_change_fraction": -0.007419437979941934,
+      "client_cycle_change_fraction": -0.009416445214949332,
+      "within_probe_guards": true
+    },
+    "0/coaptic-ready/oscore/4096": {
+      "case": "0/coaptic-ready/oscore/4096",
+      "process": {
+        "path": "0-coaptic-ready-oscore-4096-process.json",
+        "sha256": "64f02d1d88c6a0b129620f071edb6a38089bef84538376a29f58dd8ce93f904b",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.0850045868207,
+        "missed": 1,
+        "median_ns": 148000.0,
+        "p99_ns": 402400,
+        "server": {
+          "cycles": 458264.18333333335,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.421875,
+            "total_seconds": 0.484375,
+            "ns_per_verified_operation": 134548.61111111112
+          },
+          "memory": [
+            {
+              "rss": 6311936,
+              "private": 1179648
+            },
+            {
+              "rss": 6311936,
+              "private": 1179648
+            }
+          ]
+        },
+        "client": {
+          "cycles": 566077.1444444444,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.625,
+            "total_seconds": 0.625,
+            "ns_per_verified_operation": 173611.11111111112
+          },
+          "memory": [
+            {
+              "rss": 5271552,
+              "private": 888832
+            },
+            {
+              "rss": 5304320,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-ready-oscore-4096-threads.json",
+        "sha256": "f86fe1fc7a798b08ebe2582496a8d964ed498503d0e91207f6697702ce005d08",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1007593556282,
+        "missed": 2,
+        "median_ns": 143100.0,
+        "p99_ns": 389900,
+        "server": {
+          "cycles": 441695.98333333334,
+          "cpu_time": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.546875,
+            "total_seconds": 0.703125,
+            "ns_per_verified_operation": 195312.5
+          },
+          "memory": [
+            {
+              "rss": 6307840,
+              "private": 1171456
+            },
+            {
+              "rss": 6307840,
+              "private": 1171456
+            }
+          ]
+        },
+        "client": {
+          "cycles": 548731.7611111111,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.828125,
+            "total_seconds": 0.828125,
+            "ns_per_verified_operation": 230034.72222222222
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 884736
+            },
+            {
+              "rss": 5308416,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 35920,
+                "creation_filetime": 134396334953541339,
+                "cycles": 35007760,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 39821480,
+              "process_cycles_after": 39821480,
+              "snapshot_wall_ns": 70600
+            },
+            {
+              "primary_thread": {
+                "tid": 35920,
+                "creation_filetime": 134396334953541339,
+                "cycles": 1625113300,
+                "user_100ns": 1562500,
+                "system_100ns": 5468750
+              },
+              "process_cycles_before": 1629927020,
+              "process_cycles_after": 1629927020,
+              "snapshot_wall_ns": 54300
+            }
+          ],
+          "cycles_per_verified": 441695.98333333334,
+          "snapshot_ns": [
+            70600,
+            54300
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 195312.5,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -4900.0,
+      "p99_delta_ns": -12500,
+      "server_cycle_change_fraction": -0.03615425469100775,
+      "client_cycle_change_fraction": -0.030641377246128365,
+      "within_probe_guards": false
+    },
+    "0/coaptic-ready/oscore/64": {
+      "case": "0/coaptic-ready/oscore/64",
+      "process": {
+        "path": "0-coaptic-ready-oscore-64-process.json",
+        "sha256": "44c27605fbb1729cf8befda2b35cba432036a76cf23acd189b6e883d8076b142",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1906231884574,
+        "missed": 0,
+        "median_ns": 54500.0,
+        "p99_ns": 88300,
+        "server": {
+          "cycles": 140756.6,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.109375,
+            "ns_per_verified_operation": 30381.944444444445
+          },
+          "memory": [
+            {
+              "rss": 6291456,
+              "private": 1167360
+            },
+            {
+              "rss": 6291456,
+              "private": 1167360
+            }
+          ]
+        },
+        "client": {
+          "cycles": 205992.11666666667,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.15625,
+            "ns_per_verified_operation": 43402.77777777778
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 872448
+            },
+            {
+              "rss": 5263360,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-ready-oscore-64-threads.json",
+        "sha256": "85f1665859e612966184edb14f20d7b1e67e6054766c346ee29f8e601da1f29a",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1960302452761,
+        "missed": 1,
+        "median_ns": 56000.0,
+        "p99_ns": 104900,
+        "server": {
+          "cycles": 149429.8111111111,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.09375,
+            "ns_per_verified_operation": 26041.666666666668
+          },
+          "memory": [
+            {
+              "rss": 6275072,
+              "private": 1150976
+            },
+            {
+              "rss": 6275072,
+              "private": 1150976
+            }
+          ]
+        },
+        "client": {
+          "cycles": 215695.8111111111,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.140625,
+            "total_seconds": 0.140625,
+            "ns_per_verified_operation": 39062.5
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 868352
+            },
+            {
+              "rss": 5255168,
+              "private": 868352
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 43644,
+                "creation_filetime": 134396334857611214,
+                "cycles": 17457640,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 21232320,
+              "process_cycles_after": 21232320,
+              "snapshot_wall_ns": 43400
+            },
+            {
+              "primary_thread": {
+                "tid": 43644,
+                "creation_filetime": 134396334857611214,
+                "cycles": 555404960,
+                "user_100ns": 156250,
+                "system_100ns": 781250
+              },
+              "process_cycles_before": 559179640,
+              "process_cycles_after": 559179640,
+              "snapshot_wall_ns": 43800
+            }
+          ],
+          "cycles_per_verified": 149429.8111111111,
+          "snapshot_ns": [
+            43400,
+            43800
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 26041.666666666668,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 1500.0,
+      "p99_delta_ns": 16600,
+      "server_cycle_change_fraction": 0.06161850393595114,
+      "client_cycle_change_fraction": 0.047107115560867774,
+      "within_probe_guards": false
+    },
+    "0/coaptic-ready/unprotected/4096": {
+      "case": "0/coaptic-ready/unprotected/4096",
+      "process": {
+        "path": "0-coaptic-ready-unprotected-4096-process.json",
+        "sha256": "b0e0040588ca923afc60e52029fefa26899ae9b802e543ff5903d67fffdabc65",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1579333947648,
+        "missed": 0,
+        "median_ns": 110250.0,
+        "p99_ns": 301300,
+        "server": {
+          "cycles": 343339.36666666664,
+          "cpu_time": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.359375,
+            "total_seconds": 0.546875,
+            "ns_per_verified_operation": 151909.72222222222
+          },
+          "memory": [
+            {
+              "rss": 6197248,
+              "private": 1167360
+            },
+            {
+              "rss": 6197248,
+              "private": 1167360
+            }
+          ]
+        },
+        "client": {
+          "cycles": 422850.8222222222,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.59375,
+            "total_seconds": 0.59375,
+            "ns_per_verified_operation": 164930.55555555556
+          },
+          "memory": [
+            {
+              "rss": 5189632,
+              "private": 876544
+            },
+            {
+              "rss": 5218304,
+              "private": 876544
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-ready-unprotected-4096-threads.json",
+        "sha256": "cb341fcc37a1c54ecc4a530f98d4c0b28935fa0087e702891c16d6a644fb1c27",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1721259150858,
+        "missed": 9,
+        "median_ns": 112850.0,
+        "p99_ns": 369600,
+        "server": {
+          "cycles": 362805.5,
+          "cpu_time": {
+            "user_seconds": 0.265625,
+            "system_seconds": 0.25,
+            "total_seconds": 0.515625,
+            "ns_per_verified_operation": 143229.16666666666
+          },
+          "memory": [
+            {
+              "rss": 6189056,
+              "private": 1171456
+            },
+            {
+              "rss": 6189056,
+              "private": 1171456
+            }
+          ]
+        },
+        "client": {
+          "cycles": 443063.06666666665,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.59375,
+            "total_seconds": 0.609375,
+            "ns_per_verified_operation": 169270.83333333334
+          },
+          "memory": [
+            {
+              "rss": 5193728,
+              "private": 888832
+            },
+            {
+              "rss": 5226496,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 6340,
+                "creation_filetime": 134396334762584294,
+                "cycles": 23947560,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 27721220,
+              "process_cycles_after": 27721220,
+              "snapshot_wall_ns": 44100
+            },
+            {
+              "primary_thread": {
+                "tid": 6340,
+                "creation_filetime": 134396334762584294,
+                "cycles": 1330047360,
+                "user_100ns": 2812500,
+                "system_100ns": 2500000
+              },
+              "process_cycles_before": 1333821020,
+              "process_cycles_after": 1333821020,
+              "snapshot_wall_ns": 45600
+            }
+          ],
+          "cycles_per_verified": 362805.5,
+          "snapshot_ns": [
+            44100,
+            45600
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 143229.16666666666,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": 2600.0,
+      "p99_delta_ns": 68300,
+      "server_cycle_change_fraction": 0.05669647941138134,
+      "client_cycle_change_fraction": 0.047799941213835906,
+      "within_probe_guards": false
+    },
+    "0/coaptic-ready/unprotected/64": {
+      "case": "0/coaptic-ready/unprotected/64",
+      "process": {
+        "path": "0-coaptic-ready-unprotected-64-process.json",
+        "sha256": "e0daebc501e767d6bc6dba76b2d47ae6f23efda800bb47d3b8f51df0da6c5978",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1726239073977,
+        "missed": 1,
+        "median_ns": 49800.0,
+        "p99_ns": 74000,
+        "server": {
+          "cycles": 133440.8388888889,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.125,
+            "total_seconds": 0.125,
+            "ns_per_verified_operation": 34722.22222222222
+          },
+          "memory": [
+            {
+              "rss": 6160384,
+              "private": 1150976
+            },
+            {
+              "rss": 6160384,
+              "private": 1150976
+            }
+          ]
+        },
+        "client": {
+          "cycles": 189346.47222222222,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.140625,
+            "total_seconds": 0.140625,
+            "ns_per_verified_operation": 39062.5
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 864256
+            },
+            {
+              "rss": 5173248,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "0-coaptic-ready-unprotected-64-threads.json",
+        "sha256": "13e3e3f9f0c0d1f2673e47f0067c7b3e16bb600bde6684bcd9f6ac7f57af8190",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1947851928222,
+        "missed": 2,
+        "median_ns": 50900.0,
+        "p99_ns": 114800,
+        "server": {
+          "cycles": 139334.07777777777,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.1875,
+            "total_seconds": 0.21875,
+            "ns_per_verified_operation": 60763.88888888889
+          },
+          "memory": [
+            {
+              "rss": 6164480,
+              "private": 1159168
+            },
+            {
+              "rss": 6164480,
+              "private": 1159168
+            }
+          ]
+        },
+        "client": {
+          "cycles": 197162.1277777778,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.1875,
+            "total_seconds": 0.203125,
+            "ns_per_verified_operation": 56423.61111111111
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 860160
+            },
+            {
+              "rss": 5173248,
+              "private": 860160
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 31544,
+                "creation_filetime": 134396334667675993,
+                "cycles": 16017060,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 19883540,
+              "process_cycles_after": 19883540,
+              "snapshot_wall_ns": 43400
+            },
+            {
+              "primary_thread": {
+                "tid": 31544,
+                "creation_filetime": 134396334667675993,
+                "cycles": 517619740,
+                "user_100ns": 312500,
+                "system_100ns": 1875000
+              },
+              "process_cycles_before": 521486220,
+              "process_cycles_after": 521486220,
+              "snapshot_wall_ns": 47000
+            }
+          ],
+          "cycles_per_verified": 139334.07777777777,
+          "snapshot_ns": [
+            43400,
+            47000
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 60763.88888888889,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 1100.0,
+      "p99_delta_ns": 40800,
+      "server_cycle_change_fraction": 0.04416368285720962,
+      "client_cycle_change_fraction": 0.04127700645187038,
+      "within_probe_guards": false
+    },
+    "1/coaptic-async/oscore/4096": {
+      "case": "1/coaptic-async/oscore/4096",
+      "process": {
+        "path": "1-coaptic-async-oscore-4096-process.json",
+        "sha256": "365090f48d1f00445bfb92111453738e5de638abac1f728292b381f8c8e0d1cc",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1593917508368,
+        "missed": 1,
+        "median_ns": 155300.0,
+        "p99_ns": 439900,
+        "server": {
+          "cycles": 495361.9611111111,
+          "cpu_time": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.234375,
+            "total_seconds": 0.328125,
+            "ns_per_verified_operation": 91145.83333333333
+          },
+          "memory": [
+            {
+              "rss": 6569984,
+              "private": 1253376
+            },
+            {
+              "rss": 6569984,
+              "private": 1253376
+            }
+          ]
+        },
+        "client": {
+          "cycles": 595291.7388888889,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.3125,
+            "ns_per_verified_operation": 86805.55555555556
+          },
+          "memory": [
+            {
+              "rss": 5279744,
+              "private": 888832
+            },
+            {
+              "rss": 5320704,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-async-oscore-4096-threads.json",
+        "sha256": "565f13d37b3ce0dddcf65eee2d97a98943089b218392311a7b00af7394eab886",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.128073833685,
+        "missed": 1,
+        "median_ns": 142750.0,
+        "p99_ns": 347300,
+        "server": {
+          "cycles": 451199.4555555555,
+          "cpu_time": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.34375,
+            "total_seconds": 0.421875,
+            "ns_per_verified_operation": 117187.5
+          },
+          "memory": [
+            {
+              "rss": 6569984,
+              "private": 1253376
+            },
+            {
+              "rss": 6569984,
+              "private": 1253376
+            }
+          ]
+        },
+        "client": {
+          "cycles": 540519.3444444444,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.453125,
+            "total_seconds": 0.453125,
+            "ns_per_verified_operation": 125868.05555555556
+          },
+          "memory": [
+            {
+              "rss": 5271552,
+              "private": 880640
+            },
+            {
+              "rss": 5304320,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 27264,
+                "creation_filetime": 134396335383471903,
+                "cycles": 30279040,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 35729580,
+              "process_cycles_after": 35729580,
+              "snapshot_wall_ns": 42000
+            },
+            {
+              "primary_thread": {
+                "tid": 27264,
+                "creation_filetime": 134396335383471903,
+                "cycles": 1654597080,
+                "user_100ns": 937500,
+                "system_100ns": 3437500
+              },
+              "process_cycles_before": 1660047620,
+              "process_cycles_after": 1660047620,
+              "snapshot_wall_ns": 54600
+            }
+          ],
+          "cycles_per_verified": 451199.4555555555,
+          "snapshot_ns": [
+            42000,
+            54600
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 117187.5,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -12550.0,
+      "p99_delta_ns": -92600,
+      "server_cycle_change_fraction": -0.08915199192222556,
+      "client_cycle_change_fraction": -0.09200933066310824,
+      "within_probe_guards": false
+    },
+    "1/coaptic-async/oscore/64": {
+      "case": "1/coaptic-async/oscore/64",
+      "process": {
+        "path": "1-coaptic-async-oscore-64-process.json",
+        "sha256": "747ffea73e03b4be97a7eab33a7e8bd48487694d907626a062be7c1b939b7933",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1815878750084,
+        "missed": 2,
+        "median_ns": 58300.0,
+        "p99_ns": 150600,
+        "server": {
+          "cycles": 157215.43333333332,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.296875,
+            "ns_per_verified_operation": 82465.27777777778
+          },
+          "memory": [
+            {
+              "rss": 6524928,
+              "private": 1249280
+            },
+            {
+              "rss": 6524928,
+              "private": 1249280
+            }
+          ]
+        },
+        "client": {
+          "cycles": 223579.75,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.34375,
+            "total_seconds": 0.359375,
+            "ns_per_verified_operation": 99826.38888888889
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 868352
+            },
+            {
+              "rss": 5263360,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-async-oscore-64-threads.json",
+        "sha256": "51f94ab2e0ecf00a1a51070adedceb513ede5937e962467322eea6c53970ed19",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1538429121972,
+        "missed": 10,
+        "median_ns": 59100.0,
+        "p99_ns": 181700,
+        "server": {
+          "cycles": 161687.85,
+          "cpu_time": {
+            "user_seconds": 0.046875,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.203125,
+            "ns_per_verified_operation": 56423.61111111111
+          },
+          "memory": [
+            {
+              "rss": 6508544,
+              "private": 1236992
+            },
+            {
+              "rss": 6508544,
+              "private": 1236992
+            }
+          ]
+        },
+        "client": {
+          "cycles": 225810.6222222222,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.3125,
+            "total_seconds": 0.34375,
+            "ns_per_verified_operation": 95486.11111111111
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 860160
+            },
+            {
+              "rss": 5263360,
+              "private": 872448
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 7712,
+                "creation_filetime": 134396335478842199,
+                "cycles": 21496160,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 25507480,
+              "process_cycles_after": 25507480,
+              "snapshot_wall_ns": 41300
+            },
+            {
+              "primary_thread": {
+                "tid": 7712,
+                "creation_filetime": 134396335478842199,
+                "cycles": 603572420,
+                "user_100ns": 625000,
+                "system_100ns": 1562500
+              },
+              "process_cycles_before": 607583740,
+              "process_cycles_after": 607583740,
+              "snapshot_wall_ns": 48000
+            }
+          ],
+          "cycles_per_verified": 161687.85,
+          "snapshot_ns": [
+            41300,
+            48000
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 56423.61111111111,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": 800.0,
+      "p99_delta_ns": 31100,
+      "server_cycle_change_fraction": 0.028447694808588775,
+      "client_cycle_change_fraction": 0.009977970823485727,
+      "within_probe_guards": false
+    },
+    "1/coaptic-async/unprotected/4096": {
+      "case": "1/coaptic-async/unprotected/4096",
+      "process": {
+        "path": "1-coaptic-async-unprotected-4096-process.json",
+        "sha256": "7c0941d446cde0436fc1cedb46f99dcde5a5cad529c2ddce971048219cb1da3f",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.0604134507756,
+        "missed": 3,
+        "median_ns": 127900.0,
+        "p99_ns": 425000,
+        "server": {
+          "cycles": 436896.6,
+          "cpu_time": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.53125,
+            "total_seconds": 0.71875,
+            "ns_per_verified_operation": 199652.77777777778
+          },
+          "memory": [
+            {
+              "rss": 6455296,
+              "private": 1249280
+            },
+            {
+              "rss": 6455296,
+              "private": 1249280
+            }
+          ]
+        },
+        "client": {
+          "cycles": 513334.55,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.828125,
+            "total_seconds": 0.828125,
+            "ns_per_verified_operation": 230034.72222222222
+          },
+          "memory": [
+            {
+              "rss": 5193728,
+              "private": 888832
+            },
+            {
+              "rss": 5226496,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-async-unprotected-4096-threads.json",
+        "sha256": "5b3cb4c908329acef9dc93a98f9694185ca0fc85baa32e94c593cdb09c9e0694",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.185660855222,
+        "missed": 1,
+        "median_ns": 118900.0,
+        "p99_ns": 319500,
+        "server": {
+          "cycles": 381109.2111111111,
+          "cpu_time": {
+            "user_seconds": 0.171875,
+            "system_seconds": 0.171875,
+            "total_seconds": 0.34375,
+            "ns_per_verified_operation": 95486.11111111111
+          },
+          "memory": [
+            {
+              "rss": 6455296,
+              "private": 1261568
+            },
+            {
+              "rss": 6455296,
+              "private": 1261568
+            }
+          ]
+        },
+        "client": {
+          "cycles": 454711.56111111114,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.4375,
+            "total_seconds": 0.4375,
+            "ns_per_verified_operation": 121527.77777777778
+          },
+          "memory": [
+            {
+              "rss": 5197824,
+              "private": 884736
+            },
+            {
+              "rss": 5222400,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 29396,
+                "creation_filetime": 134396335574055787,
+                "cycles": 25228340,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 29101620,
+              "process_cycles_after": 29101620,
+              "snapshot_wall_ns": 42300
+            },
+            {
+              "primary_thread": {
+                "tid": 29396,
+                "creation_filetime": 134396335574055787,
+                "cycles": 1397221500,
+                "user_100ns": 1875000,
+                "system_100ns": 1718750
+              },
+              "process_cycles_before": 1401094780,
+              "process_cycles_after": 1401094780,
+              "snapshot_wall_ns": 45500
+            }
+          ],
+          "cycles_per_verified": 381109.2111111111,
+          "snapshot_ns": [
+            42300,
+            45500
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 95486.11111111111,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -9000.0,
+      "p99_delta_ns": -105500,
+      "server_cycle_change_fraction": -0.12769014198986417,
+      "client_cycle_change_fraction": -0.11420035703595022,
+      "within_probe_guards": false
+    },
+    "1/coaptic-async/unprotected/64": {
+      "case": "1/coaptic-async/unprotected/64",
+      "process": {
+        "path": "1-coaptic-async-unprotected-64-process.json",
+        "sha256": "2c1ef43786932b0a2daa2946ffc2a34bd0e36e9f8fee058805cc5be242f23c9b",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.2054927705435,
+        "missed": 2,
+        "median_ns": 52700.0,
+        "p99_ns": 101800,
+        "server": {
+          "cycles": 148613.43333333332,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.21875,
+            "ns_per_verified_operation": 60763.88888888889
+          },
+          "memory": [
+            {
+              "rss": 6393856,
+              "private": 1236992
+            },
+            {
+              "rss": 6393856,
+              "private": 1236992
+            }
+          ]
+        },
+        "client": {
+          "cycles": 204539.0888888889,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.28125,
+            "ns_per_verified_operation": 78125.0
+          },
+          "memory": [
+            {
+              "rss": 5144576,
+              "private": 872448
+            },
+            {
+              "rss": 5177344,
+              "private": 872448
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-async-unprotected-64-threads.json",
+        "sha256": "51bdc0e19bce3a6b71d6d72e457f8edca57d80c0a2d7aa12bed917e651804566",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1639980567572,
+        "missed": 2,
+        "median_ns": 54500.0,
+        "p99_ns": 108300,
+        "server": {
+          "cycles": 155850.7111111111,
+          "cpu_time": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.359375,
+            "ns_per_verified_operation": 99826.38888888889
+          },
+          "memory": [
+            {
+              "rss": 6389760,
+              "private": 1228800
+            },
+            {
+              "rss": 6389760,
+              "private": 1228800
+            }
+          ]
+        },
+        "client": {
+          "cycles": 212014.55555555556,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.328125,
+            "total_seconds": 0.34375,
+            "ns_per_verified_operation": 95486.11111111111
+          },
+          "memory": [
+            {
+              "rss": 5136384,
+              "private": 860160
+            },
+            {
+              "rss": 5169152,
+              "private": 860160
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 41076,
+                "creation_filetime": 134396335670245979,
+                "cycles": 23811560,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 29454540,
+              "process_cycles_after": 29454540,
+              "snapshot_wall_ns": 49400
+            },
+            {
+              "primary_thread": {
+                "tid": 41076,
+                "creation_filetime": 134396335670245979,
+                "cycles": 584874120,
+                "user_100ns": 781250,
+                "system_100ns": 2812500
+              },
+              "process_cycles_before": 590517100,
+              "process_cycles_after": 590517100,
+              "snapshot_wall_ns": 49400
+            }
+          ],
+          "cycles_per_verified": 155850.7111111111,
+          "snapshot_ns": [
+            49400,
+            49400
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 99826.38888888889,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 1800.0,
+      "p99_delta_ns": 6500,
+      "server_cycle_change_fraction": 0.04869867827859742,
+      "client_cycle_change_fraction": 0.036547863331529484,
+      "within_probe_guards": true
+    },
+    "1/coaptic-mio/oscore/4096": {
+      "case": "1/coaptic-mio/oscore/4096",
+      "process": {
+        "path": "1-coaptic-mio-oscore-4096-process.json",
+        "sha256": "2db883a1e23b4f5548f5381378206438c3132f9e935ef3ce1f27d9b62d51df82",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.0996212928468,
+        "missed": 2,
+        "median_ns": 139950.0,
+        "p99_ns": 269300,
+        "server": {
+          "cycles": 351060.6722222222,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.3125,
+            "ns_per_verified_operation": 86805.55555555556
+          },
+          "memory": [
+            {
+              "rss": 6328320,
+              "private": 1236992
+            },
+            {
+              "rss": 6328320,
+              "private": 1236992
+            }
+          ]
+        },
+        "client": {
+          "cycles": 531986.5722222222,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.5,
+            "total_seconds": 0.53125,
+            "ns_per_verified_operation": 147569.44444444444
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 880640
+            },
+            {
+              "rss": 5308416,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-mio-oscore-4096-threads.json",
+        "sha256": "4f1f3419bf05e9129ac5a6cbc7ad5c7d59b196d4799d2ab4cce51ca706a5b157",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1441504139424,
+        "missed": 2,
+        "median_ns": 138500.0,
+        "p99_ns": 312100,
+        "server": {
+          "cycles": 343671.7166666667,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.109375,
+            "total_seconds": 0.125,
+            "ns_per_verified_operation": 34722.22222222222
+          },
+          "memory": [
+            {
+              "rss": 6320128,
+              "private": 1236992
+            },
+            {
+              "rss": 6320128,
+              "private": 1236992
+            }
+          ]
+        },
+        "client": {
+          "cycles": 532466.0666666667,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.21875,
+            "total_seconds": 0.21875,
+            "ns_per_verified_operation": 60763.88888888889
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 888832
+            },
+            {
+              "rss": 5308416,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 30092,
+                "creation_filetime": 134396336150353310,
+                "cycles": 25994700,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 30134540,
+              "process_cycles_after": 30134540,
+              "snapshot_wall_ns": 46000
+            },
+            {
+              "primary_thread": {
+                "tid": 30092,
+                "creation_filetime": 134396336150353310,
+                "cycles": 1263212880,
+                "user_100ns": 156250,
+                "system_100ns": 1093750
+              },
+              "process_cycles_before": 1267352720,
+              "process_cycles_after": 1267352720,
+              "snapshot_wall_ns": 52300
+            }
+          ],
+          "cycles_per_verified": 343671.7166666667,
+          "snapshot_ns": [
+            46000,
+            52300
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 34722.22222222222,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -1450.0,
+      "p99_delta_ns": 42800,
+      "server_cycle_change_fraction": -0.02104751725330911,
+      "client_cycle_change_fraction": 0.0009013280963867665,
+      "within_probe_guards": false
+    },
+    "1/coaptic-mio/oscore/64": {
+      "case": "1/coaptic-mio/oscore/64",
+      "process": {
+        "path": "1-coaptic-mio-oscore-64-process.json",
+        "sha256": "a821bf999fac20bed889c920246487025e05edd99b92c88303553ebcd8e365c7",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1830107454798,
+        "missed": 4,
+        "median_ns": 51400.0,
+        "p99_ns": 103000,
+        "server": {
+          "cycles": 100267.7,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.109375,
+            "total_seconds": 0.109375,
+            "ns_per_verified_operation": 30381.944444444445
+          },
+          "memory": [
+            {
+              "rss": 6287360,
+              "private": 1220608
+            },
+            {
+              "rss": 6287360,
+              "private": 1220608
+            }
+          ]
+        },
+        "client": {
+          "cycles": 188996.74444444446,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.25,
+            "total_seconds": 0.25,
+            "ns_per_verified_operation": 69444.44444444444
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 868352
+            },
+            {
+              "rss": 5255168,
+              "private": 868352
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-mio-oscore-64-threads.json",
+        "sha256": "cc06ec9189d6edba702c0c5f655b7b41e503bb1cb87285374433a4523f053e7d",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1367878290838,
+        "missed": 8,
+        "median_ns": 47900.0,
+        "p99_ns": 78500,
+        "server": {
+          "cycles": 92813.10555555555,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.03125,
+            "total_seconds": 0.09375,
+            "ns_per_verified_operation": 26041.666666666668
+          },
+          "memory": [
+            {
+              "rss": 6283264,
+              "private": 1212416
+            },
+            {
+              "rss": 6283264,
+              "private": 1212416
+            }
+          ]
+        },
+        "client": {
+          "cycles": 177831.23888888888,
+          "cpu_time": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.140625,
+            "total_seconds": 0.25,
+            "ns_per_verified_operation": 69444.44444444444
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 864256
+            },
+            {
+              "rss": 5255168,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 36312,
+                "creation_filetime": 134396336247848156,
+                "cycles": 17648720,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 21688940,
+              "process_cycles_after": 21688940,
+              "snapshot_wall_ns": 41800
+            },
+            {
+              "primary_thread": {
+                "tid": 36312,
+                "creation_filetime": 134396336247848156,
+                "cycles": 351775900,
+                "user_100ns": 625000,
+                "system_100ns": 312500
+              },
+              "process_cycles_before": 355816120,
+              "process_cycles_after": 355816120,
+              "snapshot_wall_ns": 47500
+            }
+          ],
+          "cycles_per_verified": 92813.10555555555,
+          "snapshot_ns": [
+            41800,
+            47500
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 26041.666666666668,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": -3500.0,
+      "p99_delta_ns": -24500,
+      "server_cycle_change_fraction": -0.0743469177456394,
+      "client_cycle_change_fraction": -0.059077766595274195,
+      "within_probe_guards": false
+    },
+    "1/coaptic-mio/unprotected/4096": {
+      "case": "1/coaptic-mio/unprotected/4096",
+      "process": {
+        "path": "1-coaptic-mio-unprotected-4096-process.json",
+        "sha256": "ec23a17fbb7d29b64b96b2301234a18e1055ae330311c797589d5fd377a4e7bd",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.153256020303,
+        "missed": 3,
+        "median_ns": 119000.0,
+        "p99_ns": 337300,
+        "server": {
+          "cycles": 305833.8722222222,
+          "cpu_time": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.3125,
+            "total_seconds": 0.390625,
+            "ns_per_verified_operation": 108506.94444444444
+          },
+          "memory": [
+            {
+              "rss": 6201344,
+              "private": 1224704
+            },
+            {
+              "rss": 6201344,
+              "private": 1224704
+            }
+          ]
+        },
+        "client": {
+          "cycles": 464082.6222222222,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.546875,
+            "total_seconds": 0.546875,
+            "ns_per_verified_operation": 151909.72222222222
+          },
+          "memory": [
+            {
+              "rss": 5193728,
+              "private": 880640
+            },
+            {
+              "rss": 5222400,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-mio-unprotected-4096-threads.json",
+        "sha256": "13b1f1ea8d92363562f45788971088c13da86e7cc7c066d550aa75aba75e5197",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1851984187007,
+        "missed": 4,
+        "median_ns": 119500.0,
+        "p99_ns": 353600,
+        "server": {
+          "cycles": 310036.7444444444,
+          "cpu_time": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.328125,
+            "total_seconds": 0.421875,
+            "ns_per_verified_operation": 117187.5
+          },
+          "memory": [
+            {
+              "rss": 6205440,
+              "private": 1220608
+            },
+            {
+              "rss": 6205440,
+              "private": 1220608
+            }
+          ]
+        },
+        "client": {
+          "cycles": 470944.9555555555,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.625,
+            "total_seconds": 0.625,
+            "ns_per_verified_operation": 173611.11111111112
+          },
+          "memory": [
+            {
+              "rss": 5193728,
+              "private": 888832
+            },
+            {
+              "rss": 5222400,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 15668,
+                "creation_filetime": 134396336342697828,
+                "cycles": 21086460,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 25100500,
+              "process_cycles_after": 25100500,
+              "snapshot_wall_ns": 69000
+            },
+            {
+              "primary_thread": {
+                "tid": 15668,
+                "creation_filetime": 134396336342697828,
+                "cycles": 1137218740,
+                "user_100ns": 937500,
+                "system_100ns": 3281250
+              },
+              "process_cycles_before": 1141232780,
+              "process_cycles_after": 1141232780,
+              "snapshot_wall_ns": 50200
+            }
+          ],
+          "cycles_per_verified": 310036.7444444444,
+          "snapshot_ns": [
+            69000,
+            50200
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 117187.5,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": 500.0,
+      "p99_delta_ns": 16300,
+      "server_cycle_change_fraction": 0.013742337275082228,
+      "client_cycle_change_fraction": 0.014786878466755748,
+      "within_probe_guards": false
+    },
+    "1/coaptic-mio/unprotected/64": {
+      "case": "1/coaptic-mio/unprotected/64",
+      "process": {
+        "path": "1-coaptic-mio-unprotected-64-process.json",
+        "sha256": "f21d9a6694dc3ca204b143b9765f983eddb4bf1ea273a711833c2a4e09b888f7",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1840956876146,
+        "missed": 4,
+        "median_ns": 47900.0,
+        "p99_ns": 80600,
+        "server": {
+          "cycles": 99713.12222222223,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.0625,
+            "total_seconds": 0.125,
+            "ns_per_verified_operation": 34722.22222222222
+          },
+          "memory": [
+            {
+              "rss": 6176768,
+              "private": 1216512
+            },
+            {
+              "rss": 6176768,
+              "private": 1216512
+            }
+          ]
+        },
+        "client": {
+          "cycles": 184991.92222222223,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.171875,
+            "total_seconds": 0.1875,
+            "ns_per_verified_operation": 52083.333333333336
+          },
+          "memory": [
+            {
+              "rss": 5132288,
+              "private": 835584
+            },
+            {
+              "rss": 5156864,
+              "private": 835584
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-mio-unprotected-64-threads.json",
+        "sha256": "726e023cd5df5b1869563e9c283c17e47d2874cc496bbd53b28922974a6d1b14",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1892714356702,
+        "missed": 2,
+        "median_ns": 47600.0,
+        "p99_ns": 80800,
+        "server": {
+          "cycles": 97874.66666666667,
+          "cpu_time": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.0625,
+            "total_seconds": 0.15625,
+            "ns_per_verified_operation": 43402.77777777778
+          },
+          "memory": [
+            {
+              "rss": 6176768,
+              "private": 1208320
+            },
+            {
+              "rss": 6176768,
+              "private": 1208320
+            }
+          ]
+        },
+        "client": {
+          "cycles": 181518.25555555554,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.296875,
+            "total_seconds": 0.3125,
+            "ns_per_verified_operation": 86805.55555555556
+          },
+          "memory": [
+            {
+              "rss": 5144576,
+              "private": 872448
+            },
+            {
+              "rss": 5177344,
+              "private": 872448
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 14496,
+                "creation_filetime": 134396336438472342,
+                "cycles": 20124600,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 24820340,
+              "process_cycles_after": 24820340,
+              "snapshot_wall_ns": 43200
+            },
+            {
+              "primary_thread": {
+                "tid": 14496,
+                "creation_filetime": 134396336438472342,
+                "cycles": 372473400,
+                "user_100ns": 937500,
+                "system_100ns": 625000
+              },
+              "process_cycles_before": 377169140,
+              "process_cycles_after": 377169140,
+              "snapshot_wall_ns": 52000
+            }
+          ],
+          "cycles_per_verified": 97874.66666666667,
+          "snapshot_ns": [
+            43200,
+            52000
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 43402.77777777778,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": -300.0,
+      "p99_delta_ns": 200,
+      "server_cycle_change_fraction": -0.018437448498085818,
+      "client_cycle_change_fraction": -0.01877739646650045,
+      "within_probe_guards": false
+    },
+    "1/coaptic-ready/oscore/4096": {
+      "case": "1/coaptic-ready/oscore/4096",
+      "process": {
+        "path": "1-coaptic-ready-oscore-4096-process.json",
+        "sha256": "ebb75331f9ef7a1490026239c25f8d374d4f692f3a9dfef1b4e13f4f66de971f",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1137228304716,
+        "missed": 6,
+        "median_ns": 139900.0,
+        "p99_ns": 358500,
+        "server": {
+          "cycles": 432020.15,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.40625,
+            "total_seconds": 0.46875,
+            "ns_per_verified_operation": 130208.33333333333
+          },
+          "memory": [
+            {
+              "rss": 6307840,
+              "private": 1171456
+            },
+            {
+              "rss": 6307840,
+              "private": 1171456
+            }
+          ]
+        },
+        "client": {
+          "cycles": 532323.55,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.546875,
+            "total_seconds": 0.546875,
+            "ns_per_verified_operation": 151909.72222222222
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 888832
+            },
+            {
+              "rss": 5308416,
+              "private": 888832
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-ready-oscore-4096-threads.json",
+        "sha256": "52c71401e9024846d88ae3500063a016707fd2999459808c40cb0762c29ee4f2",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.0174759373077,
+        "missed": 4,
+        "median_ns": 144800.0,
+        "p99_ns": 404800,
+        "server": {
+          "cycles": 450515.4888888889,
+          "cpu_time": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.234375,
+            "total_seconds": 0.296875,
+            "ns_per_verified_operation": 82465.27777777778
+          },
+          "memory": [
+            {
+              "rss": 6311936,
+              "private": 1171456
+            },
+            {
+              "rss": 6311936,
+              "private": 1171456
+            }
+          ]
+        },
+        "client": {
+          "cycles": 558132.6666666666,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.375,
+            "total_seconds": 0.375,
+            "ns_per_verified_operation": 104166.66666666667
+          },
+          "memory": [
+            {
+              "rss": 5275648,
+              "private": 884736
+            },
+            {
+              "rss": 5308416,
+              "private": 884736
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 45196,
+                "creation_filetime": 134396335765524259,
+                "cycles": 28221020,
+                "user_100ns": 156250,
+                "system_100ns": 156250
+              },
+              "process_cycles_before": 32645440,
+              "process_cycles_after": 32645440,
+              "snapshot_wall_ns": 42700
+            },
+            {
+              "primary_thread": {
+                "tid": 45196,
+                "creation_filetime": 134396335765524259,
+                "cycles": 1650076780,
+                "user_100ns": 781250,
+                "system_100ns": 2500000
+              },
+              "process_cycles_before": 1654501200,
+              "process_cycles_after": 1654501200,
+              "snapshot_wall_ns": 46000
+            }
+          ],
+          "cycles_per_verified": 450515.4888888889,
+          "snapshot_ns": [
+            42700,
+            46000
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 82465.27777777778,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": 4900.0,
+      "p99_delta_ns": 46300,
+      "server_cycle_change_fraction": 0.04281128759593478,
+      "client_cycle_change_fraction": 0.04848389042090395,
+      "within_probe_guards": false
+    },
+    "1/coaptic-ready/oscore/64": {
+      "case": "1/coaptic-ready/oscore/64",
+      "process": {
+        "path": "1-coaptic-ready-oscore-64-process.json",
+        "sha256": "29fd47528f35f59cb86ae678416d14848fe48eb502e20fe3ceaac1af2cdebf26",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1564572592761,
+        "missed": 2,
+        "median_ns": 57300.0,
+        "p99_ns": 185800,
+        "server": {
+          "cycles": 156431.35555555555,
+          "cpu_time": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.109375,
+            "total_seconds": 0.125,
+            "ns_per_verified_operation": 34722.22222222222
+          },
+          "memory": [
+            {
+              "rss": 6283264,
+              "private": 1163264
+            },
+            {
+              "rss": 6283264,
+              "private": 1163264
+            }
+          ]
+        },
+        "client": {
+          "cycles": 222328.45555555556,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.125,
+            "total_seconds": 0.125,
+            "ns_per_verified_operation": 34722.22222222222
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 868352
+            },
+            {
+              "rss": 5263360,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-ready-oscore-64-threads.json",
+        "sha256": "c8091aa7c0cecfb8e0d944cfd4d45ab72d1b2b1a84149134c09a3f7d2476318a",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1415005791469,
+        "missed": 1,
+        "median_ns": 55800.0,
+        "p99_ns": 128400,
+        "server": {
+          "cycles": 149169.99444444446,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.078125,
+            "ns_per_verified_operation": 21701.38888888889
+          },
+          "memory": [
+            {
+              "rss": 6275072,
+              "private": 1155072
+            },
+            {
+              "rss": 6275072,
+              "private": 1155072
+            }
+          ]
+        },
+        "client": {
+          "cycles": 217288.80555555556,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.09375,
+            "total_seconds": 0.09375,
+            "ns_per_verified_operation": 26041.666666666668
+          },
+          "memory": [
+            {
+              "rss": 5222400,
+              "private": 864256
+            },
+            {
+              "rss": 5255168,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 32052,
+                "creation_filetime": 134396335860826876,
+                "cycles": 17160140,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 20856280,
+              "process_cycles_after": 20856280,
+              "snapshot_wall_ns": 45800
+            },
+            {
+              "primary_thread": {
+                "tid": 32052,
+                "creation_filetime": 134396335860826876,
+                "cycles": 554172120,
+                "user_100ns": 0,
+                "system_100ns": 781250
+              },
+              "process_cycles_before": 557868260,
+              "process_cycles_after": 557868260,
+              "snapshot_wall_ns": 52800
+            }
+          ],
+          "cycles_per_verified": 149169.99444444446,
+          "snapshot_ns": [
+            45800,
+            52800
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 21701.38888888889,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": -1500.0,
+      "p99_delta_ns": -57400,
+      "server_cycle_change_fraction": -0.04641883390527979,
+      "client_cycle_change_fraction": -0.022667588759193613,
+      "within_probe_guards": false
+    },
+    "1/coaptic-ready/unprotected/4096": {
+      "case": "1/coaptic-ready/unprotected/4096",
+      "process": {
+        "path": "1-coaptic-ready-unprotected-4096-process.json",
+        "sha256": "33aa6db4ab11bde1f2e7781dca28aab666b94d379c8bb862c08e08bed91d3edf",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1485075630037,
+        "missed": 4,
+        "median_ns": 117000.0,
+        "p99_ns": 367100,
+        "server": {
+          "cycles": 382488.95,
+          "cpu_time": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.28125,
+            "ns_per_verified_operation": 78125.0
+          },
+          "memory": [
+            {
+              "rss": 6193152,
+              "private": 1167360
+            },
+            {
+              "rss": 6193152,
+              "private": 1167360
+            }
+          ]
+        },
+        "client": {
+          "cycles": 467947.19444444444,
+          "cpu_time": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.3125,
+            "total_seconds": 0.34375,
+            "ns_per_verified_operation": 95486.11111111111
+          },
+          "memory": [
+            {
+              "rss": 5189632,
+              "private": 876544
+            },
+            {
+              "rss": 5218304,
+              "private": 876544
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-ready-unprotected-4096-threads.json",
+        "sha256": "5682babd5cdf5a00e976204cb022d540a3eb34fc794b8ec22c6a514e0293f073",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 14400,
+        "wire_receive": 14400,
+        "achieved": 800.1986982278667,
+        "missed": 2,
+        "median_ns": 115100.0,
+        "p99_ns": 348400,
+        "server": {
+          "cycles": 373491.0388888889,
+          "cpu_time": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.296875,
+            "total_seconds": 0.421875,
+            "ns_per_verified_operation": 117187.5
+          },
+          "memory": [
+            {
+              "rss": 6197248,
+              "private": 1167360
+            },
+            {
+              "rss": 14622720,
+              "private": 1167360
+            }
+          ]
+        },
+        "client": {
+          "cycles": 456897.85555555555,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.40625,
+            "total_seconds": 0.40625,
+            "ns_per_verified_operation": 112847.22222222222
+          },
+          "memory": [
+            {
+              "rss": 5201920,
+              "private": 880640
+            },
+            {
+              "rss": 5681152,
+              "private": 880640
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 2596,
+                "creation_filetime": 134396335958262547,
+                "cycles": 23159440,
+                "user_100ns": 156250,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 27890880,
+              "process_cycles_after": 27890880,
+              "snapshot_wall_ns": 42100
+            },
+            {
+              "primary_thread": {
+                "tid": 2596,
+                "creation_filetime": 134396335958262547,
+                "cycles": 1367727180,
+                "user_100ns": 1406250,
+                "system_100ns": 2968750
+              },
+              "process_cycles_before": 1372458620,
+              "process_cycles_after": 1372458620,
+              "snapshot_wall_ns": 55100
+            }
+          ],
+          "cycles_per_verified": 373491.0388888889,
+          "snapshot_ns": [
+            42100,
+            55100
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 117187.5,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": false,
+      "median_delta_ns": -1900.0,
+      "p99_delta_ns": -18700,
+      "server_cycle_change_fraction": -0.02352463021771245,
+      "client_cycle_change_fraction": -0.023612362719701463,
+      "within_probe_guards": false
+    },
+    "1/coaptic-ready/unprotected/64": {
+      "case": "1/coaptic-ready/unprotected/64",
+      "process": {
+        "path": "1-coaptic-ready-unprotected-64-process.json",
+        "sha256": "e3dde4a15eb662b14c276685f9cfee8e5996d560f05900e2b5f2d49c4ed2e443",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.210366414104,
+        "missed": 2,
+        "median_ns": 51400.0,
+        "p99_ns": 155800,
+        "server": {
+          "cycles": 141725.4111111111,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.078125,
+            "ns_per_verified_operation": 21701.38888888889
+          },
+          "memory": [
+            {
+              "rss": 6160384,
+              "private": 1155072
+            },
+            {
+              "rss": 6160384,
+              "private": 1155072
+            }
+          ]
+        },
+        "client": {
+          "cycles": 203178.61666666667,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.078125,
+            "ns_per_verified_operation": 21701.38888888889
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 860160
+            },
+            {
+              "rss": 5173248,
+              "private": 860160
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately"
+      },
+      "snapshot": {
+        "path": "1-coaptic-ready-unprotected-64-threads.json",
+        "sha256": "d9ea949b602a2f2e9fb0bf22951219b3793bca41cd39b603b80e811d87cb3ce8",
+        "verified": 3600,
+        "warmup": 32,
+        "wire_send": 3600,
+        "wire_receive": 3600,
+        "achieved": 800.1726416928487,
+        "missed": 3,
+        "median_ns": 52800.0,
+        "p99_ns": 111900,
+        "server": {
+          "cycles": 149025.11666666667,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.0,
+            "total_seconds": 0.0,
+            "ns_per_verified_operation": 0.0
+          },
+          "memory": [
+            {
+              "rss": 6160384,
+              "private": 1155072
+            },
+            {
+              "rss": 6160384,
+              "private": 1155072
+            }
+          ]
+        },
+        "client": {
+          "cycles": 207312.82777777777,
+          "cpu_time": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.09375,
+            "total_seconds": 0.09375,
+            "ns_per_verified_operation": 26041.666666666668
+          },
+          "memory": [
+            {
+              "rss": 5140480,
+              "private": 864256
+            },
+            {
+              "rss": 5173248,
+              "private": 864256
+            }
+          ]
+        },
+        "scope_rank": "client latency after admission; gates count process cycles separately",
+        "primary": {
+          "raw": [
+            {
+              "primary_thread": {
+                "tid": 41668,
+                "creation_filetime": 134396336054709721,
+                "cycles": 20420740,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 25004960,
+              "process_cycles_after": 25004960,
+              "snapshot_wall_ns": 44900
+            },
+            {
+              "primary_thread": {
+                "tid": 41668,
+                "creation_filetime": 134396336054709721,
+                "cycles": 556911160,
+                "user_100ns": 0,
+                "system_100ns": 0
+              },
+              "process_cycles_before": 561495380,
+              "process_cycles_after": 561495380,
+              "snapshot_wall_ns": 59700
+            }
+          ],
+          "cycles_per_verified": 149025.11666666667,
+          "snapshot_ns": [
+            44900,
+            59700
+          ],
+          "user_and_kernel_cpu_ns_per_verified": 0.0,
+          "nonprimary_cycle_range_per_verified": [
+            0.0,
+            0.0
+          ],
+          "process_window_cycle_delta_consistent": true
+        }
+      },
+      "matched_pacing": true,
+      "median_delta_ns": 1400.0,
+      "p99_delta_ns": -43900,
+      "server_cycle_change_fraction": 0.05150597552215008,
+      "client_cycle_change_fraction": 0.02034766836656665,
+      "within_probe_guards": false
+    }
+  },
+  "runtime": {
+    "0/oscore/4096": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.26411375988876795,
+        "primary_cycle_change_fraction": 0.26411375988876795
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.3770338399395401,
+        "primary_cycle_change_fraction": 0.3770338399395401
+      }
+    },
+    "0/oscore/64": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.43029495463766176,
+        "primary_cycle_change_fraction": 0.43029495463766176
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.5178113620995766,
+        "primary_cycle_change_fraction": 0.5178113620995766
+      }
+    },
+    "0/unprotected/4096": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.2734841392552436,
+        "primary_cycle_change_fraction": 0.2734841392552436
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.4278190912393949,
+        "primary_cycle_change_fraction": 0.4278190912393949
+      }
+    },
+    "0/unprotected/64": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.40839479678398005,
+        "primary_cycle_change_fraction": 0.40839479678398005
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.5379004988992901,
+        "primary_cycle_change_fraction": 0.5379004988992901
+      }
+    },
+    "1/oscore/4096": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.3108890462634488,
+        "primary_cycle_change_fraction": 0.3108890462634488
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": true,
+        "process_cycle_change_fraction": 0.31287922070462937,
+        "primary_cycle_change_fraction": 0.31287922070462937
+      }
+    },
+    "1/oscore/64": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.6072083091234903,
+        "primary_cycle_change_fraction": 0.6072083091234903
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.7420799469232047,
+        "primary_cycle_change_fraction": 0.7420799469232047
+      }
+    },
+    "1/unprotected/4096": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.20466701312500346,
+        "primary_cycle_change_fraction": 0.20466701312500346
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.22923884971770558,
+        "primary_cycle_change_fraction": 0.22923884971770558
+      }
+    },
+    "1/unprotected/64": {
+      "coaptic-ready": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.5226117415470124,
+        "primary_cycle_change_fraction": 0.5226117415470124
+      },
+      "coaptic-async": {
+        "both_probe_guards": false,
+        "both_matched_pacing": false,
+        "process_cycle_change_fraction": 0.5923498533271574,
+        "primary_cycle_change_fraction": 0.5923498533271574
+      }
+    }
+  },
+  "measured": 172800,
+  "warmup": 1536,
+  "startup_failures": {
+    "startup-failure-0-coaptic-mio-oscore-64-process.json": {
+      "sha256": "6b7abd3c7809cff6a32039fa82985458a1d7adaa5f98fb3ef255ef7165176d10",
+      "failure": "server exited before readiness"
+    },
+    "startup-failure-0-coaptic-ready-oscore-4096-process.json": {
+      "sha256": "08dbbcc687d81f4957b157da601a8783594828bbfe05205afafad5fc787d76f7",
+      "failure": "server exited before readiness"
+    }
+  }
+}
