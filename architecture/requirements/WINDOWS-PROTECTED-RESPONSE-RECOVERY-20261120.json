@@ -1,0 +1,432 @@
+{
+  "schema": 1,
+  "source": {
+    "server_sha256": "d9cf610477eae7e16586a8171872fb477c51aff0aebe56d04113cf9e05ba3f7c",
+    "client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+    "core": "416ffc369672baddea4ad0dcc0092e411d0e9d07",
+    "core_main": "42100e19d65f690cebba4f09c8195c7515aa1407",
+    "runtime_rust": "b8750885f8bd10d2f5dd73c92807df00c7f2f0a8",
+    "companion": "a5e49ed64e9270a1c33900870840da11d83c0b08",
+    "launcher_sha256": "160857db42fd99a205406cc15d7c67a7fa0a7e0a13aafdcff5f409d2db7e6302",
+    "assessor_sha256": "a828e37e2093f59f663f6ecbc8a59665e8817aecf4895c179ad2e55b6a3afc34"
+  },
+  "workload": {
+    "profile": "device-fixed",
+    "concurrency": 1,
+    "message": "CON",
+    "timeout_ms": 9000,
+    "clean": 8,
+    "single_reply_loss": 16,
+    "same_process_second_read": true
+  },
+  "cases": {
+    "1-coaptic-mio-unprotected-64-clean": {
+      "raw_sha256": "0f40b2884eea025bec32e439c78ee9a6bcd2de88597c4230bb1b8cbd7fd3e30a",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "unprotected",
+      "size": 64,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        1198000,
+        1548400
+      ],
+      "requests": 2,
+      "replies": 2
+    },
+    "1-coaptic-mio-unprotected-64-loss": {
+      "raw_sha256": "2ee15946333d8dc5a478397c8af50bc20e6fd14fe71a8c78e2368d4e1760b5cc",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "unprotected",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2820513800,
+        1556300
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2818667200,
+      "retry_to_cached_reply_ns": 93900,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-mio-unprotected-64-loss": {
+      "raw_sha256": "4e6d5f92e9b46f639e46ca0ff90838f01f73b75727f23fae9490a2387276da2b",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "unprotected",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2630697800,
+        1342600
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2628909200,
+      "retry_to_cached_reply_ns": 96300,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-mio-unprotected-4096-clean": {
+      "raw_sha256": "9447964ffc7fa716c985f29fe2e715bbce4e40920cbb512d993bd3a5e341a24f",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "unprotected",
+      "size": 4096,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        6072200,
+        6035000
+      ],
+      "requests": 8,
+      "replies": 8
+    },
+    "1-coaptic-mio-unprotected-4096-loss": {
+      "raw_sha256": "84e4d7b92a1d40ca33c30c11411b1c55e2a8d17929b25f5419e017c82f5745fc",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "unprotected",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2955370300,
+        6083900
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2949614700,
+      "retry_to_cached_reply_ns": 90900,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-mio-unprotected-4096-loss": {
+      "raw_sha256": "f8a0832d557135e23786ae90203659697a6269d00b97c11bd733f835afb72d06",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "unprotected",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2403545800,
+        5593500
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2397770600,
+      "retry_to_cached_reply_ns": 102500,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-mio-oscore-64-clean": {
+      "raw_sha256": "f073f7a6f7abfd5269d3628c732199e14ffa645416ef0d1529e098e39b5eb5f0",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "oscore",
+      "size": 64,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        1617000,
+        1651700
+      ],
+      "requests": 2,
+      "replies": 2
+    },
+    "1-coaptic-mio-oscore-64-loss": {
+      "raw_sha256": "648326834093051b05949de74aae8456a1d7ba75357b3335e94e187176a9a93a",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "oscore",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2656771100,
+        1073700
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2654945900,
+      "retry_to_cached_reply_ns": 83800,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-mio-oscore-64-loss": {
+      "raw_sha256": "3e6c2b0bd06f78d260ea19cbd4e4befeceb9b66301282576018b02a7e4960d7a",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "oscore",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2937973100,
+        1349400
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2936224100,
+      "retry_to_cached_reply_ns": 94900,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-mio-oscore-4096-clean": {
+      "raw_sha256": "9b8eeb06d0c757b7ecf1138685847ee0a6428d17b28d6aaaaf27ab9a5a458573",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "oscore",
+      "size": 4096,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        5999500,
+        5782600
+      ],
+      "requests": 8,
+      "replies": 8
+    },
+    "1-coaptic-mio-oscore-4096-loss": {
+      "raw_sha256": "c37f3fd8ff2f9e22aad78b5046f0639ec639575774321ad64209b653a62b77f4",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "oscore",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2010668200,
+        5805200
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2004337800,
+      "retry_to_cached_reply_ns": 95600,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-mio-oscore-4096-loss": {
+      "raw_sha256": "a7b969498c1156d1fd63ae2de5081b264783151d5cd633b16b8d4fd27e358971",
+      "verified": 2,
+      "runtime": "coaptic-mio",
+      "security": "oscore",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2078918900,
+        5470500
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2073263500,
+      "retry_to_cached_reply_ns": 120300,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-async-unprotected-64-clean": {
+      "raw_sha256": "01473907efc569ea00d83964caad9064a101518666bad5c2bc4311e43754d850",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "size": 64,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        1377800,
+        1547700
+      ],
+      "requests": 2,
+      "replies": 2
+    },
+    "1-coaptic-async-unprotected-64-loss": {
+      "raw_sha256": "7aec91d42bfe80e2ce2dc617e0ede9767f22a209858bf5a4ef6e693a685da800",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2479893200,
+        1549900
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2478017000,
+      "retry_to_cached_reply_ns": 112300,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-async-unprotected-64-loss": {
+      "raw_sha256": "2a6c9d93cf02b1a315376bf045ed3882673c4b104839c96cd5d736ca1356c1e1",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2609689900,
+        1486700
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2607858700,
+      "retry_to_cached_reply_ns": 127400,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-async-unprotected-4096-clean": {
+      "raw_sha256": "cd0732bb646f43e15cf49358c0b5f4554a06bfc5d5b7130fe0d9c207d3ad50f8",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "size": 4096,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        5450300,
+        6059900
+      ],
+      "requests": 8,
+      "replies": 8
+    },
+    "1-coaptic-async-unprotected-4096-loss": {
+      "raw_sha256": "f70f3cac275855bc9a97369c1c314a18d3bb0b80e1f5ec399c7c2a6126e6a129",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2483071800,
+        6112000
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2476955000,
+      "retry_to_cached_reply_ns": 128500,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-async-unprotected-4096-loss": {
+      "raw_sha256": "c097211b607fb0945cdf48d79f2b36b0edbd3c7f7e47fd77f5892d582c821680",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "unprotected",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2870446600,
+        5703600
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2864150100,
+      "retry_to_cached_reply_ns": 102300,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-async-oscore-64-clean": {
+      "raw_sha256": "40f1bcfa070f3efc9480c9c895c39bbad41f91b4c6b57402305d436e981bc2bf",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "size": 64,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        1316500,
+        1069900
+      ],
+      "requests": 2,
+      "replies": 2
+    },
+    "1-coaptic-async-oscore-64-loss": {
+      "raw_sha256": "b04d7c4eb81eb6ad68c2ecaf8f1ed1ee4d9f96af47bcfe672659c24aff204d4a",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2367235800,
+        1547200
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2365302900,
+      "retry_to_cached_reply_ns": 102900,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-async-oscore-64-loss": {
+      "raw_sha256": "77dbe4b9e8c6423c8fb790662be12c4ac6a505211685d855cad412ea2d7c916a",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "size": 64,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2875973800,
+        1564700
+      ],
+      "requests": 3,
+      "replies": 2,
+      "drop_to_retry_ns": 2874041700,
+      "retry_to_cached_reply_ns": 106000,
+      "identical_request_and_replayed_response": true
+    },
+    "1-coaptic-async-oscore-4096-clean": {
+      "raw_sha256": "54cd991f27074f7f9f014ed94ab3176ee98ba6f66df940947cdaf271632f54a9",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "size": 4096,
+      "arm": "clean",
+      "repeat": 1,
+      "latency_ns": [
+        6380500,
+        5948000
+      ],
+      "requests": 8,
+      "replies": 8
+    },
+    "1-coaptic-async-oscore-4096-loss": {
+      "raw_sha256": "1d99088ec3096fda33325fdc532abf56cbbbcf426e502e0d1f2c5772524b83e7",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 1,
+      "latency_ns": [
+        2602343400,
+        5670100
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2596298700,
+      "retry_to_cached_reply_ns": 116200,
+      "identical_request_and_replayed_response": true
+    },
+    "2-coaptic-async-oscore-4096-loss": {
+      "raw_sha256": "65deba4df7e920df6d6565c111800993c2f3845e04a9ff0fd8f742a2b1e19758",
+      "verified": 2,
+      "runtime": "coaptic-async",
+      "security": "oscore",
+      "size": 4096,
+      "arm": "loss",
+      "repeat": 2,
+      "latency_ns": [
+        2506484000,
+        5796900
+      ],
+      "requests": 9,
+      "replies": 8,
+      "drop_to_retry_ns": 2500197100,
+      "retry_to_cached_reply_ns": 104800,
+      "identical_request_and_replayed_response": true
+    }
+  }
+}
