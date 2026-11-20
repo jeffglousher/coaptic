@@ -183,6 +183,10 @@ for actual stop or transfer conditions.
     verifies 157,440 reads and counts a pending progress timer poll per
     send. Timing perturbation limits the comparison. Keep the current
     timer policy and preserve the earlier timer results.
+21. The [Linux process-clock audit](architecture/requirements/LINUX-ALLOCATED-PROCESS-CLOCK-AUDIT-20261120.md)
+    records lower alternate CPU time in every 30-second pair under both
+    protections. The original CPU ratios stay withheld. Run a same-binary
+    control at the 72-second workload to quantify repeatability.
 
 ## Blocked and deferred work
 
