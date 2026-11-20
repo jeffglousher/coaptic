@@ -136,8 +136,10 @@ for actual stop or transfer conditions.
    restores the historical AES lock and verifies all 24,000 fixed Service
    reads. Both protections fail a pair's latency gate. Keep both CPU
    ratios withheld. Companion #272 adds native group starts and #273
-   enforces latency guards in short runs. The separate fixed Service
-   C4 comparison uses the same sources, group overlap and the same guards.
+   enforces latency guards in short runs. The [fixed Service C4 comparison](architecture/requirements/LINUX-SERVICE-C4-CPU-20261120.md)
+   verifies all 24,000 reads and all four endpoints in each group.
+   Unprotected server CPU time falls 11.9% with all latency guards met.
+   Established OSCORE fails median latency guards and its ratio stays withheld.
 10. The [Windows fixed Service App control](architecture/requirements/WINDOWS-SERVICE-APP-20261120.md)
     verifies 72,000 measured reads against those same core revisions.
     Server poll wall medians fall in all pairs. The unprotected 16 KiB
