@@ -1,12 +1,12 @@
 use super::*;
 use coaptic::{
     App, Code, ContentFormat, Error, Request, Response,
-    app::AsyncCallError,
+    app::{AppAssembled, AsyncCallError},
     get,
     oscore::{BoundedSecurityContext, DeriveParams},
     platform::AsyncTimer,
     resources::SmallDevice,
-    storage::BodyTag,
+    storage::{BodyTag, MemoryLayout},
 };
 use core::{
     future::{Future, pending, poll_fn},
@@ -515,14 +515,28 @@ fn occupied_block1_body_refuses_another_upload_then_accepts_reuse() {
 
 #[test]
 fn lost_mutating_reply_replays_without_reapplying_the_effect() {
+    mutating_reply_after_loss::<false>(b"apply");
+}
+
+#[test]
+fn lost_final_block1_reply_replays_after_releasing_the_body() {
+    mutating_reply_after_loss::<true>(&BODY);
+}
+
+fn mutating_reply_after_loss<const BLOCKWISE: bool>(payload: &'static [u8])
+where
+    coaptic::profiles::Constrained: MemoryLayout<BLOCKWISE> + AppAssembled<BLOCKWISE>,
+{
     // Drive the App's protocol clock explicitly. UDP and Tokio readiness
     // remain real, and no retry depends on sleeping for a wall-clock RTO.
     for protected in [false, true] {
         run(async {
             let mut relay = socket::<1153>();
             let relay_endpoint = relay.local_endpoint().unwrap();
-            let server = App::with_resources(SmallDevice::new()).deterministic_for_tests();
-            let client = App::with_resources(SmallDevice::new()).deterministic_for_tests();
+            let server = App::with_resources(SmallDevice::new().block_wise::<BLOCKWISE>())
+                .deterministic_for_tests();
+            let client = App::with_resources(SmallDevice::new().block_wise::<BLOCKWISE>())
+                .deterministic_for_tests();
             let mut server = if protected {
                 server.oscore(context(&[2], &[1]))
             } else {
@@ -543,25 +557,79 @@ fn lost_mutating_reply_replays_without_reapplying_the_effect() {
             let mut now = 1;
 
             for (operation, lose_first_reply) in [true, false].into_iter().enumerate() {
+                let prior_seq = client.oscore().map(|context| context.sender_seq());
                 let call = client
                     .post("effect")
                     .to(relay_endpoint)
-                    .payload(b"apply")
+                    .payload(payload)
                     .deadline(now + 10_000)
                     .send_async(now, || Ok::<_, io::Error>(now), &mut TestTimer(now))
                     .await
                     .unwrap();
+                let first_seq = client.oscore().map(|context| context.sender_seq());
+                if let (Some(prior), Some(first)) = (prior_seq, first_seq) {
+                    assert!(first > prior);
+                }
+                let mut request = [0; 1152];
+                if BLOCKWISE {
+                    let (first_len, from) = relay.recv(&mut request).await.unwrap();
+                    assert_eq!(from, client_endpoint);
+                    relay
+                        .send(server_endpoint, &request[..first_len])
+                        .await
+                        .unwrap();
+                    now += 1;
+                    server
+                        .wait_async(now, &mut TestTimer(now), pending())
+                        .await
+                        .unwrap();
+                    server
+                        .progress_with_async(
+                            now,
+                            &mut || Ok::<_, io::Error>(now),
+                            &mut TestTimer(now),
+                            now + 1000,
+                            |_, _| panic!("partial upload reached handler"),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(server.resource_usage().storage.rx_body.unwrap().occupied, 1);
+                    let mut continuation = [0; 1152];
+                    let (len, from) = relay.recv(&mut continuation).await.unwrap();
+                    assert_eq!(from, server_endpoint);
+                    relay
+                        .send(client_endpoint, &continuation[..len])
+                        .await
+                        .unwrap();
+                    now += 1;
+                    client
+                        .wait_async(now, &mut TestTimer(now), pending())
+                        .await
+                        .unwrap();
+                    client
+                        .progress_async(
+                            now,
+                            &mut || Ok::<_, io::Error>(now),
+                            &mut TestTimer(now),
+                            now + 1000,
+                        )
+                        .await
+                        .unwrap();
+                    assert!(client.take_response(call).is_none());
+                }
                 let binding = client
                     .oscore()
                     .and_then(|context| context.lookup(call.token()));
                 assert_eq!(binding.is_some(), protected);
-                let sender_seq = protected.then_some(operation as u64 + 1);
-                assert_eq!(
-                    client.oscore().map(|context| context.sender_seq()),
-                    sender_seq
-                );
+                let sender_seq = client.oscore().map(|context| context.sender_seq());
+                if BLOCKWISE && protected {
+                    // The initial sizing attempt can spend a PIV before the
+                    // first fragment. Continuation needs fresh sender state.
+                    assert!(sender_seq.unwrap() > first_seq.unwrap());
+                } else {
+                    assert_eq!(sender_seq, protected.then_some(operation as u64 + 1));
+                }
 
-                let mut request = [0; 1152];
                 let (size, peer) = relay.recv(&mut request).await.unwrap();
                 assert_eq!(peer, client_endpoint);
                 let mut response = [0; 1152];
@@ -613,7 +681,7 @@ fn lost_mutating_reply_replays_without_reapplying_the_effect() {
                             |request, _| {
                                 assert_eq!(request.code(), Code::POST);
                                 assert_eq!(request.path(), ["effect"]);
-                                assert_eq!(request.payload(), b"apply");
+                                assert_eq!(request.body().unwrap_or(request.payload()), payload);
                                 effects += 1;
                                 Response::content(b"applied")
                                     .content_format(ContentFormat::OCTET_STREAM)
@@ -626,6 +694,14 @@ fn lost_mutating_reply_replays_without_reapplying_the_effect() {
                     let (len, from) = relay.recv(&mut wire).await.unwrap();
                     assert_eq!(from, server_endpoint);
                     assert_eq!(effects, operation + 1);
+                    assert_eq!(
+                        server
+                            .resource_usage()
+                            .storage
+                            .rx_body
+                            .map(|body| body.occupied),
+                        BLOCKWISE.then_some(0)
+                    );
                     if attempt == 1 {
                         assert_eq!(&wire[..len], &response[..response_len]);
                         assert_eq!(
@@ -663,6 +739,10 @@ fn lost_mutating_reply_replays_without_reapplying_the_effect() {
                 let usage = client.resource_usage();
                 assert_eq!(usage.client_requests.occupied, 0);
                 assert_eq!(usage.storage.tx_datagram.occupied, 0);
+                assert_eq!(
+                    usage.storage.tx_body.map(|body| body.occupied),
+                    BLOCKWISE.then_some(0)
+                );
                 assert!(
                     client
                         .oscore()
