@@ -159,6 +159,10 @@ for actual stop or transfer conditions.
     separately verifies four occupied 16 KiB receive bodies, cancellation
     and expiry, late replies and successful replacement Calls on the same
     endpoints in both protection modes.
+14. The [empty readiness scan candidate](architecture/requirements/WINDOWS-EMPTY-READINESS-SCAN-20261120.md)
+    verifies 96,000 fixed Service reads. Only one of 16 pairs meets every
+    advancement gate. Preserve the rejected source and keep the accepted
+    App wake path.
 
 ## Blocked and deferred work
 

@@ -1,0 +1,3127 @@
+{
+  "schema": 1,
+  "plan": {
+    "inputs": {
+      "A": {
+        "core": "285b7fbbf4d25581297ad5df34a963649ded3909",
+        "suite": "7636b2279efb9338735ac060c21452a3a963d77e",
+        "core_tree": "d6c959894327d6ad46dace6fe62f7b7a678bd96a",
+        "suite_tree": "f60c92639c90228ca4fcf943e336d9832279e80b",
+        "selected_lock": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+        "server_sha256": "b869869d21e0ea12083ae89d84c86bc3f995f1988ed314a3a70ce68b7fdfecc6",
+        "frozen_client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+        "fixture_files": {
+          "servers/src/bin/bench-core.rs": "2c5c708baa794765ea9e7c0a21ec0178fb8cb01c14b64785ff9452bd0c63f6d3",
+          "servers/src/bin/bench-native-client.rs": "02c1f11b6a9c67a0927f7126d3a2f830232334692b90d9cca0890988888ccb18",
+          "servers/src/bin/bench-observe-proof.rs": "a4ceed6058a893e4c5c7d7721fb1edb765b390b1b6dfadf2c232bbc8af1a04d3",
+          "servers/src/bin/bench_core/admission_pressure.rs": "4c897faa722b6504d4b9e1524da67e8de0a49aa8afe0e00870db375e9f5c3e12",
+          "servers/src/bin/bench_core/live_c1.rs": "ca4696f687ab8b1f78a67c0df85874bf232eee87ebc87f205480968bb1286123",
+          "servers/src/client_endpoint_tests.rs": "1ab567614e4272705b99ec3f9606bf99e71c445de8bae84f43d9f2a7aeede7ac",
+          "servers/src/client_endpoint_udp.rs": "d14594ce321b31ed76c74dd7b528c2cbbebf5b54c9bef3ef443df165bb03c717",
+          "servers/src/direct_udp.rs": "b00875271ec27e30b0a421cdafcb19487689bc81c1ec957f406dbaaf6000e600",
+          "servers/src/main.rs": "e59f808e18ad462d06215091ea6afd605e7f37f0cc5e00069329292c01ca6e4c",
+          "servers/src/staged_mio.rs": "eeb55845691954d344dcbf7cff7a4df4f4502bf2f34a18e52d0e9bd7da6e0f5f",
+          "servers/src/staged_ready.rs": "eab78807c3b68f9a57b3228b5efd554f0eb615bd252ca9dd4583732f0949d092",
+          "servers/src/staged_udp.rs": "df4945508594994b47712aa4922976bc217c75fe88f368b3f3b8b16f347100f6",
+          "servers/Cargo.toml": "f6443999a7b2747d0e3b2b348ddc82ecb4f0e93f026836303f8fa3fffbe28343",
+          "profile/Cargo.toml": "df6c34cafe5653e9cf9fc80393bfc2ea9aa40183cba215f6d3a636448701c76c"
+        },
+        "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+        "hatch_flags": {
+          "CARGO_PROFILE_RELEASE_LTO": "thin",
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+          "CARGO_PROFILE_RELEASE_DEBUG": "0",
+          "CARGO_BUILD_JOBS": "2",
+          "CARGO_INCREMENTAL": "0",
+          "RUSTFLAGS": null
+        }
+      },
+      "B": {
+        "core": "b4433194e8169d555d5b52354da06f19f94e4bf6",
+        "suite": "7636b2279efb9338735ac060c21452a3a963d77e",
+        "core_tree": "b12df7e36159651c8e3216b05746a858bf14a99c",
+        "suite_tree": "f60c92639c90228ca4fcf943e336d9832279e80b",
+        "suite_checkout": "f4a4fe480891db690958b1208b40c17dd1e005b5",
+        "selected_lock": "4260b91ca554d99d036db0d9e7d5b6fe576bd13107580c637d8701ff1fe7e36b",
+        "server_sha256": "cb212c335f8ff1f2b92410c9e2c5f42a386e7bd4e9e9132de3e6a42aad697f2b",
+        "frozen_client_sha256": "089bb4961ae7da2e59260aa397e9d2da5073f78f202cc10a2b70e7cfae355d82",
+        "fixture_files": {
+          "servers/src/bin/bench-core.rs": "2c5c708baa794765ea9e7c0a21ec0178fb8cb01c14b64785ff9452bd0c63f6d3",
+          "servers/src/bin/bench-native-client.rs": "02c1f11b6a9c67a0927f7126d3a2f830232334692b90d9cca0890988888ccb18",
+          "servers/src/bin/bench-observe-proof.rs": "a4ceed6058a893e4c5c7d7721fb1edb765b390b1b6dfadf2c232bbc8af1a04d3",
+          "servers/src/bin/bench_core/admission_pressure.rs": "4c897faa722b6504d4b9e1524da67e8de0a49aa8afe0e00870db375e9f5c3e12",
+          "servers/src/bin/bench_core/live_c1.rs": "ca4696f687ab8b1f78a67c0df85874bf232eee87ebc87f205480968bb1286123",
+          "servers/src/client_endpoint_tests.rs": "1ab567614e4272705b99ec3f9606bf99e71c445de8bae84f43d9f2a7aeede7ac",
+          "servers/src/client_endpoint_udp.rs": "d14594ce321b31ed76c74dd7b528c2cbbebf5b54c9bef3ef443df165bb03c717",
+          "servers/src/direct_udp.rs": "b00875271ec27e30b0a421cdafcb19487689bc81c1ec957f406dbaaf6000e600",
+          "servers/src/main.rs": "e59f808e18ad462d06215091ea6afd605e7f37f0cc5e00069329292c01ca6e4c",
+          "servers/src/staged_mio.rs": "eeb55845691954d344dcbf7cff7a4df4f4502bf2f34a18e52d0e9bd7da6e0f5f",
+          "servers/src/staged_ready.rs": "eab78807c3b68f9a57b3228b5efd554f0eb615bd252ca9dd4583732f0949d092",
+          "servers/src/staged_udp.rs": "df4945508594994b47712aa4922976bc217c75fe88f368b3f3b8b16f347100f6",
+          "servers/Cargo.toml": "f6443999a7b2747d0e3b2b348ddc82ecb4f0e93f026836303f8fa3fffbe28343",
+          "profile/Cargo.toml": "df6c34cafe5653e9cf9fc80393bfc2ea9aa40183cba215f6d3a636448701c76c"
+        },
+        "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+        "hatch_flags": {
+          "CARGO_PROFILE_RELEASE_LTO": "thin",
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "1",
+          "CARGO_PROFILE_RELEASE_DEBUG": "0",
+          "CARGO_BUILD_JOBS": "2",
+          "CARGO_INCREMENTAL": "0",
+          "RUSTFLAGS": null
+        }
+      }
+    },
+    "profile": "service-fixed",
+    "real_complete_ops": true,
+    "warmup": 32,
+    "sampling": "CPU gates, no per-operation host probes",
+    "request": "individually paced C1 CON",
+    "rate": {
+      "64": 800,
+      "16384": 200
+    },
+    "seconds": 6,
+    "repeats": 2,
+    "reversed_ab_ba": true,
+    "native_driver_sha256": "68ca5c419d3b5073358ecb0729d94dfb2a66ff0c82a141eafd94f1254621609f",
+    "script_sha256": "42ee398bf902c891e6402ae2591b8eef3bc3d994fb179317cba9b106b1107861",
+    "guards": {
+      "rate_diff_fraction": 0.005,
+      "missed_fraction": 0.001,
+      "median_increase_ns": 2000,
+      "p99_increase_ns": 10000,
+      "minimum_server_cycle_reduction": 0.05
+    }
+  },
+  "pairs": {
+    "0/coaptic-async/oscore/16384": {
+      "A": {
+        "raw": "0-coaptic-async-oscore-16384-A.json",
+        "sha256": "02a13c5af215b414d3f8ae0cb8f91253783b96de494d79fb5e54556022f1c085",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.14897755562723,
+        "missed": 0,
+        "median_ns": 502250.0,
+        "p99_ns": 1194500,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1764446.15,
+          "ns_cpu_per_verified": 546875.0,
+          "cpu_seconds": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.546875,
+            "total_seconds": 0.65625
+          },
+          "memory": {
+            "before": {
+              "rss": 7131136,
+              "private": 1798144
+            },
+            "after": {
+              "rss": 7131136,
+              "private": 1798144
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1946547.8833333333,
+          "ns_cpu_per_verified": 638020.8333333334,
+          "cpu_seconds": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.6875,
+            "total_seconds": 0.765625
+          },
+          "memory": {
+            "before": {
+              "rss": 5312512,
+              "private": 897024
+            },
+            "after": {
+              "rss": 5320704,
+              "private": 897024
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-async-oscore-16384-B.json",
+        "sha256": "21d0cf1ae0506726c7471944502970b4ac436cc0214f5df721fb8539524b1d0d",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.14496499814817,
+        "missed": 0,
+        "median_ns": 505050.0,
+        "p99_ns": 1129300,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1725221.4833333334,
+          "ns_cpu_per_verified": 455729.1666666667,
+          "cpu_seconds": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.390625,
+            "total_seconds": 0.546875
+          },
+          "memory": {
+            "before": {
+              "rss": 7139328,
+              "private": 1806336
+            },
+            "after": {
+              "rss": 7139328,
+              "private": 1806336
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1905413.2666666666,
+          "ns_cpu_per_verified": 494791.6666666667,
+          "cpu_seconds": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.46875,
+            "total_seconds": 0.59375
+          },
+          "memory": {
+            "before": {
+              "rss": 5316608,
+              "private": 905216
+            },
+            "after": {
+              "rss": 5324800,
+              "private": 905216
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": 2800.0,
+      "p99_increase_ns": -65200,
+      "latency": false,
+      "client_cycles_change_fraction": -0.021132085688139512,
+      "server_cycles_change_fraction": -0.02223058304537462,
+      "advance": false
+    },
+    "0/coaptic-async/oscore/64": {
+      "A": {
+        "raw": "0-coaptic-async-oscore-64-A.json",
+        "sha256": "66aaf559134bbe56e9dd068f66c2cffec4aabce148e9ff4cc14f3b6418479fd6",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1453730785322,
+        "missed": 1,
+        "median_ns": 59800.0,
+        "p99_ns": 120500,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 166759.44583333333,
+          "ns_cpu_per_verified": 78125.0,
+          "cpu_seconds": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.296875,
+            "total_seconds": 0.375
+          },
+          "memory": {
+            "before": {
+              "rss": 7069696,
+              "private": 1781760
+            },
+            "after": {
+              "rss": 7069696,
+              "private": 1781760
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 230181.20416666666,
+          "ns_cpu_per_verified": 94401.04166666667,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.4375,
+            "total_seconds": 0.453125
+          },
+          "memory": {
+            "before": {
+              "rss": 5218304,
+              "private": 868352
+            },
+            "after": {
+              "rss": 5259264,
+              "private": 868352
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-async-oscore-64-B.json",
+        "sha256": "a2ff4341c01a3530d913ddb3d9de89b268091c6061997163dc1a552b5bd9b135",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1321418232221,
+        "missed": 2,
+        "median_ns": 59300.0,
+        "p99_ns": 150300,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 163389.7625,
+          "ns_cpu_per_verified": 16276.041666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.078125
+          },
+          "memory": {
+            "before": {
+              "rss": 7090176,
+              "private": 1781760
+            },
+            "after": {
+              "rss": 7090176,
+              "private": 1781760
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 229029.45416666666,
+          "ns_cpu_per_verified": 32552.083333333332,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.140625,
+            "total_seconds": 0.15625
+          },
+          "memory": {
+            "before": {
+              "rss": 5230592,
+              "private": 888832
+            },
+            "after": {
+              "rss": 5279744,
+              "private": 901120
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": -500.0,
+      "p99_increase_ns": 29800,
+      "latency": false,
+      "client_cycles_change_fraction": -0.005003666585939204,
+      "server_cycles_change_fraction": -0.02020685135102407,
+      "advance": false
+    },
+    "0/coaptic-async/unprotected/16384": {
+      "A": {
+        "raw": "0-coaptic-async-unprotected-16384-A.json",
+        "sha256": "da356fdeaeee72f6a4fc0e64cfa9c2731947bae02d62b327de23faa3f1dae432",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.15000909598396,
+        "missed": 0,
+        "median_ns": 424000.0,
+        "p99_ns": 1116100,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1546915.5666666667,
+          "ns_cpu_per_verified": 325520.8333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.390625
+          },
+          "memory": {
+            "before": {
+              "rss": 6995968,
+              "private": 1781760
+            },
+            "after": {
+              "rss": 6995968,
+              "private": 1781760
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1674039.3,
+          "ns_cpu_per_verified": 364583.3333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.40625,
+            "total_seconds": 0.4375
+          },
+          "memory": {
+            "before": {
+              "rss": 5230592,
+              "private": 897024
+            },
+            "after": {
+              "rss": 5246976,
+              "private": 909312
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-async-unprotected-16384-B.json",
+        "sha256": "fb1f2d02349b8c84666d7969798a301403e0b1af2bc67b49bbb0e4a7bf335006",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.14652059617777,
+        "missed": 0,
+        "median_ns": 413000.0,
+        "p99_ns": 1078100,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1444094.75,
+          "ns_cpu_per_verified": 651041.6666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.359375,
+            "system_seconds": 0.421875,
+            "total_seconds": 0.78125
+          },
+          "memory": {
+            "before": {
+              "rss": 7024640,
+              "private": 1806336
+            },
+            "after": {
+              "rss": 7024640,
+              "private": 1806336
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1562506.55,
+          "ns_cpu_per_verified": 651041.6666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.75,
+            "total_seconds": 0.78125
+          },
+          "memory": {
+            "before": {
+              "rss": 5238784,
+              "private": 905216
+            },
+            "after": {
+              "rss": 5242880,
+              "private": 905216
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": -11000.0,
+      "p99_increase_ns": -38000,
+      "latency": true,
+      "client_cycles_change_fraction": -0.06662492929526809,
+      "server_cycles_change_fraction": -0.0664682797705809,
+      "advance": true
+    },
+    "0/coaptic-async/unprotected/64": {
+      "A": {
+        "raw": "0-coaptic-async-unprotected-64-A.json",
+        "sha256": "095eb26268a7e00e71ec5c08998bd3200a4fa379baed1c9bc0e02fd094960f2e",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.0990389260351,
+        "missed": 1,
+        "median_ns": 55400.0,
+        "p99_ns": 114200,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 159989.62083333332,
+          "ns_cpu_per_verified": 74869.79166666667,
+          "cpu_seconds": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.328125,
+            "total_seconds": 0.359375
+          },
+          "memory": {
+            "before": {
+              "rss": 6946816,
+              "private": 1777664
+            },
+            "after": {
+              "rss": 6946816,
+              "private": 1777664
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 211875.32083333333,
+          "ns_cpu_per_verified": 78125.0,
+          "cpu_seconds": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.34375,
+            "total_seconds": 0.375
+          },
+          "memory": {
+            "before": {
+              "rss": 5144576,
+              "private": 868352
+            },
+            "after": {
+              "rss": 5189632,
+              "private": 880640
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-async-unprotected-64-B.json",
+        "sha256": "d2efd258f4d898ff225ad9e8e326719072ba89055581f228f51b2a916fe480d1",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1335556259933,
+        "missed": 4,
+        "median_ns": 55600.0,
+        "p99_ns": 158700,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 163025.67916666667,
+          "ns_cpu_per_verified": 48828.125,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.21875,
+            "total_seconds": 0.234375
+          },
+          "memory": {
+            "before": {
+              "rss": 6971392,
+              "private": 1785856
+            },
+            "after": {
+              "rss": 6979584,
+              "private": 1785856
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 216636.95,
+          "ns_cpu_per_verified": 94401.04166666667,
+          "cpu_seconds": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.421875,
+            "total_seconds": 0.453125
+          },
+          "memory": {
+            "before": {
+              "rss": 5144576,
+              "private": 872448
+            },
+            "after": {
+              "rss": 5189632,
+              "private": 884736
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": 200.0,
+      "p99_increase_ns": 44500,
+      "latency": false,
+      "client_cycles_change_fraction": 0.02247373194734803,
+      "server_cycles_change_fraction": 0.01897659559113607,
+      "advance": false
+    },
+    "0/coaptic-mio/oscore/16384": {
+      "A": {
+        "raw": "0-coaptic-mio-oscore-16384-A.json",
+        "sha256": "c017ffa52d2597ecdaeeb01cff7c9b911669bbf35b03da48d6936b5e29283607",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.1335190772524,
+        "missed": 0,
+        "median_ns": 551750.0,
+        "p99_ns": 1364300,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1519177.2333333334,
+          "ns_cpu_per_verified": 403645.8333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.390625,
+            "total_seconds": 0.484375
+          },
+          "memory": {
+            "before": {
+              "rss": 6971392,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6971392,
+              "private": 1892352
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 2097543.0166666666,
+          "ns_cpu_per_verified": 585937.5,
+          "cpu_seconds": {
+            "user_seconds": 0.21875,
+            "system_seconds": 0.484375,
+            "total_seconds": 0.703125
+          },
+          "memory": {
+            "before": {
+              "rss": 5312512,
+              "private": 897024
+            },
+            "after": {
+              "rss": 5320704,
+              "private": 897024
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-mio-oscore-16384-B.json",
+        "sha256": "0979e51b6fa144dc3278c182cce65e2a9857fba1993a11b39d3bb42b328eb354",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.13124940888318,
+        "missed": 0,
+        "median_ns": 553350.0,
+        "p99_ns": 1198300,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1513086.1333333333,
+          "ns_cpu_per_verified": 481770.8333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.203125,
+            "system_seconds": 0.375,
+            "total_seconds": 0.578125
+          },
+          "memory": {
+            "before": {
+              "rss": 6983680,
+              "private": 1896448
+            },
+            "after": {
+              "rss": 6983680,
+              "private": 1896448
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 2107380.6333333333,
+          "ns_cpu_per_verified": 651041.6666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.671875,
+            "total_seconds": 0.78125
+          },
+          "memory": {
+            "before": {
+              "rss": 5312512,
+              "private": 901120
+            },
+            "after": {
+              "rss": 5320704,
+              "private": 901120
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": 1600.0,
+      "p99_increase_ns": -166000,
+      "latency": true,
+      "client_cycles_change_fraction": 0.00469006670590244,
+      "server_cycles_change_fraction": -0.00400947293465892,
+      "advance": false
+    },
+    "0/coaptic-mio/oscore/64": {
+      "A": {
+        "raw": "0-coaptic-mio-oscore-64-A.json",
+        "sha256": "7c79b00a6e281231616ccc184504db9968ec83a2bd60123ab761470497e8943b",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.0883697604401,
+        "missed": 2,
+        "median_ns": 54000.0,
+        "p99_ns": 142600,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 114674.42083333334,
+          "ns_cpu_per_verified": 26041.666666666668,
+          "cpu_seconds": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.125,
+            "total_seconds": 0.125
+          },
+          "memory": {
+            "before": {
+              "rss": 6934528,
+              "private": 1884160
+            },
+            "after": {
+              "rss": 6934528,
+              "private": 1884160
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 211522.78333333333,
+          "ns_cpu_per_verified": 58593.75,
+          "cpu_seconds": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.28125
+          },
+          "memory": {
+            "before": {
+              "rss": 5222400,
+              "private": 872448
+            },
+            "after": {
+              "rss": 5271552,
+              "private": 884736
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-mio-oscore-64-B.json",
+        "sha256": "c6d84a10abcbecc9e98cbe1eb49b541acc48bcd82469a662d27cbcd3b1834eac",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.0992256389663,
+        "missed": 4,
+        "median_ns": 55000.0,
+        "p99_ns": 119900,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 119522.67916666667,
+          "ns_cpu_per_verified": 35807.291666666664,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.171875
+          },
+          "memory": {
+            "before": {
+              "rss": 6942720,
+              "private": 1884160
+            },
+            "after": {
+              "rss": 6942720,
+              "private": 1884160
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 215108.93333333332,
+          "ns_cpu_per_verified": 81380.20833333333,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.375,
+            "total_seconds": 0.390625
+          },
+          "memory": {
+            "before": {
+              "rss": 5218304,
+              "private": 868352
+            },
+            "after": {
+              "rss": 5267456,
+              "private": 880640
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": 1000.0,
+      "p99_increase_ns": -22700,
+      "latency": true,
+      "client_cycles_change_fraction": 0.01695396563664109,
+      "server_cycles_change_fraction": 0.042278463654765286,
+      "advance": false
+    },
+    "0/coaptic-mio/unprotected/16384": {
+      "A": {
+        "raw": "0-coaptic-mio-unprotected-16384-A.json",
+        "sha256": "984bd06b9702f2098ede9f76f4230551015e667efe0b0d1f6392ba7670ba7b44",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.1451252303045,
+        "missed": 0,
+        "median_ns": 415900.0,
+        "p99_ns": 982100,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1165836.7666666666,
+          "ns_cpu_per_verified": 260416.66666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.3125
+          },
+          "memory": {
+            "before": {
+              "rss": 6848512,
+              "private": 1884160
+            },
+            "after": {
+              "rss": 6848512,
+              "private": 1884160
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1578600.45,
+          "ns_cpu_per_verified": 364583.3333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.15625,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.4375
+          },
+          "memory": {
+            "before": {
+              "rss": 5226496,
+              "private": 901120
+            },
+            "after": {
+              "rss": 5234688,
+              "private": 901120
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-mio-unprotected-16384-B.json",
+        "sha256": "fd0c7aa8d94f7e4801ee323e93dc02b33d3df8ee7760613097116cbedd3a7cb0",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.14939150581995,
+        "missed": 0,
+        "median_ns": 433350.0,
+        "p99_ns": 959000,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1243283.3833333333,
+          "ns_cpu_per_verified": 520833.3333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.265625,
+            "system_seconds": 0.359375,
+            "total_seconds": 0.625
+          },
+          "memory": {
+            "before": {
+              "rss": 6868992,
+              "private": 1900544
+            },
+            "after": {
+              "rss": 6868992,
+              "private": 1900544
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1663066.65,
+          "ns_cpu_per_verified": 625000.0,
+          "cpu_seconds": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.5625,
+            "total_seconds": 0.75
+          },
+          "memory": {
+            "before": {
+              "rss": 5234688,
+              "private": 901120
+            },
+            "after": {
+              "rss": 5242880,
+              "private": 901120
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": 17450.0,
+      "p99_increase_ns": -23100,
+      "latency": false,
+      "client_cycles_change_fraction": 0.05350701629408494,
+      "server_cycles_change_fraction": 0.06643006884068359,
+      "advance": false
+    },
+    "0/coaptic-mio/unprotected/64": {
+      "A": {
+        "raw": "0-coaptic-mio-unprotected-64-A.json",
+        "sha256": "2a26f725a999382a044b284d6806b102f8f3b91776b52bbb312286f32b6ed15b",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.151241920577,
+        "missed": 6,
+        "median_ns": 49700.0,
+        "p99_ns": 121400,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 107945.5375,
+          "ns_cpu_per_verified": 39062.5,
+          "cpu_seconds": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.125,
+            "total_seconds": 0.1875
+          },
+          "memory": {
+            "before": {
+              "rss": 6811648,
+              "private": 1871872
+            },
+            "after": {
+              "rss": 6811648,
+              "private": 1871872
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 193485.78333333333,
+          "ns_cpu_per_verified": 81380.20833333333,
+          "cpu_seconds": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.390625
+          },
+          "memory": {
+            "before": {
+              "rss": 5144576,
+              "private": 876544
+            },
+            "after": {
+              "rss": 5193728,
+              "private": 888832
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "0-coaptic-mio-unprotected-64-B.json",
+        "sha256": "266130dc4a3dd6a7174bf6d8ad0e8da74e0853ec7febf572e9e838ebf1e3c092",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1052671829857,
+        "missed": 5,
+        "median_ns": 49200.0,
+        "p99_ns": 101800,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 103825.72916666667,
+          "ns_cpu_per_verified": 22786.458333333332,
+          "cpu_seconds": {
+            "user_seconds": 0.03125,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.109375
+          },
+          "memory": {
+            "before": {
+              "rss": 6823936,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6823936,
+              "private": 1892352
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 189051.61666666667,
+          "ns_cpu_per_verified": 35807.291666666664,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.15625,
+            "total_seconds": 0.171875
+          },
+          "memory": {
+            "before": {
+              "rss": 5144576,
+              "private": 872448
+            },
+            "after": {
+              "rss": 5189632,
+              "private": 884736
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": false,
+      "median_increase_ns": -500.0,
+      "p99_increase_ns": -19600,
+      "latency": true,
+      "client_cycles_change_fraction": -0.02291727376697006,
+      "server_cycles_change_fraction": -0.03816561970737631,
+      "advance": false
+    },
+    "1/coaptic-async/oscore/16384": {
+      "A": {
+        "raw": "1-coaptic-async-oscore-16384-A.json",
+        "sha256": "40cc0770f12510efa61accac4b148f715f29c698300d0263ec8549c825a7dff2",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 199.65276059123372,
+        "missed": 38,
+        "median_ns": 519000.0,
+        "p99_ns": 2433000,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1829348.1833333333,
+          "ns_cpu_per_verified": 442708.3333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.265625,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.53125
+          },
+          "memory": {
+            "before": {
+              "rss": 7135232,
+              "private": 1802240
+            },
+            "after": {
+              "rss": 7135232,
+              "private": 1802240
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1984098.9,
+          "ns_cpu_per_verified": 546875.0,
+          "cpu_seconds": {
+            "user_seconds": 0.234375,
+            "system_seconds": 0.421875,
+            "total_seconds": 0.65625
+          },
+          "memory": {
+            "before": {
+              "rss": 5324800,
+              "private": 913408
+            },
+            "after": {
+              "rss": 5332992,
+              "private": 913408
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-async-oscore-16384-B.json",
+        "sha256": "cefa684ceeb7bf07484c021b35025d0e3853e7d062c97926f22057da488b3220",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.12979417801415,
+        "missed": 0,
+        "median_ns": 511000.0,
+        "p99_ns": 1103300,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1697381.7166666666,
+          "ns_cpu_per_verified": 742187.5,
+          "cpu_seconds": {
+            "user_seconds": 0.4375,
+            "system_seconds": 0.453125,
+            "total_seconds": 0.890625
+          },
+          "memory": {
+            "before": {
+              "rss": 7139328,
+              "private": 1798144
+            },
+            "after": {
+              "rss": 7139328,
+              "private": 1798144
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1872563.6,
+          "ns_cpu_per_verified": 885416.6666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.515625,
+            "system_seconds": 0.546875,
+            "total_seconds": 1.0625
+          },
+          "memory": {
+            "before": {
+              "rss": 5316608,
+              "private": 897024
+            },
+            "after": {
+              "rss": 5332992,
+              "private": 909312
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": false,
+      "median_increase_ns": -8000.0,
+      "p99_increase_ns": -1329700,
+      "latency": true,
+      "client_cycles_change_fraction": -0.056214586883748474,
+      "server_cycles_change_fraction": -0.07213851789887538,
+      "advance": false
+    },
+    "1/coaptic-async/oscore/64": {
+      "A": {
+        "raw": "1-coaptic-async-oscore-64-A.json",
+        "sha256": "622eef9c14e1f3a94fcf163728c3b7873c3feb1e83830a284df1495558b58802",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1484942247199,
+        "missed": 1,
+        "median_ns": 59200.0,
+        "p99_ns": 157600,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 161612.90833333333,
+          "ns_cpu_per_verified": 39062.5,
+          "cpu_seconds": {
+            "user_seconds": 0.109375,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.1875
+          },
+          "memory": {
+            "before": {
+              "rss": 7081984,
+              "private": 1785856
+            },
+            "after": {
+              "rss": 7081984,
+              "private": 1785856
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 227934.65416666667,
+          "ns_cpu_per_verified": 94401.04166666667,
+          "cpu_seconds": {
+            "user_seconds": 0.140625,
+            "system_seconds": 0.3125,
+            "total_seconds": 0.453125
+          },
+          "memory": {
+            "before": {
+              "rss": 5226496,
+              "private": 876544
+            },
+            "after": {
+              "rss": 5267456,
+              "private": 876544
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-async-oscore-64-B.json",
+        "sha256": "cc96f1a56fced61b9927e573786676c9a2a884265f9230b4ef9fb43033e3ad79",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1003459183839,
+        "missed": 5,
+        "median_ns": 59500.0,
+        "p99_ns": 135600,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 168082.4,
+          "ns_cpu_per_verified": 97656.25,
+          "cpu_seconds": {
+            "user_seconds": 0.203125,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.46875
+          },
+          "memory": {
+            "before": {
+              "rss": 7098368,
+              "private": 1789952
+            },
+            "after": {
+              "rss": 7098368,
+              "private": 1789952
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 234658.50833333333,
+          "ns_cpu_per_verified": 143229.16666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.296875,
+            "system_seconds": 0.390625,
+            "total_seconds": 0.6875
+          },
+          "memory": {
+            "before": {
+              "rss": 5226496,
+              "private": 880640
+            },
+            "after": {
+              "rss": 5275648,
+              "private": 892928
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": false,
+      "median_increase_ns": 300.0,
+      "p99_increase_ns": -22000,
+      "latency": true,
+      "client_cycles_change_fraction": 0.02949904300971351,
+      "server_cycles_change_fraction": 0.0400307854947024,
+      "advance": false
+    },
+    "1/coaptic-async/unprotected/16384": {
+      "A": {
+        "raw": "1-coaptic-async-unprotected-16384-A.json",
+        "sha256": "7aed7befa11c3180362b24308c1d8be2c7f62d0a8d5cada888d540b3020335b7",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.13346567269937,
+        "missed": 0,
+        "median_ns": 422000.0,
+        "p99_ns": 963500,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1458805.7,
+          "ns_cpu_per_verified": 494791.6666666667,
+          "cpu_seconds": {
+            "user_seconds": 0.21875,
+            "system_seconds": 0.375,
+            "total_seconds": 0.59375
+          },
+          "memory": {
+            "before": {
+              "rss": 7012352,
+              "private": 1806336
+            },
+            "after": {
+              "rss": 7012352,
+              "private": 1806336
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1578294.1666666667,
+          "ns_cpu_per_verified": 507812.5,
+          "cpu_seconds": {
+            "user_seconds": 0.34375,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.609375
+          },
+          "memory": {
+            "before": {
+              "rss": 5230592,
+              "private": 905216
+            },
+            "after": {
+              "rss": 5238784,
+              "private": 905216
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-async-unprotected-16384-B.json",
+        "sha256": "985b8a30574f04ad8b13d4d1ad53624474b462ed7ee95fe4eb4aac45c065d2e0",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.13490092997185,
+        "missed": 0,
+        "median_ns": 411000.0,
+        "p99_ns": 915800,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1402445.8833333333,
+          "ns_cpu_per_verified": 351562.5,
+          "cpu_seconds": {
+            "user_seconds": 0.25,
+            "system_seconds": 0.171875,
+            "total_seconds": 0.421875
+          },
+          "memory": {
+            "before": {
+              "rss": 7024640,
+              "private": 1798144
+            },
+            "after": {
+              "rss": 7028736,
+              "private": 1798144
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1510745.2333333334,
+          "ns_cpu_per_verified": 351562.5,
+          "cpu_seconds": {
+            "user_seconds": 0.140625,
+            "system_seconds": 0.28125,
+            "total_seconds": 0.421875
+          },
+          "memory": {
+            "before": {
+              "rss": 5226496,
+              "private": 897024
+            },
+            "after": {
+              "rss": 5242880,
+              "private": 909312
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": -11000.0,
+      "p99_increase_ns": -47700,
+      "latency": true,
+      "client_cycles_change_fraction": -0.04279869669416292,
+      "server_cycles_change_fraction": -0.038634217474381005,
+      "advance": false
+    },
+    "1/coaptic-async/unprotected/64": {
+      "A": {
+        "raw": "1-coaptic-async-unprotected-64-A.json",
+        "sha256": "5d4e930cd07ea704aac19548fe8613821aaed955009386713d8c8d8e54fee1df",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1153099514191,
+        "missed": 6,
+        "median_ns": 54000.0,
+        "p99_ns": 116700,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 153240.05416666667,
+          "ns_cpu_per_verified": 6510.416666666667,
+          "cpu_seconds": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.03125,
+            "total_seconds": 0.03125
+          },
+          "memory": {
+            "before": {
+              "rss": 6959104,
+              "private": 1785856
+            },
+            "after": {
+              "rss": 6959104,
+              "private": 1785856
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 210020.40833333333,
+          "ns_cpu_per_verified": 22786.458333333332,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.09375,
+            "total_seconds": 0.109375
+          },
+          "memory": {
+            "before": {
+              "rss": 5148672,
+              "private": 880640
+            },
+            "after": {
+              "rss": 5193728,
+              "private": 892928
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-async-unprotected-64-B.json",
+        "sha256": "a73d4629164e4944a27ae71829538623351295f0377d9624b3f767d0879ab1aa",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1019996699246,
+        "missed": 4,
+        "median_ns": 54100.0,
+        "p99_ns": 116000,
+        "resources": {
+          "schema": "coaptic-native-server-resources/2",
+          "server_kind": "coaptic-async",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2096,
+          "app_including_adapter_bytes": 314448,
+          "loop_future_borrowing_app_bytes": 13616,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pools inside requested heap; loop future borrows separate App; representation and runtime separate",
+          "limits": "inline and requested owners only; runtime, allocator, initialization and peak stacks, kernel and static representation backing excluded or unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 147721.2875,
+          "ns_cpu_per_verified": 26041.666666666668,
+          "cpu_seconds": {
+            "user_seconds": 0.046875,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.125
+          },
+          "memory": {
+            "before": {
+              "rss": 6967296,
+              "private": 1777664
+            },
+            "after": {
+              "rss": 6967296,
+              "private": 1777664
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 205981.49166666667,
+          "ns_cpu_per_verified": 19531.25,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.09375
+          },
+          "memory": {
+            "before": {
+              "rss": 5140480,
+              "private": 876544
+            },
+            "after": {
+              "rss": 5181440,
+              "private": 876544
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": false,
+      "median_increase_ns": 100.0,
+      "p99_increase_ns": -700,
+      "latency": true,
+      "client_cycles_change_fraction": -0.01923106758394788,
+      "server_cycles_change_fraction": -0.03601386528266526,
+      "advance": false
+    },
+    "1/coaptic-mio/oscore/16384": {
+      "A": {
+        "raw": "1-coaptic-mio-oscore-16384-A.json",
+        "sha256": "d39eaebcbdf0fa991c40c6b99fb30931d7bcc94a4a3c906c161c8602b5d19089",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.14366312138853,
+        "missed": 0,
+        "median_ns": 529400.0,
+        "p99_ns": 1054800,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1399777.7333333334,
+          "ns_cpu_per_verified": 338541.6666666667,
+          "cpu_seconds": {
+            "user_seconds": 0.1875,
+            "system_seconds": 0.21875,
+            "total_seconds": 0.40625
+          },
+          "memory": {
+            "before": {
+              "rss": 6971392,
+              "private": 1896448
+            },
+            "after": {
+              "rss": 6971392,
+              "private": 1896448
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1944012.3333333333,
+          "ns_cpu_per_verified": 481770.8333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.3125,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.578125
+          },
+          "memory": {
+            "before": {
+              "rss": 5312512,
+              "private": 901120
+            },
+            "after": {
+              "rss": 5320704,
+              "private": 901120
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-mio-oscore-16384-B.json",
+        "sha256": "f2ff72d5f80e2fcec959e79df032b724188b30027ac71109d7460e7492fce0ed",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.13653648079614,
+        "missed": 0,
+        "median_ns": 521550.0,
+        "p99_ns": 1063500,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1352197.2833333334,
+          "ns_cpu_per_verified": 546875.0,
+          "cpu_seconds": {
+            "user_seconds": 0.265625,
+            "system_seconds": 0.390625,
+            "total_seconds": 0.65625
+          },
+          "memory": {
+            "before": {
+              "rss": 6983680,
+              "private": 1900544
+            },
+            "after": {
+              "rss": 6983680,
+              "private": 1900544
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1921299.4833333334,
+          "ns_cpu_per_verified": 716145.8333333334,
+          "cpu_seconds": {
+            "user_seconds": 0.125,
+            "system_seconds": 0.734375,
+            "total_seconds": 0.859375
+          },
+          "memory": {
+            "before": {
+              "rss": 5312512,
+              "private": 905216
+            },
+            "after": {
+              "rss": 5320704,
+              "private": 905216
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": -7850.0,
+      "p99_increase_ns": 8700,
+      "latency": true,
+      "client_cycles_change_fraction": -0.011683490691159815,
+      "server_cycles_change_fraction": -0.03399143225881662,
+      "advance": false
+    },
+    "1/coaptic-mio/oscore/64": {
+      "A": {
+        "raw": "1-coaptic-mio-oscore-64-A.json",
+        "sha256": "59dd631ea903144a2e13e8f6bdb45b3cf95cfe5dc9e93787277c0deefb44665e",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.0961848963609,
+        "missed": 1,
+        "median_ns": 53500.0,
+        "p99_ns": 150500,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 110693.23333333334,
+          "ns_cpu_per_verified": 48828.125,
+          "cpu_seconds": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.234375,
+            "total_seconds": 0.234375
+          },
+          "memory": {
+            "before": {
+              "rss": 6930432,
+              "private": 1880064
+            },
+            "after": {
+              "rss": 6930432,
+              "private": 1880064
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 206457.70416666666,
+          "ns_cpu_per_verified": 94401.04166666667,
+          "cpu_seconds": {
+            "user_seconds": 0.09375,
+            "system_seconds": 0.359375,
+            "total_seconds": 0.453125
+          },
+          "memory": {
+            "before": {
+              "rss": 5226496,
+              "private": 880640
+            },
+            "after": {
+              "rss": 5275648,
+              "private": 892928
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-mio-oscore-64-B.json",
+        "sha256": "13193db78ac924e201bfb1bce0e4078efdbcd9bb63393c77a805c5bbf2a66731",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1427321276993,
+        "missed": 7,
+        "median_ns": 53400.0,
+        "p99_ns": 162800,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "oscore",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 111384.35416666667,
+          "ns_cpu_per_verified": 48828.125,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.21875,
+            "total_seconds": 0.234375
+          },
+          "memory": {
+            "before": {
+              "rss": 6950912,
+              "private": 1900544
+            },
+            "after": {
+              "rss": 6950912,
+              "private": 1900544
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 209012.37916666668,
+          "ns_cpu_per_verified": 84635.41666666667,
+          "cpu_seconds": {
+            "user_seconds": 0.078125,
+            "system_seconds": 0.328125,
+            "total_seconds": 0.40625
+          },
+          "memory": {
+            "before": {
+              "rss": 5222400,
+              "private": 872448
+            },
+            "after": {
+              "rss": 5263360,
+              "private": 872448
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": false,
+      "median_increase_ns": -100.0,
+      "p99_increase_ns": 12300,
+      "latency": false,
+      "client_cycles_change_fraction": 0.012373841946521358,
+      "server_cycles_change_fraction": 0.006243568938420596,
+      "advance": false
+    },
+    "1/coaptic-mio/unprotected/16384": {
+      "A": {
+        "raw": "1-coaptic-mio-unprotected-16384-A.json",
+        "sha256": "6135101411eea147f97c5b0e4aae282c710bb1c5a45977196ac61f1b1f4b18fa",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.141006010101,
+        "missed": 0,
+        "median_ns": 428200.0,
+        "p99_ns": 897300,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1153292.1833333333,
+          "ns_cpu_per_verified": 442708.3333333333,
+          "cpu_seconds": {
+            "user_seconds": 0.265625,
+            "system_seconds": 0.265625,
+            "total_seconds": 0.53125
+          },
+          "memory": {
+            "before": {
+              "rss": 6856704,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6856704,
+              "private": 1892352
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1573021.3333333333,
+          "ns_cpu_per_verified": 598958.3333333334,
+          "cpu_seconds": {
+            "user_seconds": 0.234375,
+            "system_seconds": 0.484375,
+            "total_seconds": 0.71875
+          },
+          "memory": {
+            "before": {
+              "rss": 5230592,
+              "private": 909312
+            },
+            "after": {
+              "rss": 5238784,
+              "private": 909312
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-mio-unprotected-16384-B.json",
+        "sha256": "c1a076437e2302799c0e17ccf09241cfc63c309cb79b30f416d983e8231fd801",
+        "verified": 1200,
+        "datagrams": 19200,
+        "offered": 200,
+        "achieved": 200.13958401721308,
+        "missed": 0,
+        "median_ns": 427250.0,
+        "p99_ns": 991500,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 16384,
+          "representation_heap_bytes": 16384,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 1184404.7333333334,
+          "ns_cpu_per_verified": 651041.6666666666,
+          "cpu_seconds": {
+            "user_seconds": 0.21875,
+            "system_seconds": 0.5625,
+            "total_seconds": 0.78125
+          },
+          "memory": {
+            "before": {
+              "rss": 6868992,
+              "private": 1892352
+            },
+            "after": {
+              "rss": 6868992,
+              "private": 1892352
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 1597562.8166666667,
+          "ns_cpu_per_verified": 742187.5,
+          "cpu_seconds": {
+            "user_seconds": 0.234375,
+            "system_seconds": 0.65625,
+            "total_seconds": 0.890625
+          },
+          "memory": {
+            "before": {
+              "rss": 5238784,
+              "private": 909312
+            },
+            "after": {
+              "rss": 5246976,
+              "private": 909312
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": true,
+      "median_increase_ns": -950.0,
+      "p99_increase_ns": 94200,
+      "latency": false,
+      "client_cycles_change_fraction": 0.015601494279374073,
+      "server_cycles_change_fraction": 0.026977161945272332,
+      "advance": false
+    },
+    "1/coaptic-mio/unprotected/64": {
+      "A": {
+        "raw": "1-coaptic-mio-unprotected-64-A.json",
+        "sha256": "a566da07e4dafa1f31a3e235cd22b9e18481e50356e92d702131c6da43ce3550",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1414783490634,
+        "missed": 5,
+        "median_ns": 49000.0,
+        "p99_ns": 97000,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 104899.84583333334,
+          "ns_cpu_per_verified": 35807.291666666664,
+          "cpu_seconds": {
+            "user_seconds": 0.0625,
+            "system_seconds": 0.109375,
+            "total_seconds": 0.171875
+          },
+          "memory": {
+            "before": {
+              "rss": 6815744,
+              "private": 1875968
+            },
+            "after": {
+              "rss": 6815744,
+              "private": 1875968
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 191206.65,
+          "ns_cpu_per_verified": 78125.0,
+          "cpu_seconds": {
+            "user_seconds": 0.0,
+            "system_seconds": 0.375,
+            "total_seconds": 0.375
+          },
+          "memory": {
+            "before": {
+              "rss": 5140480,
+              "private": 872448
+            },
+            "after": {
+              "rss": 5181440,
+              "private": 872448
+            }
+          }
+        }
+      },
+      "B": {
+        "raw": "1-coaptic-mio-unprotected-64-B.json",
+        "sha256": "3fe45aab3da3f0f13b88327b1fd886b637c2dd49d269facda804edc6d8e908af",
+        "verified": 4800,
+        "datagrams": 4800,
+        "offered": 800,
+        "achieved": 800.1306746746856,
+        "missed": 2,
+        "median_ns": 48400.0,
+        "p99_ns": 80500,
+        "resources": {
+          "schema": "coaptic-native-mio-resources/1",
+          "server_kind": "coaptic-mio",
+          "udp_scratch_bytes": 2049,
+          "adapter_inline_bytes": 2072,
+          "app_including_adapter_bytes": 314424,
+          "poll_inline_bytes": 8,
+          "events_inline_bytes": 40,
+          "event_capacity": 8,
+          "worker_threads": 0,
+          "pending_kernel_operations": 0,
+          "runtime_heap_bytes": null,
+          "runtime_stack_bytes": null,
+          "kernel_bytes": null,
+          "allocator_overhead_bytes": null,
+          "initialization_stack_bytes": null,
+          "events_heap_bytes": null,
+          "resource_profile": "service-fixed",
+          "storage": "fixed",
+          "routes": 32,
+          "populated_routes": 1,
+          "calls": 4,
+          "deferred": 8,
+          "associations": 1,
+          "security_requests": 4,
+          "blockwise": true,
+          "rx_slots": 32,
+          "tx_slots": 32,
+          "rx_datagram_bytes": 1472,
+          "tx_datagram_bytes": 1472,
+          "dedup": 64,
+          "observe": 32,
+          "rx_body_slots": 4,
+          "tx_body_slots": 4,
+          "rx_body_bytes": 16384,
+          "tx_body_bytes": 16384,
+          "representation_bytes": 64,
+          "representation_heap_bytes": 64,
+          "app_requested_heap_bytes": 0,
+          "security": "unprotected",
+          "nesting": "scratch inside adapter inside App; fixed pools inside App; allocated pool payloads and metadata inside requested heap; representation backing, poll and events separate",
+          "limits": "requested and inline owners only; static representation backing is borrowed; events heap, allocator, initialization and peak stack, runtime and kernel owners unknown; no whole-memory acceptance"
+        },
+        "server": {
+          "cycles_per_verified": 99459.775,
+          "ns_cpu_per_verified": 19531.25,
+          "cpu_seconds": {
+            "user_seconds": 0.015625,
+            "system_seconds": 0.078125,
+            "total_seconds": 0.09375
+          },
+          "memory": {
+            "before": {
+              "rss": 6823936,
+              "private": 1884160
+            },
+            "after": {
+              "rss": 6823936,
+              "private": 1884160
+            }
+          }
+        },
+        "client": {
+          "cycles_per_verified": 182969.5125,
+          "ns_cpu_per_verified": 48828.125,
+          "cpu_seconds": {
+            "user_seconds": 0.046875,
+            "system_seconds": 0.1875,
+            "total_seconds": 0.234375
+          },
+          "memory": {
+            "before": {
+              "rss": 5144576,
+              "private": 872448
+            },
+            "after": {
+              "rss": 5189632,
+              "private": 884736
+            }
+          }
+        }
+      },
+      "same_resources": true,
+      "paced": false,
+      "median_increase_ns": -600.0,
+      "p99_increase_ns": -16500,
+      "latency": true,
+      "client_cycles_change_fraction": -0.04307976474667585,
+      "server_cycles_change_fraction": -0.051859664712726294,
+      "advance": false
+    }
+  },
+  "complete": true,
+  "failures": {},
+  "measured": 96000,
+  "launch_failures": {}
+}
