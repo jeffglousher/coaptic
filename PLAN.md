@@ -1,6 +1,6 @@
 # Project plan
 
-Updated 2026-11-20 after profiling checkout `f8ffae4` with companion
+Updated 2026-11-20 after profiling checkout `a41180e` with companion
 `8215e25` on Windows.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
@@ -221,6 +221,12 @@ for actual stop or transfer conditions.
     six pairs and CPU time varied in direction. Established OSCORE server
     CPU time fell in all three small-read pairs and rose in all three
     blockwise pairs. Both original #650 CPU-time targets remain open.
+30. The [Windows option and duplicate-table profile](architecture/requirements/WINDOWS-OPTIONS-DEDUP-PROFILE-20261120.md)
+    separates sampled server-thread waits from running and standby states.
+    An identical binary recorded a 50% server CPU-time reduction in one
+    protected blockwise pair at 799/s, with a 0.9% cycle reduction.
+    Neither pacing rate established repeatable CPU-time accounting for
+    both cells on this host. Keep the original targets separate and open.
 
 ## Blocked and deferred work
 
