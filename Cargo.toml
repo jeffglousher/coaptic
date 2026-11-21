@@ -107,3 +107,6 @@ required-features = ["std", "edhoc"]
 [dev-dependencies]
 # Host examples/doctests and fixtures supply OS entropy; not a library runtime dependency.
 getrandom = "=0.3.4"
+
+[target.'cfg(any(unix, windows))'.dev-dependencies]
+rustix = { version = "=1.1.4", features = ["event"] }
