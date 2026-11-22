@@ -31,7 +31,8 @@ fn main() -> Result<(), host_error::Error> {
 
     let clock = Instant::now();
     loop {
-        let now = u64::try_from(clock.elapsed().as_millis()).map_err(|_| host_error::Error::Clock)?;
+        let now =
+            u64::try_from(clock.elapsed().as_millis()).map_err(|_| host_error::Error::Clock)?;
         server.poll(now)?;
         #[cfg(any(unix, windows))]
         {

@@ -46,6 +46,15 @@ mod tests {
     }
 
     #[test]
+    fn idle_socket_waits_until_its_deadline() -> io::Result<()> {
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        let start = Instant::now();
+        wait(&socket, start, Some(20))?;
+        assert!(start.elapsed() >= Duration::from_millis(20));
+        Ok(())
+    }
+
+    #[test]
     fn readiness_leaves_refusal_and_reuse_to_the_transport() -> io::Result<()> {
         let receiver = UdpSocket::bind("127.0.0.1:0")?;
         receiver.set_nonblocking(true)?;
