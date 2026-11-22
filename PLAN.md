@@ -15,7 +15,8 @@ unprotected and established OSCORE modes. Both original Tokio server CPU-time
 targets remain open. At equal delivered rates the readiness loop reduced
 blockwise server CPU in both modes. Small-read server CPU medians increased.
 Direct ACK encoding, duplicate-slot reuse, admission recounting and Mio rearm
-each regressed at least one capacity workload.
+each regressed at least one capacity workload. Reusing validated OSCORE option
+bytes reduced reconstruction time but also lowered median protected read capacity.
 
 The supported direct UDP App implementation is delivered: bounded fixed/allocated
 storage, sync/async operation, OSCORE/EDHOC, commissioning, durable ownership and
