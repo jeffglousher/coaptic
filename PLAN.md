@@ -1,12 +1,22 @@
 # Project plan
 
-Updated 2026-11-20 after profiling checkout `a41180e` with companion
-`8215e25` on Windows.
+Updated 2026-11-22 after the Windows foreground server and Tokio comparisons
+with companion `8215e25`.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
+
+The [Windows foreground server](architecture/requirements/WINDOWS-FOREGROUND-READS-20261122.md)
+now waits for socket readability or the next App deadline. In three alternating
+release-build pairs it sustained 800 offered reads/s for 64 B and 4 KiB in
+unprotected and established OSCORE modes. Both original Tokio server CPU-time
+targets remain open. At equal delivered rates the readiness loop reduced
+blockwise server CPU in both modes. Small-read server CPU medians increased.
+Direct ACK encoding, duplicate-slot reuse, admission recounting and Mio rearm
+each regressed at least one capacity workload. Reusing validated OSCORE option
+bytes reduced reconstruction time but also lowered median protected read capacity.
 
 The supported direct UDP App implementation is delivered: bounded fixed/allocated
 storage, sync/async operation, OSCORE/EDHOC, commissioning, durable ownership and
