@@ -12,7 +12,9 @@ The [Windows foreground server](architecture/requirements/WINDOWS-FOREGROUND-REA
 now waits for socket readability or the next App deadline. In three alternating
 release-build pairs it sustained 800 offered reads/s for 64 B and 4 KiB in
 unprotected and established OSCORE modes. Both original Tokio server CPU-time
-targets remain open. The direct ACK, duplicate-slot and Mio rearm experiments
+targets remain open. At equal delivered rates the readiness loop reduced
+blockwise server CPU in both modes. Small-read server CPU medians increased.
+Direct ACK encoding, duplicate-slot reuse, admission recounting and Mio rearm
 each regressed at least one capacity workload.
 
 The supported direct UDP App implementation is delivered: bounded fixed/allocated

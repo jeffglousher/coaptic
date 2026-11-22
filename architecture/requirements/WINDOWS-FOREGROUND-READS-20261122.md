@@ -30,6 +30,15 @@ Each cell gives original sleep / changed readability. Server and client CPU are 
 | OSCORE, 64 B | 30.5 / 10.2 | 1,525.9 / 20.3 | 1,533.1 / 21.0 | 1,569.6 / 31.8 | 652 / 46,985 | 5.67 / 5.67 | 4.95 / 4.95 | 1.00 / 1.00 | 0.82 / 0.81 |
 | OSCORE, 4 KiB | 101.7 / 61.0 | 6,144.2 / 101.7 | 6,146.5 / 94.6 | 6,227.2 / 129.0 | 163 / 10,423 | 5.70 / 5.69 | 4.98 / 4.98 | 1.01 / 1.02 | 0.82 / 0.82 |
 
+**Equal delivered rate, separate executable pairs.** The client offered 550 reads/s for 64 B and 140 reads/s for 4 KiB, within the measured service capacity of both loops. Each window measured 3,200 or 1,280 complete reads. This comparison isolates the effects of the wait policy at the same completed throughput.
+
+| Security, body | Server CPU | Client CPU | p50 | p99 | Reads/s | Server WS | Client WS | Server private | Client private |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Unprotected, 64 B | 29.3 / 34.2 | 1,157.2 / 68.4 | 1,537.1 / 47.3 | 1,711.9 / 71.8 | 550 / 550 | 5.55 / 5.55 | 4.89 / 4.88 | 1.00 / 1.00 | 0.82 / 0.82 |
+| Unprotected, 4 KiB | 134.3 / 97.7 | 5,871.6 / 170.9 | 6,109.4 / 152.6 | 8,727.6 / 301.3 | 140 / 140 | 5.59 / 5.59 | 4.91 / 4.91 | 1.02 / 1.02 | 0.84 / 0.84 |
+| OSCORE, 64 B | 34.2 / 39.1 | 1,191.4 / 63.5 | 1,533.2 / 54.7 | 1,609.7 / 81.4 | 550 / 550 | 5.67 / 5.66 | 4.98 / 4.98 | 1.01 / 1.00 | 0.82 / 0.83 |
+| OSCORE, 4 KiB | 158.7 / 109.9 | 5,810.5 / 195.3 | 6,070.4 / 185.9 | 6,580.5 / 349.1 | 140 / 140 | 5.70 / 5.70 | 4.99 / 5.00 | 1.02 / 1.02 | 0.82 / 0.84 |
+
 ## Execution and waiting
 
 A bounded process-local sampler walked the foreground server thread for 950 ms in each measured workload, with symbols from the same release image. The original sleep path appeared in 528/981, 564/943, 589/911 and 635/914 wall stacks for unprotected small/blockwise and OSCORE small/blockwise. The changed readability path appeared in 589/961, 488/1,004, 558/983 and 517/927. The samples also show Winsock send/receive, App dispatch and AES-CCM. A blocked Winsock call can appear at a sampling instant. Stack shares describe elapsed time. The independent process clocks above quantify execution. The stack walk changed server cycles per read by −0.3% to +21.9% in the 1,600-read observer-on/off controls. The performance comparisons ran with the observer off. Shared host tracing settings stayed intact.
@@ -42,6 +51,7 @@ A common independent client ran three unpaced rotations against the checkout Tok
 ## Other measured changes
 
 - libcoap requests writable readiness when it has output pending. A Mio 1.2.4 receive-rearm experiment with Tokio 1.53.3 eliminated the observed writable-only events after UDP receive. Across four profiler-off capacity pairs per workload, median throughput moved from 59,139 to 47,002 and from 14,486 to 11,582 reads/s for unprotected small/blockwise. OSCORE moved from 47,842 to 41,570 and from 10,062 to 9,269. The stock dependency remains in use.
+- Admission consults TX occupancy before and after trying to demote cached replies. A candidate removed repeated occupancy checks when no mutation intervened. Its full, minimal and strict-lint checks passed. Server CPU medians at capacity were equal in all four cells. Protected small-read p99 regressed by 7.3%, 19.5% and 7.3% in order. The candidate was reverted.
 - A direct four-byte empty ACK encoder reduced the duplicate-victim function from 1,069 to 827 code bytes and its stack reservation from 776 to 392 bytes. At eight rows, measured demotion time moved from 75.3 to 70.7 ns. Replacing the selected allocated row also reduced duplicate key scans. The combined code lowered sampled victim appearances from 82/3,256 to 54/3,255 unprotected and from 53/3,335 to 31/3,157 protected in blockwise traffic. The direct ACK reduced unprotected small capacity in four of four pairs. The combined candidate reduced protected blockwise capacity and increased p99 in four of four pairs. Both experiments were excluded from the foreground change.
 - With the common historical Tokio fixture `eea0374b`, three-way alternating 9,600-read runs at 800/s compared the original project `b8f44fa`, direct ACK `835bd6c` and combined candidate `110fb53`. Median server CPU in that order was 39.1 / 37.4 / 58.6 and 135.1 / 127.0 / 122.1 µs/read for unprotected small/blockwise, and 58.6 / 53.7 / 57.0 and 154.6 / 166.0 / 140.0 for OSCORE. Both original 50% server CPU-time targets remain open. The foreground deployment uses a different runtime from that historical series.
 
