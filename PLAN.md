@@ -1,13 +1,27 @@
 # Project plan
 
-Updated 2026-11-25 after matched Windows and ESP32 worker measurements.
+Updated 2026-11-25 after comparing the merged packet path with libcoap.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
 
-The current packet-path batch is frozen at diff `510df7f0`. It carries Call
+The packet-path improvements landed in [#799](https://github.com/jeffglousher/coaptic/pull/799)
+at `32fdf57`. The [Windows and Waveshare peer comparison](architecture/requirements/LANDED-LIBCOAP-20261125.md)
+covers 1,534,080 native Windows reads and regrades both blocks of each ESP read.
+On the ESP32-S3, Coaptic used 1.27 ms more worker CPU than libcoap on a small
+reply, 1.28 ms more on block zero and 1.38 ms more on the follow-up. Windows
+unprotected reads also used more server CPU. The protected Windows peers used
+different acknowledgement strategies.
+
+**Next focus.** Split the ESP async work between receive, route/handler,
+response encoding and send entry. Rank the common cost across a small GET and
+both block positions, then reduce the largest repeatable interval. Check the
+whole-read worker time in reversed boot pairs and retain refusal, duplicate,
+retry and cancellation coverage. Both historical Windows 50% targets are open.
+
+The landed packet-path batch was measured at diff `510df7f0`. It carries Call
 expiry and admission decisions forward, borrows deferred rows, and reduces
 option and upload-binding work. Six balanced rounds of verified eight-fragment
 PUTs through the fixed-pool App took 6.03 to 5.38 microseconds without a
