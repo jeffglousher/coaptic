@@ -690,7 +690,29 @@ where
     }
 
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<P::Token>> {
-        self.observe.entry(id)
+        self.observe.entry_ref(id).copied()
+    }
+
+    fn with_observe_interest<R>(
+        &self,
+        id: SlotId,
+        read: impl FnOnce(&ObserveInterest<P::Token>) -> R,
+    ) -> Option<R> {
+        self.observe.entry_ref(id).map(read)
+    }
+
+    fn signal_observe(&mut self, key: ObserveKey<P::Token>) -> Option<SlotId> {
+        let id = self.observe.lookup(key)?;
+        self.observe.entry_mut(id)?.mark_due();
+        Some(id)
+    }
+
+    fn update_observe_interest<R>(
+        &mut self,
+        id: SlotId,
+        edit: impl FnOnce(&mut ObserveInterest<P::Token>) -> R,
+    ) -> Option<R> {
+        self.observe.entry_mut(id).map(edit)
     }
 
     fn set_observe_interest(
@@ -1007,6 +1029,14 @@ where
 
     fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<P::Token>> {
         self.bodies.rx.transfer(id)
+    }
+
+    fn with_rx_body_transfer<R>(
+        &self,
+        id: SlotId,
+        read: impl FnOnce(&BlockTransfer<P::Token>) -> R,
+    ) -> Option<R> {
+        self.bodies.rx.transfer_ref(id).map(read)
     }
 
     fn set_rx_body_transfer(

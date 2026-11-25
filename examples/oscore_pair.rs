@@ -10,9 +10,12 @@
 
 use std::{
     net::UdpSocket,
-    thread,
     time::{Duration, Instant},
 };
+
+#[cfg(any(unix, windows))]
+#[path = "support/udp_wait.rs"]
+mod udp_wait;
 
 #[path = "support/host_error.rs"]
 pub mod host_error;
@@ -146,23 +149,37 @@ where
     let epoch = Instant::now();
     let mut clock = CheckedClock::new(|| u64::try_from(epoch.elapsed().as_millis()));
     let call = client.get("telemetry").to(peer).send(clock.now_ms()?)?;
-    let mut output = [0; TELEMETRY.len()];
     loop {
         let now = clock.now_ms()?;
         server.poll(now)?;
         client.poll(now)?;
-        if let Some(reply) = client.take_response_into(call, &mut output)? {
-            let reply = reply?;
+        if let Some(outcome) = client.take_response_with(call, |reply| {
             if reply.code() != Code::CONTENT || reply.payload() != TELEMETRY {
                 return Err(host_error::Error::UnexpectedReply);
             }
             println!("OSCORE: received all {} bytes", reply.payload().len());
-            return Ok(());
+            Ok(())
+        })? {
+            return outcome?;
         }
         if epoch.elapsed() >= Duration::from_secs(5) {
             return Err(host_error::Error::Timeout);
         }
-        thread::sleep(Duration::from_millis(1));
+        #[cfg(any(unix, windows))]
+        {
+            let due = server
+                .next_poll_at(now)
+                .into_iter()
+                .chain(client.next_poll_at(now))
+                .fold(5000, u64::min);
+            udp_wait::wait(
+                [server.transport().socket(), client.transport().socket()],
+                epoch,
+                Some(due),
+            )?;
+        }
+        #[cfg(not(any(unix, windows)))]
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 

@@ -994,9 +994,10 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     /// snapshot (including a truncated piggyback — see
     /// [`Self::payload_truncated`]). Borrowed from [`super::App`] after
     /// [`super::App::take_response`]. App refuses representations above
-    /// [`RESPONSE_BODY`] with [`super::CallFailure::ResponseBodyBounds`].
-    /// Invalidated by a later take or poll. This is the client path for a
-    /// representation larger than [`INLINE_PAYLOAD`].
+    /// [`RESPONSE_BODY`] with [`super::CallFailure::ResponseBodyBounds`]
+    /// on the snapshot path. [`super::App::take_response_into`] borrows caller
+    /// storage and [`super::App::take_response_with`] lends the body slot to
+    /// the callback. Both can collect larger bodies when configured.
     #[must_use]
     pub const fn body(&self) -> Option<&'a [u8]> {
         self.assembled
@@ -1011,11 +1012,9 @@ impl<'a, T: OwnedToken> Response<'a, T> {
     pub(super) fn from_client(
         header: crate::message::ParsedMessage<'a, T>,
         origin: &'a super::client::ReplyMeta,
-        payload: &[u8],
-        content_format: Option<ContentFormat>,
+        payload: &'a [u8],
     ) -> Self {
-        let mut response = Self::new(header.code()).payload_copy(payload);
-        response.content_format = content_format;
+        let mut response = Self::new(header.code()).payload_borrowed(payload);
         // The retained header already owns type, Token, and Message ID. Keep
         // their identity together instead of copying each into another field.
         // Options already borrow this immutable inbox hold; origin can too.

@@ -1602,10 +1602,64 @@ fn pump_oscore_block(
 }
 
 #[test]
+fn protected_full_datagram_survives_short_collection_and_slot_reuse() {
+    use crate::{App, Response, ResponseBufferError, get, profiles};
+    const BODY: [u8; 193] = [0xa6; 193];
+    let client_ep = Endpoint::v4([192, 0, 2, 1], 5683);
+    let server_ep = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut server = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .route("ordinary", get(|_| Response::content(&BODY)))
+        .oscore(server_c1())
+        .bind(WideLoopback::default())
+        .unwrap();
+    let mut client = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<false>()
+        .full_responses()
+        .oscore(client_c1())
+        .bind(WideLoopback::default())
+        .unwrap();
+    for now in [0, 10] {
+        let call = client.get("ordinary").to(server_ep).send(now).unwrap();
+        let (_, bytes, n) = client.transport_mut().last_send.take().unwrap();
+        server.transport_mut().inbox = Some((client_ep, bytes, n));
+        server.poll(now + 1).unwrap();
+        let (_, bytes, n) = server.transport_mut().last_send.take().unwrap();
+        assert!(decode(&bytes[..n]).unwrap().oscore().is_some());
+        client.transport_mut().inbox = Some((server_ep, bytes, n));
+        client.poll(now + 2).unwrap();
+        let mut short = [0x5a; BODY.len() - 1];
+        assert!(matches!(client.take_response_into(call, &mut short),
+            Err(ResponseBufferError::TooSmall { required, available })
+            if required == BODY.len() && available == BODY.len() - 1));
+        assert_eq!(short, [0x5a; BODY.len() - 1]);
+        assert_eq!(client.engine_mut().rx_occupied(), 1);
+        let mut output = [0; BODY.len()];
+        let response = client
+            .take_response_into(call, &mut output)
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.payload(), BODY);
+        assert_eq!(client.engine_mut().rx_occupied(), 0);
+        assert_eq!(server.engine_mut().rx_occupied(), 0);
+    }
+}
+
+#[test]
 fn app_oscore_block2_get_assembles() {
     use crate::{App, Request, Response, get, profiles};
 
-    fn hello(_: Request<'_>) -> Response<'static> {
+    const ROUTE: &[&str] = &["devices", "zone/one", "history"];
+    fn hello(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.path(), ROUTE);
+        assert!(
+            request
+                .uri_query()
+                .eq(["unit=\u{b0}C", "", "unit=\u{b0}C"].map(Ok))
+        );
         Response::content(&LARGE).content_format(ContentFormat::OCTET_STREAM)
     }
 
@@ -1615,7 +1669,7 @@ fn app_oscore_block2_get_assembles() {
     let mut server = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .route("large", get(hello))
+        .route(ROUTE, get(hello))
         .allow_unprotected()
         .bind(WideLoopback::default())
         .unwrap();
@@ -1629,10 +1683,19 @@ fn app_oscore_block2_get_assembles() {
         .unwrap();
     client.set_oscore(&mut Some(client_c1())).unwrap();
 
-    let call = client.get("large").to(server_ep).send(0).unwrap();
+    let call = client
+        .get(ROUTE)
+        .to(server_ep)
+        .query("unit=\u{b0}C")
+        .query("")
+        .query("unit=\u{b0}C")
+        .send(0)
+        .unwrap();
     let (_, bytes, n) = client.transport().last_send.expect("protected GET");
     let req = decode(&bytes[..n]).unwrap();
     assert!(req.oscore().is_some());
+    assert!(req.uri_path().next().is_none());
+    assert!(req.uri_query().next().is_none());
     assert!(req.block2().is_none(), "Block2 is Inner");
 
     for t in 0u64..8 {
@@ -1922,8 +1985,8 @@ fn app_unprotected_request_is_401_max_age_zero() {
 }
 
 #[test]
-fn write_unprotected_rx_refuses_default_profile_overflow() {
-    use crate::app::write_unprotected_rx;
+fn admit_plaintext_rx_refuses_default_profile_overflow() {
+    use crate::app::admit_plaintext_rx;
     use crate::error::{EncodeError, SlotMessageError};
     use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
 
@@ -1942,8 +2005,8 @@ fn write_unprotected_rx_refuses_default_profile_overflow() {
     let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
     let mut buf = [0u8; 1600];
     let n = encode(&msg, &mut buf).unwrap();
-    let err =
-        write_unprotected_rx::<_, &'static str>(&mut engine, rx, &buf[..n], peer).unwrap_err();
+    let err = admit_plaintext_rx::<_, &'static str>(&mut engine, rx, &buf[..n], peer, 4, false)
+        .unwrap_err();
     assert_eq!(
         err,
         crate::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
@@ -1956,8 +2019,8 @@ fn write_unprotected_rx_refuses_default_profile_overflow() {
 }
 
 #[test]
-fn write_unprotected_rx_refuses_constrained_profile_overflow() {
-    use crate::app::write_unprotected_rx;
+fn admit_plaintext_rx_refuses_constrained_profile_overflow() {
+    use crate::app::admit_plaintext_rx;
     use crate::error::{EncodeError, SlotMessageError};
     use crate::storage::{EngineBuilder, Memory, SlotError, profiles};
 
@@ -1977,8 +2040,8 @@ fn write_unprotected_rx_refuses_constrained_profile_overflow() {
     let msg = Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&big);
     let mut buf = [0u8; 1472];
     let n = encode(&msg, &mut buf).unwrap();
-    let err =
-        write_unprotected_rx::<_, &'static str>(&mut engine, rx, &buf[..n], peer).unwrap_err();
+    let err = admit_plaintext_rx::<_, &'static str>(&mut engine, rx, &buf[..n], peer, 4, false)
+        .unwrap_err();
     assert_eq!(
         err,
         crate::Error::Message(SlotMessageError::Encode(EncodeError::BufferTooSmall))
@@ -1988,8 +2051,8 @@ fn write_unprotected_rx_refuses_constrained_profile_overflow() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn write_unprotected_rx_preserves_wire_and_refuses_smaller_runtime_slot() {
-    use crate::app::write_unprotected_rx;
+fn admit_plaintext_rx_preserves_wire_and_refuses_smaller_runtime_slot() {
+    use crate::app::admit_plaintext_rx;
     use crate::storage::{AllocMemory, Capacities, Engine, SlotError, profiles};
 
     let mut capacities = Capacities::from_profile::<profiles::Constrained>();
@@ -2004,17 +2067,29 @@ fn write_unprotected_rx_preserves_wire_and_refuses_smaller_runtime_slot() {
     let small =
         Message::new(Type::Confirmable, Code::PUT, MessageId::new(1)).with_payload(&body[..100]);
     let n = encode(&small, &mut wire).unwrap();
-    write_unprotected_rx::<_, &'static str>(&mut engine, rx, &wire[..n], peer).unwrap();
+    admit_plaintext_rx::<_, &'static str>(&mut engine, rx, &wire[..n], peer, 0, true).unwrap();
     assert_eq!(engine.access_rx(rx).unwrap().as_bytes(), &wire[..n]);
     assert_eq!(engine.rx_endpoint(rx), Some(peer));
 
+    let original = wire;
+    let changed = Message::new(Type::Confirmable, Code::GET, MessageId::new(3));
+    let len = encode(&changed, &mut wire).unwrap();
+    admit_plaintext_rx::<_, &'static str>(&mut engine, rx, &wire[..len], peer, n, false).unwrap();
+    assert_eq!(engine.access_rx(rx).unwrap().as_bytes(), &original[..n]);
+
     let large = Message::new(Type::Confirmable, Code::PUT, MessageId::new(2)).with_payload(&body);
-    let n = encode(&large, &mut wire).unwrap();
+    let len = encode(&large, &mut wire).unwrap();
     assert_eq!(
-        write_unprotected_rx::<_, &'static str>(&mut engine, rx, &wire[..n], peer),
+        admit_plaintext_rx::<_, &'static str>(&mut engine, rx, &wire[..len], peer, n, false),
         Err(crate::Error::Slot(SlotError::LengthExceedsSlot))
     );
     assert_eq!(engine.release_rx(rx), Err(SlotError::NotOccupied));
+    let reused = engine.acquire_rx().unwrap();
+    assert_eq!(
+        admit_plaintext_rx::<_, &'static str>(&mut engine, reused, &wire[..len], peer, 0, true),
+        Err(crate::Error::Slot(SlotError::LengthExceedsSlot))
+    );
+    assert_eq!(engine.release_rx(reused), Err(SlotError::NotOccupied));
 }
 
 #[test]

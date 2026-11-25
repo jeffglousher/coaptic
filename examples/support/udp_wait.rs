@@ -16,17 +16,24 @@ fn timeout(start: Instant, due_ms: u64) -> Timespec {
     }
 }
 
-pub fn wait(socket: &UdpSocket, start: Instant, due_ms: Option<u64>) -> io::Result<()> {
-    let timeout = due_ms.map(|due| timeout(start, due));
-    if timeout == Some(Timespec::default()) {
-        return Ok(());
-    }
-
-    let mut fds = [PollFd::new(socket, PollFlags::RDNORM)];
-    match poll(&mut fds, timeout.as_ref()) {
-        // App owns receive/error handling. An interrupt also restarts its clock.
-        Ok(_) | Err(rustix::io::Errno::INTR) => Ok(()),
-        Err(error) => Err(error.into()),
+pub fn wait<const N: usize>(
+    sockets: [&UdpSocket; N],
+    start: Instant,
+    due_ms: Option<u64>,
+) -> io::Result<()> {
+    let mut fds = sockets.map(|socket| PollFd::new(socket, PollFlags::RDNORM));
+    loop {
+        let remaining = due_ms.map(|due| timeout(start, due));
+        if remaining == Some(Timespec::default()) {
+            return Ok(());
+        }
+        match poll(&mut fds, remaining.as_ref()) {
+            // Winsock can report a timeout before our monotonic deadline.
+            Ok(0) if due_ms.is_some() => continue,
+            // App owns receive/error handling. An interrupt also restarts its clock.
+            Ok(_) | Err(rustix::io::Errno::INTR) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
     }
 }
 
@@ -49,7 +56,7 @@ mod tests {
     fn idle_socket_waits_until_its_deadline() -> io::Result<()> {
         let socket = UdpSocket::bind("127.0.0.1:0")?;
         let start = Instant::now();
-        wait(&socket, start, Some(20))?;
+        wait([&socket], start, Some(20))?;
         assert!(start.elapsed() >= Duration::from_millis(20));
         Ok(())
     }
@@ -64,7 +71,7 @@ mod tests {
         let mut buf = [0; 4];
         for packet in [&[1; 8][..], &[][..], b"read"] {
             sender.send_to(packet, dest)?;
-            wait(transport.socket(), Instant::now(), Some(1000))?;
+            wait([transport.socket()], Instant::now(), Some(1000))?;
             let result = transport.recv(&mut buf);
             if packet.len() > buf.len() {
                 assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);

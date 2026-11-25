@@ -17,15 +17,23 @@ use super::{Error, KEY_LEN, NONCE_LEN, TAG_LEN};
 // are unused. Keep the key schedule local rather than enlarging every context.
 type Aes128Ccm = Ccm<Aes128Enc, U8, U13>;
 
-pub(crate) fn hkdf_expand(
-    master_secret: &[u8],
-    master_salt: &[u8],
+// Keep the extraction temporaries out of the expansion caller's persistent frame.
+#[inline(never)]
+pub(super) fn hkdf_extract(salt: &[u8], secret: &[u8]) -> Hkdf<Sha256> {
+    Hkdf::new(Some(salt), secret)
+}
+
+pub(super) fn hkdf_expand(
+    hkdf: &Hkdf<Sha256>,
     id: &[u8],
     id_context: Option<&[u8]>,
     label: &str,
     out: &mut [u8],
 ) -> Result<(), Error> {
-    let mut info = [0u8; 48];
+    // Five-element array, two short byte strings, algorithm, "Key" or "IV", and output length.
+    // Each CBOR header and integer occupies one byte for this suite.
+    const INFO_BYTES: usize = 9 + super::MAX_ID_LEN + super::MAX_ID_CONTEXT_LEN;
+    let mut info = [0u8; INFO_BYTES];
     let n = cbor::encode_info(
         &mut info,
         id,
@@ -33,8 +41,7 @@ pub(crate) fn hkdf_expand(
         label,
         u8::try_from(out.len()).map_err(|_| Error::Derive)?,
     )?;
-    let hk = Hkdf::<Sha256>::new(Some(master_salt), master_secret);
-    hk.expand(&info[..n], out).map_err(|_| Error::Derive)
+    hkdf.expand(&info[..n], out).map_err(|_| Error::Derive)
 }
 
 pub(crate) fn nonce(common_iv: &[u8; NONCE_LEN], id_piv: &[u8], piv: PartialIv) -> [u8; NONCE_LEN] {

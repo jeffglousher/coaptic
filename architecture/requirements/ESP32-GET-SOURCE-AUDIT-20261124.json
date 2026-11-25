@@ -1,0 +1,1573 @@
+{
+  "images": {
+    "base": {
+      "archive_sha256": "2c95c5b87bfbdad206f61a0bdb58a6fb7c6bfc36b1f3764a11287f1514e98f1f",
+      "image_sha256": "b779c79597b01d90efd159f2a32f97e963acbd67beee8b9b0c2dfd1ff1c2808d",
+      "image_bytes": 1641536,
+      "elf_sha256": "47a22fbec694d8d44d0a0917a4e6a84e07cb6965156305c79778b1b4334ae10f",
+      "run_id": "d85709564e2d748a0483939775ed05d6",
+      "staging_restored": true,
+      "partitions_unchanged": true
+    },
+    "candidate": {
+      "archive_sha256": "b9aed2138d9f536027d1c069befe090c7cecb612bbef8f2242e99921c3850368",
+      "image_sha256": "ce9a52dcc86dcf675d0b47f4a80d9d86f29d341ec7db4632e0d4ef0cad75c42b",
+      "image_bytes": 1641536,
+      "elf_sha256": "6933e193e01fcf688bb3a502f3e7c6fbb9dcf0ec50f8435e7244d77b46407084",
+      "run_id": "dd684d648875cb02609212fd62ea0ca6",
+      "staging_restored": true,
+      "partitions_unchanged": true
+    }
+  },
+  "boot_order": [
+    [
+      "base",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "base"
+    ],
+    [
+      "base",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "base"
+    ]
+  ],
+  "verified_reads": 1536,
+  "datagrams": {
+    "tx": 2048,
+    "rx": 2048
+  },
+  "restored": true,
+  "latency": [
+    {
+      "client": "sync",
+      "path": "identity",
+      "p50_p95_ms": {
+        "base": [
+          7.1071,
+          10.1882
+        ],
+        "candidate": [
+          7.09415,
+          10.6384
+        ]
+      },
+      "boot_medians_ms": {
+        "base": [
+          6.11875,
+          7.20105,
+          6.88015,
+          7.11365
+        ],
+        "candidate": [
+          6.0981000000000005,
+          7.1211,
+          7.6041,
+          7.475350000000001
+        ]
+      },
+      "paired_percent": [
+        -0.337487231869249,
+        -1.1102547545149721,
+        10.522299659164403,
+        5.084590892158047
+      ]
+    },
+    {
+      "client": "sync",
+      "path": "test",
+      "p50_p95_ms": {
+        "base": [
+          7.61245,
+          11.4907
+        ],
+        "candidate": [
+          7.6249,
+          10.656
+        ]
+      },
+      "boot_medians_ms": {
+        "base": [
+          8.0548,
+          7.4642,
+          7.5969,
+          7.6188
+        ],
+        "candidate": [
+          6.135149999999999,
+          7.6455,
+          7.54555,
+          7.64535
+        ]
+      },
+      "paired_percent": [
+        -23.832373243283513,
+        2.428927413520543,
+        -0.6759336044965591,
+        0.348480075602442
+      ]
+    },
+    {
+      "client": "sync",
+      "path": "large",
+      "p50_p95_ms": {
+        "base": [
+          18.315649999999998,
+          22.8398
+        ],
+        "candidate": [
+          18.2583,
+          22.8426
+        ]
+      },
+      "boot_medians_ms": {
+        "base": [
+          18.8156,
+          18.2753,
+          18.28425,
+          19.1635
+        ],
+        "candidate": [
+          17.0319,
+          19.436999999999998,
+          18.25435,
+          18.28915
+        ]
+      },
+      "paired_percent": [
+        -9.479899657730817,
+        6.356667195613741,
+        -0.16352872007329156,
+        -4.562579904505959
+      ]
+    },
+    {
+      "client": "async",
+      "path": "identity",
+      "p50_p95_ms": {
+        "base": [
+          6.2882,
+          11.5384
+        ],
+        "candidate": [
+          6.1678,
+          10.1051
+        ]
+      },
+      "boot_medians_ms": {
+        "base": [
+          5.5296,
+          7.3908000000000005,
+          6.94855,
+          5.95935
+        ],
+        "candidate": [
+          6.881399999999999,
+          5.87995,
+          6.0813,
+          6.74885
+        ]
+      },
+      "paired_percent": [
+        24.446614583333304,
+        -20.4423066515127,
+        -12.481021220254584,
+        13.248089137238118
+      ]
+    },
+    {
+      "client": "async",
+      "path": "test",
+      "p50_p95_ms": {
+        "base": [
+          7.2052499999999995,
+          10.853
+        ],
+        "candidate": [
+          7.35145,
+          10.4361
+        ]
+      },
+      "boot_medians_ms": {
+        "base": [
+          7.4738,
+          7.1251999999999995,
+          7.3256499999999996,
+          7.0369
+        ],
+        "candidate": [
+          7.108750000000001,
+          7.68835,
+          7.9101,
+          7.06695
+        ]
+      },
+      "paired_percent": [
+        -4.884396157242621,
+        7.903637792623375,
+        7.978131633370422,
+        0.42703463172704126
+      ]
+    },
+    {
+      "client": "async",
+      "path": "large",
+      "p50_p95_ms": {
+        "base": [
+          17.27075,
+          22.6009
+        ],
+        "candidate": [
+          17.479750000000003,
+          21.8717
+        ]
+      },
+      "boot_medians_ms": {
+        "base": [
+          16.7969,
+          17.20485,
+          17.27075,
+          17.914299999999997
+        ],
+        "candidate": [
+          17.39395,
+          17.56995,
+          16.730649999999997,
+          17.488599999999998
+        ]
+      },
+      "paired_percent": [
+        3.5545249421023994,
+        2.1220760425112672,
+        -3.1272527249830095,
+        -2.376313894486526
+      ]
+    }
+  ],
+  "process_metrics": [
+    {
+      "arm": "base",
+      "client": "sync",
+      "mixed_reads_s": 86.732329062244,
+      "client_cpu_us_per_read": 528.9713541666666,
+      "max_client_rss_B": 5283840,
+      "max_client_private_B": 937984
+    },
+    {
+      "arm": "base",
+      "client": "async",
+      "mixed_reads_s": 92.91799052737579,
+      "client_cpu_us_per_read": 447.5911458333333,
+      "max_client_rss_B": 5832704,
+      "max_client_private_B": 1445888
+    },
+    {
+      "arm": "candidate",
+      "client": "sync",
+      "mixed_reads_s": 87.93850951655197,
+      "client_cpu_us_per_read": 691.7317708333333,
+      "max_client_rss_B": 5812224,
+      "max_client_private_B": 1011712
+    },
+    {
+      "arm": "candidate",
+      "client": "async",
+      "mixed_reads_s": 92.07452936489777,
+      "client_cpu_us_per_read": 691.7317708333333,
+      "max_client_rss_B": 5844992,
+      "max_client_private_B": 1216512
+    }
+  ],
+  "device_resources": [
+    {
+      "arm": "base",
+      "pair": 1,
+      "heap": 68772,
+      "stack_unused": 90992,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "d85709564e2d748a0483939775ed05d6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 90992,
+        "stack_capacity_bytes": 196608,
+        "polls": 440,
+        "idle_waits": 128,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -29.0
+      ]
+    },
+    {
+      "arm": "candidate",
+      "pair": 1,
+      "heap": 68768,
+      "stack_unused": 90992,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "dd684d648875cb02609212fd62ea0ca6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 90992,
+        "stack_capacity_bytes": 196608,
+        "polls": 446,
+        "idle_waits": 132,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -28.0
+      ]
+    },
+    {
+      "arm": "candidate",
+      "pair": 2,
+      "heap": 68784,
+      "stack_unused": 90996,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "dd684d648875cb02609212fd62ea0ca6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 90996,
+        "stack_capacity_bytes": 196608,
+        "polls": 452,
+        "idle_waits": 127,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -28.0
+      ]
+    },
+    {
+      "arm": "base",
+      "pair": 2,
+      "heap": 68760,
+      "stack_unused": 90992,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "d85709564e2d748a0483939775ed05d6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 90992,
+        "stack_capacity_bytes": 196608,
+        "polls": 455,
+        "idle_waits": 131,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -29.0
+      ]
+    },
+    {
+      "arm": "base",
+      "pair": 3,
+      "heap": 68792,
+      "stack_unused": 91004,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "d85709564e2d748a0483939775ed05d6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 91004,
+        "stack_capacity_bytes": 196608,
+        "polls": 448,
+        "idle_waits": 129,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -29.0
+      ]
+    },
+    {
+      "arm": "candidate",
+      "pair": 3,
+      "heap": 68752,
+      "stack_unused": 91000,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "dd684d648875cb02609212fd62ea0ca6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 91000,
+        "stack_capacity_bytes": 196608,
+        "polls": 454,
+        "idle_waits": 128,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -29.0
+      ]
+    },
+    {
+      "arm": "candidate",
+      "pair": 4,
+      "heap": 68780,
+      "stack_unused": 91000,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "dd684d648875cb02609212fd62ea0ca6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 91000,
+        "stack_capacity_bytes": 196608,
+        "polls": 453,
+        "idle_waits": 131,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -29.0
+      ]
+    },
+    {
+      "arm": "base",
+      "pair": 4,
+      "heap": 68796,
+      "stack_unused": 91000,
+      "stack": 196608,
+      "drops": 0,
+      "device_counters": {
+        "run_id": "d85709564e2d748a0483939775ed05d6",
+        "rx": 368,
+        "tx": 368,
+        "dropped": 0,
+        "stack_high_water_bytes": 91000,
+        "stack_capacity_bytes": 196608,
+        "polls": 447,
+        "idle_waits": 129,
+        "scheduler_yields": 0,
+        "wait_errors": 0
+      },
+      "rssi_samples": [
+        -28.0
+      ]
+    }
+  ],
+  "batches": [
+    {
+      "name": "1-1-base-0-async",
+      "sha256": "3a0043d97834c71e11145efc556873e6e82238250456261d6168a0bd4efd69ba"
+    },
+    {
+      "name": "1-1-base-1-sync",
+      "sha256": "2c34cf62788a68322529688c38d0325580543ace4bd78df15c96566b10e68362"
+    },
+    {
+      "name": "1-1-base-2-sync",
+      "sha256": "1de46e75e4ffc9eb61e5cc33efd13945a78b953a7a860f6386a1282c275f0259"
+    },
+    {
+      "name": "1-1-base-3-async",
+      "sha256": "860af2250d9f220b5b96f11e799d506138080d336e4fe394720921ef26e9404a"
+    },
+    {
+      "name": "1-1-base-4-async",
+      "sha256": "edbb4a62acb3af363282ee264a3e1fb6d6bf970af1ddf8129b58a30ff98c7d04"
+    },
+    {
+      "name": "1-1-base-5-sync",
+      "sha256": "05be76eef54f52085b8d71e0d2d4534327246c136abf5d8d2927c615786b4181"
+    },
+    {
+      "name": "1-1-base-6-sync",
+      "sha256": "9520fc2cdfd771c551e0f6e6325446692e067f9b6c93ccb5a08cba3fd6ebd0e8"
+    },
+    {
+      "name": "1-1-base-7-async",
+      "sha256": "b25245f264e20e3b2e413edb9b121495a34abdfd176f3605cf052fa108ecb744"
+    },
+    {
+      "name": "1-2-candidate-0-async",
+      "sha256": "be0328125c4fe6a38e8a2161f691112f500bb70746c6f905584132f5b8fa8bdd"
+    },
+    {
+      "name": "1-2-candidate-1-sync",
+      "sha256": "3d92fe316509cf12d77a4e2e51d525eab600dfb14026d1dcfc71e342cdbc3fd4"
+    },
+    {
+      "name": "1-2-candidate-2-sync",
+      "sha256": "5a4bf5b378fad72cef089fe3d5e012d1b71003d5d3eb0bb72a03220763c33714"
+    },
+    {
+      "name": "1-2-candidate-3-async",
+      "sha256": "6074510434500d7f675148bb03c52a883e6afa6dcbc6f59b952b5aa373bf19a8"
+    },
+    {
+      "name": "1-2-candidate-4-async",
+      "sha256": "19585770fccbcc94748497ad9dd236ec626fd5ab2eb533f289ffcafc1b1ccec3"
+    },
+    {
+      "name": "1-2-candidate-5-sync",
+      "sha256": "b09c11082d634a65a354a7561496089008e1c79bf33ecffcd50c64cb90e0b9d4"
+    },
+    {
+      "name": "1-2-candidate-6-sync",
+      "sha256": "8543f2f123382e799eb4d9f9ad4740c7816549577c6fd7caa9abe30ebabbca84"
+    },
+    {
+      "name": "1-2-candidate-7-async",
+      "sha256": "ac11804e20ce3c01ec034cee6730db3d15f63ec68200c9c567ed7348a27e6ace"
+    },
+    {
+      "name": "2-1-candidate-0-sync",
+      "sha256": "8082640807e0006ed7bd230f11da4049a45d85dca220d80d33edf7f995ae5d9c"
+    },
+    {
+      "name": "2-1-candidate-1-async",
+      "sha256": "1536a47fb893aeb42cf4e949acd226471dd49fe98c48befc8d59737293e533ad"
+    },
+    {
+      "name": "2-1-candidate-2-async",
+      "sha256": "5dedebfaea68f6391ce7fc3a59d5382a8215ffdcb8738fb5393b13ba5567e6b8"
+    },
+    {
+      "name": "2-1-candidate-3-sync",
+      "sha256": "0dca5b0220679927292e66d5fb30b69f8ced1c7a80bd4d3b18901cab6a36279c"
+    },
+    {
+      "name": "2-1-candidate-4-sync",
+      "sha256": "a0e0a73df1e03622a1abab69239bd0784606ba839e59ef7b9df5df218a577ca3"
+    },
+    {
+      "name": "2-1-candidate-5-async",
+      "sha256": "eae13100efe6f84bdc865d155f31a9924d654b1e869f2e868e1b24b6dbd6b34b"
+    },
+    {
+      "name": "2-1-candidate-6-async",
+      "sha256": "81675d843d2f5219d854d52534f87a547b9cfd2d3ec519a4bdb427c6537e13a9"
+    },
+    {
+      "name": "2-1-candidate-7-sync",
+      "sha256": "f2e02641b0d3250bfde3b3f65ae1e8c74dd2ad68e9f4dda6a579bfef30b026d1"
+    },
+    {
+      "name": "2-2-base-0-sync",
+      "sha256": "902317fc92bff0dba3f550ff77ce4dc9e1080cbc71abf1a92a60e587a2b103a8"
+    },
+    {
+      "name": "2-2-base-1-async",
+      "sha256": "1415a97f584fe02e6e5067780a0a5acee1ceb4337fd1ae8eab92b6e029f56081"
+    },
+    {
+      "name": "2-2-base-2-async",
+      "sha256": "9077b7cd4bfb795f9bbcb0623e3c51fa799eee83949b4036014eae265529f0aa"
+    },
+    {
+      "name": "2-2-base-3-sync",
+      "sha256": "ae352f27d3ceeaf8314846ebfaef2b3270f813ba6393e5184ec5d0fa3d2b7e9f"
+    },
+    {
+      "name": "2-2-base-4-sync",
+      "sha256": "aaa513e45dde9672cfc8e84e941cebc2fa54e8c5bc53a11cdd454f940044cb88"
+    },
+    {
+      "name": "2-2-base-5-async",
+      "sha256": "9d7548ae5697d277ea4e6f8bea9a26ea535f81e4107877b790f60805527bf9a9"
+    },
+    {
+      "name": "2-2-base-6-async",
+      "sha256": "7b944f13315f1aaa6084ba6c8afd8c2ffd0a129889628d0cf2e39d1cf2e38eb9"
+    },
+    {
+      "name": "2-2-base-7-sync",
+      "sha256": "2cafef1e0009d39b5b88a78f0828bed19c69d0e4b67e0222492f2dd4dfa120a0"
+    },
+    {
+      "name": "3-1-base-0-async",
+      "sha256": "1b55ab9c1989fbff5fe1e4cf39de286a0c11203cd8f69c7e95936772f2d73a16"
+    },
+    {
+      "name": "3-1-base-1-sync",
+      "sha256": "8493577ed68926ec6a25cf2a6d81c72a22b5d767cfc861bc12039e8c1203d5cd"
+    },
+    {
+      "name": "3-1-base-2-sync",
+      "sha256": "834ead688f407a4664ccedb68ef7edf62d56460d75d1425a82f210ed0dbfda87"
+    },
+    {
+      "name": "3-1-base-3-async",
+      "sha256": "531d67b1c3dd157b833ae48dc96592e198953ca2f8f8f8239aa869b834d67452"
+    },
+    {
+      "name": "3-1-base-4-async",
+      "sha256": "5f12548406cee1f7bdc093f3623450e790dd4901bcd6ab80b5f47a044b2a583d"
+    },
+    {
+      "name": "3-1-base-5-sync",
+      "sha256": "7b9b528556799bd6f7cd02c209ef88f3d8f6c6a02ff6ba98350e4f8d846bfa2d"
+    },
+    {
+      "name": "3-1-base-6-sync",
+      "sha256": "08ee7427261ef2b654ba3d58afd7558a44f05e03acadfa83890a1e262939b10e"
+    },
+    {
+      "name": "3-1-base-7-async",
+      "sha256": "d8fd542f73c65d411e5cbf5c4a8fd458e3cec775e6fd9098c99cfa51d85f9936"
+    },
+    {
+      "name": "3-2-candidate-0-async",
+      "sha256": "fb1c9ca96a336180ce37c2ea61bd9c2f847d834ec588155cd9e7981e308c62ef"
+    },
+    {
+      "name": "3-2-candidate-1-sync",
+      "sha256": "dfb11d5ba8d508a57ddc37ebf96f15f95c3b356e4ae11b75297509b3b86b3657"
+    },
+    {
+      "name": "3-2-candidate-2-sync",
+      "sha256": "f7151a96060b5208bd76c8f53eae937a7de00d7b162d20f5c0d8966c67941289"
+    },
+    {
+      "name": "3-2-candidate-3-async",
+      "sha256": "6611661f92255dfc4fdb342c05eb625ce030f982c4694754e5ad53a544e45ef8"
+    },
+    {
+      "name": "3-2-candidate-4-async",
+      "sha256": "c21b5b3c507fb5affa8185cc27aa01bcd2329cd6e6a4828dc7a974b43b01351b"
+    },
+    {
+      "name": "3-2-candidate-5-sync",
+      "sha256": "a32b4fdc99c092a5b924852d53e00d14ccafd8f9fe765ad028c902c4f696f85a"
+    },
+    {
+      "name": "3-2-candidate-6-sync",
+      "sha256": "da2edfea21dd2dd66f7d8e531c3f764f9d609e68d883cd4961e2d21e935bab85"
+    },
+    {
+      "name": "3-2-candidate-7-async",
+      "sha256": "252e0bc051852c7c2ab04f3cda6a1fb2a8abec402f873d5c832192dfbbeed81e"
+    },
+    {
+      "name": "4-1-candidate-0-sync",
+      "sha256": "3d12bd314aec95d3ef4e7f08848e4b1f86a2142e7bb36a966156067c8426ddfb"
+    },
+    {
+      "name": "4-1-candidate-1-async",
+      "sha256": "1f194e3e4bd3cab73073f97014652f8dc5e4adbc5205e7b2ac734f9b25bae2a2"
+    },
+    {
+      "name": "4-1-candidate-2-async",
+      "sha256": "f2f3a4b1e483e57b0c5966c1eea032f9b92dd903a2ee4dc67fee56b6cb863c97"
+    },
+    {
+      "name": "4-1-candidate-3-sync",
+      "sha256": "7088bc28854517d7540812b1e079447c9252933e1da132db47fd8b3af470e088"
+    },
+    {
+      "name": "4-1-candidate-4-sync",
+      "sha256": "c17de78bbf9dae3d7f8629383bef39ce7d2a1a58d7e3460c17b9dcc2369751ca"
+    },
+    {
+      "name": "4-1-candidate-5-async",
+      "sha256": "a9aeec98a96ce212522cd3bbc1ca903e1f9f3812dd5c9679fe8cf2554c863286"
+    },
+    {
+      "name": "4-1-candidate-6-async",
+      "sha256": "7074d82f0fd8b284ad9880b75944b4df1738a41224bcf9f5a66cd2bd90ce352a"
+    },
+    {
+      "name": "4-1-candidate-7-sync",
+      "sha256": "8c61cc4e1d12aa19c10fd5de273702483e5471a206c7e24be171c92f6486cdbf"
+    },
+    {
+      "name": "4-2-base-0-sync",
+      "sha256": "ee3e1b0d9e5826bffa74f503f22029f3039c44f6531d7802beba6edabc61046a"
+    },
+    {
+      "name": "4-2-base-1-async",
+      "sha256": "f2ac0862bc600349e6ebd4284e189f7526eefa170ace18f62952f5ccba621e97"
+    },
+    {
+      "name": "4-2-base-2-async",
+      "sha256": "25c5f883f52493ef836d490420b610316079c7f37da2dbf11fbb49c261562765"
+    },
+    {
+      "name": "4-2-base-3-sync",
+      "sha256": "50328034f42bdededba7cdb56c4ee204ba47bb7f4cbf6d7c993274765edf769c"
+    },
+    {
+      "name": "4-2-base-4-sync",
+      "sha256": "fb44c27d1ae3e762ed5b52e3d64f294546bf08d43e7267a5b5691a4ac933a186"
+    },
+    {
+      "name": "4-2-base-5-async",
+      "sha256": "0db0a1e4bce52ec686f53bbc3d9e8f6695afda2e840186dca30ca79471c05817"
+    },
+    {
+      "name": "4-2-base-6-async",
+      "sha256": "867695f05707bc497501d373fadcd815a2e75e5329de2ea421e3705532a9538f"
+    },
+    {
+      "name": "4-2-base-7-sync",
+      "sha256": "570cea034f4108e64e3005b1d6791419776b26fbe169301bc05235f7050355d6"
+    }
+  ],
+  "in_memory_release_pairs": [
+    {
+      "pair": 0,
+      "arm": "original",
+      "ns": {
+        "false": 608,
+        "true": 1701
+      }
+    },
+    {
+      "pair": 0,
+      "arm": "changed",
+      "ns": {
+        "false": 578,
+        "true": 1586
+      }
+    },
+    {
+      "pair": 1,
+      "arm": "changed",
+      "ns": {
+        "false": 572,
+        "true": 1586
+      }
+    },
+    {
+      "pair": 1,
+      "arm": "original",
+      "ns": {
+        "false": 616,
+        "true": 1668
+      }
+    },
+    {
+      "pair": 2,
+      "arm": "original",
+      "ns": {
+        "false": 602,
+        "true": 1662
+      }
+    },
+    {
+      "pair": 2,
+      "arm": "changed",
+      "ns": {
+        "false": 583,
+        "true": 1541
+      }
+    },
+    {
+      "pair": 3,
+      "arm": "changed",
+      "ns": {
+        "false": 577,
+        "true": 1585
+      }
+    },
+    {
+      "pair": 3,
+      "arm": "original",
+      "ns": {
+        "false": 619,
+        "true": 1678
+      }
+    },
+    {
+      "pair": 4,
+      "arm": "original",
+      "ns": {
+        "false": 614,
+        "true": 1672
+      }
+    },
+    {
+      "pair": 4,
+      "arm": "changed",
+      "ns": {
+        "false": 569,
+        "true": 1584
+      }
+    },
+    {
+      "pair": 5,
+      "arm": "changed",
+      "ns": {
+        "false": 565,
+        "true": 1592
+      }
+    },
+    {
+      "pair": 5,
+      "arm": "original",
+      "ns": {
+        "false": 620,
+        "true": 1694
+      }
+    },
+    {
+      "pair": 6,
+      "arm": "original",
+      "ns": {
+        "false": 634,
+        "true": 1674
+      }
+    },
+    {
+      "pair": 6,
+      "arm": "changed",
+      "ns": {
+        "false": 595,
+        "true": 1584
+      }
+    },
+    {
+      "pair": 7,
+      "arm": "changed",
+      "ns": {
+        "false": 573,
+        "true": 1598
+      }
+    },
+    {
+      "pair": 7,
+      "arm": "original",
+      "ns": {
+        "false": 625,
+        "true": 1676
+      }
+    },
+    {
+      "pair": 8,
+      "arm": "original",
+      "ns": {
+        "false": 621,
+        "true": 1672
+      }
+    },
+    {
+      "pair": 8,
+      "arm": "changed",
+      "ns": {
+        "false": 568,
+        "true": 1601
+      }
+    },
+    {
+      "pair": 9,
+      "arm": "changed",
+      "ns": {
+        "false": 569,
+        "true": 1611
+      }
+    },
+    {
+      "pair": 9,
+      "arm": "original",
+      "ns": {
+        "false": 620,
+        "true": 1687
+      }
+    },
+    {
+      "pair": 10,
+      "arm": "original",
+      "ns": {
+        "false": 659,
+        "true": 1684
+      }
+    },
+    {
+      "pair": 10,
+      "arm": "changed",
+      "ns": {
+        "false": 691,
+        "true": 1591
+      }
+    }
+  ],
+  "in_memory_release_sha256": {
+    "original": "9a72bb81496bc01d6c780478710969b6c426a0c24562546ccc19dbfd2e370af6",
+    "changed": "bf253bd15d33acf6e8d2b818ed489afe304ea5e09f1018e274e15679cd3a0996"
+  },
+  "symbol_sizes": {
+    "C": {
+      "elf_sha256": "7dbddc984c57b6dd450d39a8d51e4fb02686952ba13b6564a5bf197487f83ff3",
+      "symbols": [
+        {
+          "symbol": "esphome::libcoap_benchmark::(anonymous namespace)::server_get(coap_resource_t*, coap_session_t*, coap_pdu_t const*, coap_string_t const*, coap_pdu_t*)",
+          "entry_pc": "0x4200ee80",
+          "text_bytes": 214,
+          "entry_frame_bytes": 48
+        },
+        {
+          "symbol": "coap_dispatch",
+          "entry_pc": "0x42021868",
+          "text_bytes": 1291,
+          "entry_frame_bytes": 80
+        },
+        {
+          "symbol": "coap_handle_dgram",
+          "entry_pc": "0x42021d74",
+          "text_bytes": 137,
+          "entry_frame_bytes": 32
+        },
+        {
+          "symbol": "coap_handle_dgram_for_proto",
+          "entry_pc": "0x42021e00",
+          "text_bytes": 87,
+          "entry_frame_bytes": 48
+        },
+        {
+          "symbol": "coap_io_process_with_fds_lkd",
+          "entry_pc": "0x4201f118",
+          "text_bytes": 585,
+          "entry_frame_bytes": 80
+        }
+      ]
+    },
+    "sync": {
+      "elf_sha256": "610596c0bba1ea72e48815ee9c2f2382ee1cf3c3f2bf23dc7d580fbcad275058",
+      "symbols": [
+        {
+          "symbol": "coaptic::app::poll_engine::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic_esphome_probe::network_ffi::Socket, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>",
+          "entry_pc": "0x42027984",
+          "text_bytes": 31887,
+          "entry_frame_bytes": 5184
+        },
+        {
+          "symbol": "coaptic::app::poll_engine::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic_esphome_probe::network_ffi::Socket, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#8}",
+          "entry_pc": "0x42056d70",
+          "text_bytes": 78,
+          "entry_frame_bytes": 144
+        }
+      ]
+    },
+    "async": {
+      "elf_sha256": "342913a7814f7c5b5685a961aec258c18c1a3e475a786e96d35e168faf41c351",
+      "symbols": [
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network::async_service::run_protected_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_protected_async::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer>::{closure#0}::{closure#4}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x42084534",
+          "text_bytes": 90358,
+          "entry_frame_bytes": 14416
+        },
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4206e730",
+          "text_bytes": 89604,
+          "entry_frame_bytes": 14368
+        },
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}::{closure#17}",
+          "entry_pc": "0x420be328",
+          "text_bytes": 182,
+          "entry_frame_bytes": 688
+        },
+        {
+          "symbol": "coaptic::app::poll_engine_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network::async_service::run_protected_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_protected_async::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer>::{closure#0}::{closure#4}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4205bc0c",
+          "text_bytes": 50883,
+          "entry_frame_bytes": 5632
+        },
+        {
+          "symbol": "coaptic::app::poll_engine_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4204fda8",
+          "text_bytes": 48740,
+          "entry_frame_bytes": 5472
+        }
+      ]
+    }
+  },
+  "independent": [
+    {
+      "round": 1,
+      "arm": "base",
+      "path": "test",
+      "n": 16,
+      "median_ms": 6.40975,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 11.1703,
+      "sha256": "85c3e4e279c469206c1492f5f963d98802cf173ca318cc9bed7a3e086db4d2ff"
+    },
+    {
+      "round": 1,
+      "arm": "base",
+      "path": "large",
+      "n": 16,
+      "median_ms": 18.4724,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 26.7822,
+      "sha256": "85c3e4e279c469206c1492f5f963d98802cf173ca318cc9bed7a3e086db4d2ff"
+    },
+    {
+      "round": 1,
+      "arm": "base",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 5.9378,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "85c3e4e279c469206c1492f5f963d98802cf173ca318cc9bed7a3e086db4d2ff"
+    },
+    {
+      "round": 1,
+      "arm": "candidate",
+      "path": "test",
+      "n": 16,
+      "median_ms": 5.864850000000001,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 11.171299999999999,
+      "sha256": "51a4cac53c52b77657cafa54ea14b3e98b3a0cc0071c981ab424b649598e54f0"
+    },
+    {
+      "round": 1,
+      "arm": "candidate",
+      "path": "large",
+      "n": 16,
+      "median_ms": 16.589399999999998,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 26.37165,
+      "sha256": "51a4cac53c52b77657cafa54ea14b3e98b3a0cc0071c981ab424b649598e54f0"
+    },
+    {
+      "round": 1,
+      "arm": "candidate",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 6.30035,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "51a4cac53c52b77657cafa54ea14b3e98b3a0cc0071c981ab424b649598e54f0"
+    },
+    {
+      "round": 2,
+      "arm": "candidate",
+      "path": "test",
+      "n": 16,
+      "median_ms": 7.78915,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 12.238499999999998,
+      "sha256": "ce6380a833b8039fc4b3095de4bf4e8d740b42e6baf1aa465a6c6039de844410"
+    },
+    {
+      "round": 2,
+      "arm": "candidate",
+      "path": "large",
+      "n": 16,
+      "median_ms": 17.5536,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 27.6981,
+      "sha256": "ce6380a833b8039fc4b3095de4bf4e8d740b42e6baf1aa465a6c6039de844410"
+    },
+    {
+      "round": 2,
+      "arm": "candidate",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 6.08425,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "ce6380a833b8039fc4b3095de4bf4e8d740b42e6baf1aa465a6c6039de844410"
+    },
+    {
+      "round": 2,
+      "arm": "base",
+      "path": "test",
+      "n": 16,
+      "median_ms": 6.2504,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 11.4701,
+      "sha256": "7fa1401d6f7a3366dcb5e312a1d5178396b2953fdfc118c6fc147b6ea64e2e39"
+    },
+    {
+      "round": 2,
+      "arm": "base",
+      "path": "large",
+      "n": 16,
+      "median_ms": 16.3979,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 27.532049999999998,
+      "sha256": "7fa1401d6f7a3366dcb5e312a1d5178396b2953fdfc118c6fc147b6ea64e2e39"
+    },
+    {
+      "round": 2,
+      "arm": "base",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 6.64905,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "7fa1401d6f7a3366dcb5e312a1d5178396b2953fdfc118c6fc147b6ea64e2e39"
+    },
+    {
+      "round": 3,
+      "arm": "base",
+      "path": "test",
+      "n": 16,
+      "median_ms": 7.177849999999999,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 10.8162,
+      "sha256": "b7c7d25a36c0fcadffa2990f77b859f105c76123c31a3776f2f8df8a1b8ca7fc"
+    },
+    {
+      "round": 3,
+      "arm": "base",
+      "path": "large",
+      "n": 16,
+      "median_ms": 19.3948,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 26.6841,
+      "sha256": "b7c7d25a36c0fcadffa2990f77b859f105c76123c31a3776f2f8df8a1b8ca7fc"
+    },
+    {
+      "round": 3,
+      "arm": "base",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 7.6754999999999995,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "b7c7d25a36c0fcadffa2990f77b859f105c76123c31a3776f2f8df8a1b8ca7fc"
+    },
+    {
+      "round": 3,
+      "arm": "candidate",
+      "path": "test",
+      "n": 16,
+      "median_ms": 6.174250000000001,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 11.46265,
+      "sha256": "4ddeb725a5a95035ebfbb56787929839333833ba83590738f164b91dc7ce2371"
+    },
+    {
+      "round": 3,
+      "arm": "candidate",
+      "path": "large",
+      "n": 16,
+      "median_ms": 18.085250000000002,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 28.094749999999998,
+      "sha256": "4ddeb725a5a95035ebfbb56787929839333833ba83590738f164b91dc7ce2371"
+    },
+    {
+      "round": 3,
+      "arm": "candidate",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 5.77715,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "4ddeb725a5a95035ebfbb56787929839333833ba83590738f164b91dc7ce2371"
+    },
+    {
+      "round": 4,
+      "arm": "candidate",
+      "path": "test",
+      "n": 16,
+      "median_ms": 6.450100000000001,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 12.005099999999999,
+      "sha256": "177492a48ed674756fa32d2d0633cd9d2c1ff2615fdb4cf07daa4e259440cab3"
+    },
+    {
+      "round": 4,
+      "arm": "candidate",
+      "path": "large",
+      "n": 16,
+      "median_ms": 17.6817,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 27.458350000000003,
+      "sha256": "177492a48ed674756fa32d2d0633cd9d2c1ff2615fdb4cf07daa4e259440cab3"
+    },
+    {
+      "round": 4,
+      "arm": "candidate",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 6.3277,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "177492a48ed674756fa32d2d0633cd9d2c1ff2615fdb4cf07daa4e259440cab3"
+    },
+    {
+      "round": 4,
+      "arm": "base",
+      "path": "test",
+      "n": 16,
+      "median_ms": 6.87205,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 11.07085,
+      "sha256": "75cc109bec106ffbb287aeb81d041415310ffffe88f319d9b6a00e8b60e695fc"
+    },
+    {
+      "round": 4,
+      "arm": "base",
+      "path": "large",
+      "n": 16,
+      "median_ms": 18.2462,
+      "groups": 8,
+      "two_attempted": 16,
+      "two_verified": 16,
+      "overlap": 8,
+      "pair_median_ms": 27.323999999999998,
+      "sha256": "75cc109bec106ffbb287aeb81d041415310ffffe88f319d9b6a00e8b60e695fc"
+    },
+    {
+      "round": 4,
+      "arm": "base",
+      "path": "identity",
+      "n": 16,
+      "median_ms": 7.5447,
+      "groups": 0,
+      "two_attempted": 0,
+      "two_verified": 0,
+      "overlap": 0,
+      "pair_median_ms": null,
+      "sha256": "75cc109bec106ffbb287aeb81d041415310ffffe88f319d9b6a00e8b60e695fc"
+    }
+  ],
+  "duplicate_control": {
+    "boots": [
+      {
+        "arm": "coaptic",
+        "sha256": "b779c79597b01d90efd159f2a32f97e963acbd67beee8b9b0c2dfd1ff1c2808d",
+        "unique": 8,
+        "transmissions": 16,
+        "replies": [
+          {
+            "request": 0,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 0,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 1,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 1,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 2,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 2,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 3,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 3,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 4,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 4,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 5,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 5,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 6,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 6,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 7,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 7,
+            "repeat": true,
+            "verified": true
+          }
+        ],
+        "rx": 16,
+        "tx": 16,
+        "drops": 0
+      },
+      {
+        "arm": "libcoap",
+        "sha256": "c1e418deeaff3d1684e40677d2e9dfb88d4441687a4303240776fd1f2c3691ed",
+        "unique": 8,
+        "transmissions": 16,
+        "replies": [
+          {
+            "request": 0,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 0,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 1,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 1,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 2,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 2,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 3,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 3,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 4,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 4,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 5,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 5,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 6,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 6,
+            "repeat": true,
+            "verified": true
+          },
+          {
+            "request": 7,
+            "repeat": false,
+            "verified": true
+          },
+          {
+            "request": 7,
+            "repeat": true,
+            "verified": true
+          }
+        ],
+        "handler_calls": 16,
+        "refused_peers": 0
+      }
+    ],
+    "restored": true
+  },
+  "new_symbols": {
+    "base": {
+      "elf_sha256": "47a22fbec694d8d44d0a0917a4e6a84e07cb6965156305c79778b1b4334ae10f",
+      "symbols": [
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network::async_service::run_protected_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_protected_async::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer>::{closure#0}::{closure#4}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x42084534",
+          "text_bytes": 90358,
+          "entry_frame_bytes": 14416
+        },
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4206e730",
+          "text_bytes": 89604,
+          "entry_frame_bytes": 14368
+        },
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}::{closure#17}",
+          "entry_pc": "0x420be328",
+          "text_bytes": 182,
+          "entry_frame_bytes": 688
+        },
+        {
+          "symbol": "coaptic::app::poll_engine_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network::async_service::run_protected_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_protected_async::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer>::{closure#0}::{closure#4}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4205bc0c",
+          "text_bytes": 50883,
+          "entry_frame_bytes": 5632
+        },
+        {
+          "symbol": "coaptic::app::poll_engine_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4204fda8",
+          "text_bytes": 48740,
+          "entry_frame_bytes": 5472
+        }
+      ]
+    },
+    "candidate": {
+      "elf_sha256": "6933e193e01fcf688bb3a502f3e7c6fbb9dcf0ec50f8435e7244d77b46407084",
+      "symbols": [
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network::async_service::run_protected_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_protected_async::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer>::{closure#0}::{closure#4}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x42084520",
+          "text_bytes": 90377,
+          "entry_frame_bytes": 14416
+        },
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4206e704",
+          "text_bytes": 89628,
+          "entry_frame_bytes": 14368
+        },
+        {
+          "symbol": "coaptic::app::dispatch_rx_io_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}::{closure#17}",
+          "entry_pc": "0x420be328",
+          "text_bytes": 182,
+          "entry_frame_bytes": 688
+        },
+        {
+          "symbol": "coaptic::app::poll_engine_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network::async_service::run_protected_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_protected_async::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer>::{closure#0}::{closure#4}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4205bbe0",
+          "text_bytes": 50883,
+          "entry_frame_bytes": 5632
+        },
+        {
+          "symbol": "coaptic::app::poll_engine_async::<coaptic::storage::memory::Memory<coaptic::storage::profiles::Constrained, coaptic::storage::memory::WithBodies<coaptic::storage::profiles::Constrained>>, coaptic::app::async_server::ProtocolTransport<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::read_campaign::async_service::run_operations<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::security_state::State<coaptic_esphome_probe::network_ffi::Nvs>, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::read_campaign_device::run_async<coaptic_esphome_probe::async_network::Socket, coaptic_esphome_probe::network_ffi::Nvs, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#1}, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::async_network::Timer, coaptic_esphome_probe::network_ffi::run_read_campaign::{closure#2}>::{closure#0}::{closure#0}>::{closure#0}::{closure#2}, coaptic_esphome_probe::async_network::Timer>, 8, 0, 4, 4, &mut coaptic::app::response::SharedScratch<coaptic::storage::pool::DatagramScratch<1152>>>::{closure#0}",
+          "entry_pc": "0x4204fd7c",
+          "text_bytes": 48740,
+          "entry_frame_bytes": 5472
+        }
+      ]
+    }
+  }
+}

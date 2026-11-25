@@ -42,9 +42,9 @@ pub mod value;
 mod tests;
 
 pub use builder::OptionsBuilder;
-pub use decode::{ParsedMessage, TokenDecodeError, decode, decode_with_token};
 #[cfg(feature = "oscore")]
-pub(crate) use decode::{decode_options_payload, decode_without_token};
+pub(crate) use decode::decode_options_payload;
+pub use decode::{ParsedMessage, TokenDecodeError, decode, decode_with_token};
 pub use echo::{Echo, EchoFreshness};
 #[cfg(feature = "oscore")]
 pub(crate) use encode::write_option;
@@ -53,6 +53,7 @@ pub use hop::HopLimit;
 pub use id::{Ids, TokenSource};
 pub use missing_blocks::{MissingBlocks, MissingBlocksError};
 pub use no_response::NoResponse;
+pub(crate) use option::OptionTail;
 pub use option::{Opt, OptionNumber, Options};
 pub use precondition::Precondition;
 pub use problem::{ProblemDetails, ProblemError, ProblemOptions, ProblemText, WritingDirection};

@@ -267,6 +267,10 @@ impl ObserveResource {
         }
     }
 
+    pub(crate) fn app_route_index(self) -> Option<usize> {
+        usize::try_from(self.hash.checked_sub(1)?).ok()
+    }
+
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
@@ -539,25 +543,25 @@ impl<T: OwnedToken> ObserveInterest<T> {
 
     /// Lookup identity.
     #[must_use]
-    pub const fn key(self) -> ObserveKey<T> {
+    pub const fn key(&self) -> ObserveKey<T> {
         self.key
     }
 
     /// Client Token.
     #[must_use]
-    pub const fn token(self) -> T {
+    pub const fn token(&self) -> T {
         self.key.token()
     }
 
     /// Client endpoint.
     #[must_use]
-    pub const fn endpoint(self) -> Endpoint {
+    pub const fn endpoint(&self) -> Endpoint {
         self.key.endpoint()
     }
 
     /// Uri-Path resource key, if recorded.
     #[must_use]
-    pub const fn resource(self) -> ObserveResource {
+    pub const fn resource(&self) -> ObserveResource {
         self.resource
     }
 
@@ -570,7 +574,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
     /// Content-Format retained for notifications. `None` also covers an unknown
     /// cached representation format after an initial Valid response.
     #[must_use]
-    pub const fn content_format(self) -> Option<crate::message::ContentFormat> {
+    pub const fn content_format(&self) -> Option<crate::message::ContentFormat> {
         self.content_format
     }
 
@@ -587,7 +591,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
         }
     }
 
-    pub(crate) const fn format_unbound(self) -> bool {
+    pub(crate) const fn format_unbound(&self) -> bool {
         self.response_policy & 0x20 != 0
     }
 
@@ -608,7 +612,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
     }
 
     /// App-owned early Block2 negotiation; raw Engine interests default to none.
-    pub(crate) const fn block2_max_szx(self) -> Option<u8> {
+    pub(crate) const fn block2_max_szx(&self) -> Option<u8> {
         if self.response_policy & 0x80 != 0 {
             Some(self.response_policy & 7)
         } else {
@@ -630,7 +634,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
         self
     }
 
-    pub(crate) const fn q_block2(self) -> bool {
+    pub(crate) const fn q_block2(&self) -> bool {
         self.response_policy & 0x40 != 0
     }
 
@@ -639,14 +643,14 @@ impl<T: OwnedToken> ObserveInterest<T> {
         self
     }
 
-    pub(crate) const fn suppresses(self, code: crate::message::Code) -> bool {
+    pub(crate) const fn suppresses(&self, code: crate::message::Code) -> bool {
         crate::message::NoResponse::new(self.response_policy & 24).suppresses(code)
     }
 
     /// OSCORE request binding for protected notifications, if any.
     #[cfg(feature = "oscore")]
     #[must_use]
-    pub const fn oscore(self) -> Option<crate::oscore::RequestRef> {
+    pub const fn oscore(&self) -> Option<crate::oscore::RequestRef> {
         self.oscore
     }
 
@@ -660,7 +664,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
         }
     }
 
-    pub(crate) const fn is_deleted(self) -> bool {
+    pub(crate) const fn is_deleted(&self) -> bool {
         self.deleted
     }
 
@@ -677,13 +681,13 @@ impl<T: OwnedToken> ObserveInterest<T> {
     /// sequence for the same peer, Token and route. See
     /// `knowledge/rfcs/rfc7641.txt`.
     #[must_use]
-    pub const fn seq(self) -> u32 {
+    pub const fn seq(&self) -> u32 {
         self.seq
     }
 
     /// Whether a notification is waiting to be surfaced by progress.
     #[must_use]
-    pub const fn is_pending(self) -> bool {
+    pub const fn is_pending(&self) -> bool {
         self.pending
     }
 
@@ -698,8 +702,12 @@ impl<T: OwnedToken> ObserveInterest<T> {
 
     /// Colocated Max-Age / CON-wait lifetime, if set.
     #[must_use]
-    pub const fn lifetime(self) -> Option<ObserveLifetime> {
+    pub const fn lifetime(&self) -> Option<ObserveLifetime> {
         self.lifetime
+    }
+
+    pub(crate) fn set_lifetime(&mut self, lifetime: Option<ObserveLifetime>) {
+        self.lifetime = lifetime;
     }
 
     /// Replace the colocated lifetime (or clear it with `None`).
@@ -710,7 +718,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
 
     /// Whether `now_ms` is at or past a colocated lifetime deadline.
     #[must_use]
-    pub const fn is_lifetime_due(self, now_ms: u64) -> bool {
+    pub const fn is_lifetime_due(&self, now_ms: u64) -> bool {
         match self.lifetime {
             Some(life) => life.is_due(now_ms),
             None => false,
@@ -723,13 +731,13 @@ impl<T: OwnedToken> ObserveInterest<T> {
     /// the caller explicitly requires the next notification to use CON. See
     /// `knowledge/rfcs/rfc7641.txt` §4.5.
     #[must_use]
-    pub const fn confirm_due_ms(self) -> Option<u64> {
+    pub const fn confirm_due_ms(&self) -> Option<u64> {
         self.confirm_due_ms
     }
 
     /// Whether confirmation is due by time or explicitly required by the caller.
     #[must_use]
-    pub const fn must_confirm(self, now_ms: u64) -> bool {
+    pub const fn must_confirm(&self, now_ms: u64) -> bool {
         match self.confirm_due_ms {
             Some(due) => now_ms >= due,
             None => false,
@@ -744,7 +752,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
 
     /// Colocated NSTART / NON-rate hold, if set.
     #[must_use]
-    pub const fn notify_hold(self) -> Option<ObserveNotifyHold> {
+    pub const fn notify_hold(&self) -> Option<ObserveNotifyHold> {
         self.notify_hold
     }
 
@@ -753,7 +761,7 @@ impl<T: OwnedToken> ObserveInterest<T> {
     /// True while [`ObserveLifetime::Unacked`] is set, or while
     /// [`Self::notify_hold`] is outstanding at `now_ms`.
     #[must_use]
-    pub const fn is_notify_held(self, now_ms: u64) -> bool {
+    pub const fn is_notify_held(&self, now_ms: u64) -> bool {
         if matches!(self.lifetime, Some(ObserveLifetime::Unacked { .. })) {
             return true;
         }
@@ -853,6 +861,14 @@ impl<T: OwnedToken> ObserveInterest<T> {
         }
     }
 
+    pub(crate) fn assign_sequence(&mut self, confirmable: bool) -> Option<u32> {
+        if confirmable && !self.key().is_client() {
+            self.require_confirmation();
+        }
+        self.mark_due();
+        self.take_due()
+    }
+
     /// If pending, assign the next 24-bit sequence, clear pending, return it.
     ///
     /// Wraps through [`OBSERVE_SEQUENCE_MASK`]. See
@@ -924,7 +940,9 @@ pub(crate) trait ObserveStore<T: OwnedToken = Token> {
     fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId>;
     fn remove(&mut self, key: ObserveKey<T>) -> bool;
     fn take(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>>;
-    fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>>;
+    fn entry_ref(&self, id: SlotId) -> Option<&ObserveInterest<T>>;
+    fn entry_mut(&mut self, id: SlotId) -> Option<&mut ObserveInterest<T>>;
+
     fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError>;
 }
 
@@ -1174,7 +1192,7 @@ impl<const ENTRIES: usize, T: OwnedToken> ObserveTable<ENTRIES, T> {
     pub fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId> {
         (0..ENTRIES).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.entry(id) {
+            match self.entry_ref(id) {
                 Some(interest) if interest.key() == key => Some(id),
                 _ => None,
             }
@@ -1204,10 +1222,21 @@ impl<const ENTRIES: usize, T: OwnedToken> ObserveTable<ENTRIES, T> {
     /// Occupied payload at `id`.
     #[must_use]
     pub fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>> {
+        self.entry_ref(id).copied()
+    }
+
+    fn entry_ref(&self, id: SlotId) -> Option<&ObserveInterest<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.entries.get(id.index()).copied().flatten()
+        self.entries.get(id.index())?.as_ref()
+    }
+
+    fn entry_mut(&mut self, id: SlotId) -> Option<&mut ObserveInterest<T>> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.entries.get_mut(id.index())?.as_mut()
     }
 
     /// Write payload into an already-acquired slot.
@@ -1253,8 +1282,12 @@ impl<const ENTRIES: usize, T: OwnedToken> ObserveStore<T> for ObserveTable<ENTRI
         ObserveTable::take(self, key)
     }
 
-    fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>> {
-        ObserveTable::entry(self, id)
+    fn entry_ref(&self, id: SlotId) -> Option<&ObserveInterest<T>> {
+        ObserveTable::entry_ref(self, id)
+    }
+
+    fn entry_mut(&mut self, id: SlotId) -> Option<&mut ObserveInterest<T>> {
+        ObserveTable::entry_mut(self, id)
     }
 
     fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError> {

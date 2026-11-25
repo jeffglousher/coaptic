@@ -276,48 +276,46 @@ impl<const REQUESTS: usize, T: OwnedToken> BoundedSecurityContext<REQUESTS, T> {
         if sender_id.as_bytes() == recipient_id.as_bytes() {
             return Err(Error::IdCollision);
         }
-        let id_context = if params.id_context.is_empty() {
-            None
-        } else {
-            Some(params.id_context)
-        };
+        let hkdf = aead::hkdf_extract(params.master_salt, params.master_secret);
+        Self::from_hkdf(params.id_context, sender_id, recipient_id, &hkdf)
+    }
 
+    // Allow the extraction scratch to unwind before building the three outputs on small stacks.
+    #[inline(never)]
+    fn from_hkdf(
+        id_context: &[u8],
+        sender_id: Id,
+        recipient_id: Id,
+        hkdf: &hkdf::Hkdf<sha2::Sha256>,
+    ) -> Result<Self, Error> {
+        let encoded_context = (!id_context.is_empty()).then_some(id_context);
         let mut sender_key = [0u8; KEY_LEN];
         aead::hkdf_expand(
-            params.master_secret,
-            params.master_salt,
+            hkdf,
             sender_id.as_bytes(),
-            id_context,
+            encoded_context,
             "Key",
             &mut sender_key,
         )?;
         let mut recipient_key = [0u8; KEY_LEN];
         aead::hkdf_expand(
-            params.master_secret,
-            params.master_salt,
+            hkdf,
             recipient_id.as_bytes(),
-            id_context,
+            encoded_context,
             "Key",
             &mut recipient_key,
         )?;
         let mut common_iv = [0u8; NONCE_LEN];
-        aead::hkdf_expand(
-            params.master_secret,
-            params.master_salt,
-            &[],
-            id_context,
-            "IV",
-            &mut common_iv,
-        )?;
+        aead::hkdf_expand(hkdf, &[], encoded_context, "IV", &mut common_iv)?;
 
         let mut stored_ctx = [0u8; MAX_ID_CONTEXT_LEN];
-        stored_ctx[..params.id_context.len()].copy_from_slice(params.id_context);
+        stored_ctx[..id_context.len()].copy_from_slice(id_context);
 
         Ok(Self {
             sender_id,
             recipient_id,
             id_context: stored_ctx,
-            id_context_len: params.id_context.len() as u8,
+            id_context_len: id_context.len() as u8,
             sender_key,
             recipient_key,
             common_iv,

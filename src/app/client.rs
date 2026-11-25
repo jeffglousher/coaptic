@@ -150,7 +150,7 @@ impl<K: OwnedToken> Call<K> {
     }
 }
 
-/// Caller-buffer collection failed without consuming the completed reply.
+/// Complete-response collection failed without consuming the reply.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseBufferError {
     /// The complete representation does not fit; retry with a larger buffer.
@@ -269,99 +269,299 @@ impl ReplyMeta {
                 == other.header[..usize::from(other.header_len)]
     }
 
+    // The caller builds this header from bounded Response fields. Encode into
+    // the final hold so deferred registration never decodes its own output.
+    pub(super) fn deferred(
+        header: &Message<'_, impl OwnedToken>,
+        peer: Endpoint,
+        now_ms: u64,
+    ) -> Result<Self, EncodeError> {
+        let mut reply = Self {
+            received_at_ms: now_ms,
+            header: [0; RESPONSE_OPTION_BYTES],
+            header_len: 0,
+            peer,
+            payload: [0; INLINE_PAYLOAD],
+            payload_len: 0,
+            payload_src_len: 0,
+        };
+        reply.header_len = crate::message::encode(header, &mut reply.header)? as u16;
+        Ok(reply)
+    }
+
+    #[cfg(test)]
     pub(super) fn from_parsed(
         parsed: &ParsedMessage<'_, impl OwnedToken>,
         peer: Endpoint,
         received_at_ms: u64,
     ) -> Result<Self, CallFailure> {
-        let mut options = OptionsBuilder::<RESPONSE_OPTION_COUNT>::new();
-        let mut locations = [0usize; 2];
-        for option in parsed.options() {
-            let index = match option.number() {
-                crate::message::OptionNumber::LOCATION_PATH => Some(0),
-                crate::message::OptionNumber::LOCATION_QUERY => Some(1),
-                _ => None,
-            };
-            if let Some(index) = index {
-                locations[index] += 1;
-                if locations[index] > super::LOCATION_MAX {
-                    return Err(CallFailure::ResponseMetadataBounds);
-                }
-            }
-            options
-                .push(option)
-                .map_err(|_| CallFailure::ResponseMetadataBounds)?;
-        }
-        let message = Message::new(parsed.ty(), parsed.code(), parsed.message_id())
-            .with_token(parsed.token())
-            .with_options(options.as_slice());
-        let mut header = [0; RESPONSE_OPTION_BYTES];
-        let header_len = crate::message::encode(&message, &mut header)
-            .map_err(|_| CallFailure::ResponseMetadataBounds)?;
-        let src = parsed.payload();
-        let n = src.len().min(INLINE_PAYLOAD);
-        let mut payload = [0u8; INLINE_PAYLOAD];
-        payload[..n].copy_from_slice(&src[..n]);
-        Ok(Self {
-            received_at_ms,
-            header,
-            header_len: header_len as u16,
-            peer,
-            payload,
-            payload_len: n as u16,
-            payload_src_len: u16::try_from(src.len()).unwrap_or(u16::MAX),
-        })
+        Ok(
+            ReplyCapture::checked(parsed, peer, received_at_ms, &ResponseOptions::read(parsed))?
+                .retain(),
+        )
     }
 
     pub(super) fn response<K: OwnedToken>(&self) -> Response<'_, K> {
         // The stored header was produced by the encoder and is immutable.
         let parsed =
-            crate::message::decode_with_token::<K>(&self.header[..usize::from(self.header_len)])
+            ParsedMessage::<K>::from_retained_header(&self.header[..usize::from(self.header_len)])
                 .expect("encoded response header");
-        let mut response = Response::from_client(
-            parsed,
-            self,
-            &self.payload[..usize::from(self.payload_len)],
-            parsed.content_format().and_then(Result::ok),
-        )
-        .with_payload_src_len(self.payload_src_len);
-        if let Some(etag) = parsed
-            .etag()
-            .next()
-            .filter(|tag| (1..=8).contains(&tag.len()))
-        {
-            response = response.etag(etag);
-        }
-        if let Some(seq) = parsed.observe().and_then(Result::ok) {
-            response = response.observe(seq);
-        }
-        if let Some(age) = parsed.max_age().and_then(Result::ok) {
-            response = response.max_age(age);
-        }
-        if let Ok(Some(echo)) = crate::message::Echo::from_message(&parsed) {
-            response = response.echo(echo);
-        }
-        for path in parsed.location_path().flatten() {
-            if path.len() <= 255 && path != "." && path != ".." {
-                response = response.location_path(path);
-            }
-        }
-        for query in parsed.location_query().flatten() {
-            if query.len() <= 255 {
-                response = response.location_query(query);
+        let mut response =
+            Response::from_client(parsed, self, &self.payload[..usize::from(self.payload_len)])
+                .with_payload_src_len(self.payload_src_len);
+        use crate::message::OptionNumber as N;
+        // Wire options are ordered. Singleton accessors use the first value,
+        // including an invalid first value; Location options preserve repeats.
+        let mut previous = None;
+        for option in parsed.options() {
+            let number = option.number();
+            let first = previous.replace(number) != Some(number);
+            match number {
+                N::CONTENT_FORMAT if first => {
+                    response =
+                        response.retain_format(option.as_uint16().ok().map(ContentFormat::new))
+                }
+                N::ETAG if first && (1..=8).contains(&option.value().len()) => {
+                    response = response.etag(option.value())
+                }
+                N::OBSERVE if first => {
+                    if let Ok(seq) = crate::message::decode_observe(option.value()) {
+                        response = response.observe(seq);
+                    }
+                }
+                N::MAX_AGE if first => response = response.retain_max_age(option.as_uint().ok()),
+                N::ECHO if first => {
+                    if let Ok(echo) = crate::message::Echo::new(option.value()) {
+                        response = response.echo(echo);
+                    }
+                }
+                N::LOCATION_PATH => {
+                    if let Ok(path) = option.as_str()
+                        && path.len() <= 255
+                        && path != "."
+                        && path != ".."
+                    {
+                        response = response.location_path(path);
+                    }
+                }
+                N::LOCATION_QUERY => {
+                    if let Ok(query) = option.as_str()
+                        && query.len() <= 255
+                    {
+                        response = response.location_query(query);
+                    }
+                }
+                _ => {}
             }
         }
         response
     }
 }
 
+// Collect response facts before applying any state transition. Error policy
+// still belongs to the consumer (e.g. a stale notification ignores its format).
+#[derive(Default)]
+struct ResponseOptions<'a> {
+    unknown_critical: bool,
+    metadata_overflow: bool,
+    observe: Option<u32>,
+    format: Option<Result<ContentFormat, crate::error::ValueError>>,
+    repeated_format: bool,
+    max_age: Option<Result<u32, crate::error::ValueError>>,
+    repeated_age: bool,
+    block1: Option<Result<BlockValue, crate::error::ValueError>>,
+    q_block1: Option<Result<BlockValue, crate::error::ValueError>>,
+    block2: Option<Result<BlockValue, crate::error::ValueError>>,
+    q_block2: Option<Result<BlockValue, crate::error::ValueError>>,
+    later_block2: bool,
+    size2: Option<Result<u32, crate::error::ValueError>>,
+    etag: Option<&'a [u8]>,
+}
+
+impl<'a> ResponseOptions<'a> {
+    fn read(parsed: &ParsedMessage<'a, impl OwnedToken>) -> Self {
+        use crate::message::OptionNumber as N;
+        let mut facts = Self::default();
+        let mut previous = None;
+        let mut locations = [0; 2];
+        for (i, option) in parsed.options().enumerate() {
+            let number = option.number();
+            let first = previous.replace(number) != Some(number);
+            facts.metadata_overflow |= i >= RESPONSE_OPTION_COUNT;
+            match number {
+                N::LOCATION_PATH | N::LOCATION_QUERY => {
+                    let count = &mut locations[usize::from(number == N::LOCATION_QUERY)];
+                    *count += 1;
+                    facts.metadata_overflow |= *count > super::LOCATION_MAX;
+                }
+                N::OBSERVE if first => {
+                    facts.observe = crate::message::decode_observe(option.value()).ok()
+                }
+                N::CONTENT_FORMAT if first => {
+                    facts.format = Some(option.as_uint16().map(ContentFormat::new))
+                }
+                N::CONTENT_FORMAT => facts.repeated_format = true,
+                N::MAX_AGE if first => facts.max_age = Some(option.as_uint()),
+                N::MAX_AGE => facts.repeated_age = true,
+                N::ETAG if first => facts.etag = Some(option.value()),
+                N::SIZE2 if first => facts.size2 = Some(option.as_uint()),
+                N::BLOCK1 if first => facts.block1 = Some(option.as_block()),
+                N::Q_BLOCK1 if first => facts.q_block1 = Some(option.as_block()),
+                N::BLOCK2 if first => {
+                    let block = option.as_block();
+                    facts.later_block2 |= block.is_ok_and(|value| value.num() != 0);
+                    facts.block2 = Some(block);
+                }
+                N::Q_BLOCK2 => {
+                    let block = option.as_block();
+                    facts.later_block2 |= block.is_ok_and(|value| value.num() != 0);
+                    if first {
+                        facts.q_block2 = Some(block);
+                    }
+                }
+                _ => facts.unknown_critical |= number.is_critical() && !number.is_known(),
+            }
+        }
+        facts
+    }
+}
+
+// Check retention limits on every fragment, including duplicates. Materialize
+// bytes only when the inbox actually acquires a new representation.
+struct ReplyCapture<'a, 'wire, K: OwnedToken> {
+    parsed: &'a ParsedMessage<'wire, K>,
+    peer: Endpoint,
+    received_at_ms: u64,
+    header_len: u16,
+    observe_age: Option<u32>,
+}
+
+impl<'a, 'wire, K: OwnedToken> ReplyCapture<'a, 'wire, K> {
+    fn checked(
+        parsed: &'a ParsedMessage<'wire, K>,
+        peer: Endpoint,
+        received_at_ms: u64,
+        options: &ResponseOptions<'_>,
+    ) -> Result<Self, CallFailure> {
+        let header_len = parsed
+            .encoded_header_len()
+            .filter(|n| *n <= RESPONSE_OPTION_BYTES)
+            .ok_or(CallFailure::ResponseMetadataBounds)?;
+        if options.metadata_overflow {
+            return Err(CallFailure::ResponseMetadataBounds);
+        }
+        Ok(Self {
+            parsed,
+            peer,
+            received_at_ms,
+            header_len: header_len as u16,
+            observe_age: (parsed.code().is_success() && options.observe.is_some()).then(|| {
+                options
+                    .max_age
+                    .and_then(Result::ok)
+                    .unwrap_or(super::DEFAULT_MAX_AGE_SECS)
+            }),
+        })
+    }
+
+    fn retain(self) -> ReplyMeta {
+        let parsed = self.parsed;
+        let prefix = Message::new(parsed.ty(), parsed.code(), parsed.message_id())
+            .with_token(parsed.token());
+        let mut header = [0; RESPONSE_OPTION_BYTES];
+        let start = prefix
+            .encode(&mut header)
+            .expect("checked token and header capacity");
+        header[start..usize::from(self.header_len)].copy_from_slice(parsed.options_bytes());
+        let src = parsed.payload();
+        let n = src.len().min(INLINE_PAYLOAD);
+        let mut payload = [0u8; INLINE_PAYLOAD];
+        payload[..n].copy_from_slice(&src[..n]);
+        ReplyMeta {
+            received_at_ms: self.received_at_ms,
+            header,
+            header_len: self.header_len,
+            peer: self.peer,
+            payload,
+            payload_len: n as u16,
+            payload_src_len: u16::try_from(src.len()).unwrap_or(u16::MAX),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct InboxRow<K: OwnedToken = Token> {
-    complete: bool,
     call: Call<K>,
     meta: Result<ReplyMeta, CallFailure>,
-    body: Option<SlotId>,
-    datagram: Option<SlotId>,
+    storage: ReplyStorage,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ReplyStorage {
+    Inline,
+    Datagram(SlotId),
+    Assembled(SlotId),
+    Partial {
+        body: SlotId,
+        observe_age: Option<u32>,
+    },
+}
+
+impl ReplyStorage {
+    fn complete_payload<'a, S: Storage + DatagramSlots + BodySlots>(
+        self,
+        meta: &'a ReplyMeta,
+        engine: &'a Engine<S>,
+    ) -> Result<&'a [u8], ResponseBufferError> {
+        match self {
+            Self::Assembled(id) => engine.rx_body_payload(id),
+            Self::Datagram(id) => {
+                // The inbox owns the exact admitted datagram until collection.
+                let start = usize::from(meta.header_len) + usize::from(meta.payload_src_len != 0);
+                engine
+                    .storage()
+                    .rx_payload(id)
+                    .and_then(|wire| wire.get(start..))
+            }
+            Self::Inline if meta.payload_src_len <= meta.payload_len => {
+                Some(&meta.payload[..usize::from(meta.payload_len)])
+            }
+            Self::Inline | Self::Partial { .. } => None,
+        }
+        .ok_or(ResponseBufferError::Unavailable)
+    }
+
+    fn complete(self) -> bool {
+        !matches!(self, Self::Partial { .. })
+    }
+    fn datagram(self) -> Option<SlotId> {
+        match self {
+            Self::Datagram(rx) => Some(rx),
+            _ => None,
+        }
+    }
+    fn body(self) -> Option<SlotId> {
+        match self {
+            Self::Partial { body, .. } | Self::Assembled(body) => Some(body),
+            _ => None,
+        }
+    }
+}
+
+// An existing Call owns its row even when an earlier row is vacant.
+fn existing_or_vacant<T>(
+    rows: &mut [Option<T>],
+    matches: impl Fn(&T) -> bool,
+) -> Option<&mut Option<T>> {
+    let mut free = None;
+    for slot in rows {
+        match slot {
+            Some(row) if matches(row) => return Some(slot),
+            None if free.is_none() => free = Some(slot),
+            _ => {}
+        }
+    }
+    free
 }
 
 /// Bounded completed-reply table (not a seventh memory area).
@@ -373,14 +573,12 @@ pub(crate) struct ClientInbox<const CALLS: usize, K: OwnedToken = Token> {
 
 impl<const CALLS: usize, K: OwnedToken> ClientInbox<CALLS, K> {
     pub(super) fn usage(&self) -> (usize, usize) {
-        (
-            self.rows.iter().flatten().count(),
-            self.rows
-                .iter()
-                .flatten()
-                .filter(|row| row.complete)
-                .count(),
-        )
+        self.rows
+            .iter()
+            .flatten()
+            .fold((0, 0), |(used, complete), row| {
+                (used + 1, complete + usize::from(row.storage.complete()))
+            })
     }
 
     pub(super) fn has_protocol_state(&self) -> bool {
@@ -394,116 +592,38 @@ impl<const CALLS: usize, K: OwnedToken> ClientInbox<CALLS, K> {
         }
     }
 
-    /// Store a completed reply. Same [`Call`] overwrites (Observe).
-    ///
-    /// Returns the previous body slot to release. `Err` if every row is a
-    /// different Call — caller must not evict an untaken reply.
-    fn insert(
-        &mut self,
-        call: Call<K>,
-        meta: Result<ReplyMeta, CallFailure>,
-        body: Option<SlotId>,
-    ) -> Result<Option<SlotId>, ()> {
-        if let Some(slot) = self.rows.iter_mut().find(|row| {
-            row.as_ref()
-                .is_some_and(|row| row.call.token == call.token && row.call.peer == call.peer)
-        }) {
-            let prev = slot.take().and_then(|row| row.body);
-            *slot = Some(InboxRow {
-                complete: true,
-                call,
-                meta,
-                body,
-                datagram: None,
-            });
-            return Ok(prev);
-        }
-        if let Some(slot) = self.rows.iter_mut().find(|row| row.is_none()) {
-            *slot = Some(InboxRow {
-                complete: true,
-                call,
-                meta,
-                body,
-                datagram: None,
-            });
-            return Ok(None);
-        }
-        Err(())
+    fn slot_for(&mut self, call: Call<K>) -> Option<&mut Option<InboxRow<K>>> {
+        existing_or_vacant(&mut self.rows, |row| row.call == call)
     }
 
     pub(super) fn holds_datagram(&self, rx: SlotId) -> bool {
         self.rows
             .iter()
             .flatten()
-            .any(|row| row.datagram == Some(rx))
+            .any(|row| row.storage.datagram() == Some(rx))
     }
 
-    fn take_datagram(&mut self, call: Call<K>) -> Option<SlotId> {
-        self.rows
-            .iter_mut()
-            .flatten()
-            .find(|row| row.call == call)?
-            .datagram
-            .take()
-    }
-
-    fn completed(&self, call: Call<K>) -> Option<&InboxRow<K>> {
-        self.rows
-            .iter()
-            .flatten()
-            .find(|row| row.complete && row.call == call)
-    }
-
-    fn discard(&mut self, call: Call<K>) {
-        for row in &mut self.rows {
-            if row.as_ref().is_some_and(|row| row.call == call) {
-                *row = None;
-            }
-        }
+    fn completed_index(&self, call: Call<K>) -> Option<usize> {
+        self.rows.iter().position(|slot| {
+            slot.as_ref()
+                .is_some_and(|row| row.storage.complete() && row.call == call)
+        })
     }
 
     fn contains(&self, call: Call<K>) -> bool {
-        self.rows
-            .iter()
-            .flatten()
-            .any(|row| row.call == call && row.complete)
-    }
-    fn partial_meta(&self, call: Call<K>, body: SlotId) -> Option<ReplyMeta> {
-        self.rows
-            .iter()
-            .flatten()
-            .find(|row| row.call == call && !row.complete && row.body == Some(body))?
-            .meta
-            .ok()
-    }
-
-    fn retain_partial(
-        &mut self,
-        call: Call<K>,
-        meta: ReplyMeta,
-        body: SlotId,
-    ) -> Result<Option<SlotId>, ()> {
-        if self.partial_meta(call, body).is_some() {
-            return Ok(None);
-        }
-        let previous = self.insert(call, Ok(meta), Some(body))?;
-        if let Some(row) = self.rows.iter_mut().flatten().find(|row| row.call == call) {
-            row.complete = false;
-        }
-        Ok(previous)
+        self.completed_index(call).is_some()
     }
 
     #[allow(clippy::type_complexity)]
-    fn take(
+    fn take_at(
         &mut self,
-        call: Call<K>,
-    ) -> Option<(Result<Response<'_, K>, CallFailure>, Option<SlotId>)> {
-        let i = self.rows.iter().position(|row| {
-            row.as_ref().is_some_and(|row| {
-                row.complete && row.call.token == call.token && row.call.peer == call.peer
-            })
-        })?;
-        let row = self.rows[i].take()?;
+        index: usize,
+    ) -> (
+        Result<Response<'_, K>, CallFailure>,
+        Option<SlotId>,
+        Option<SlotId>,
+    ) {
+        let row = self.rows[index].take().expect("completed reply");
         let response = match row.meta {
             Ok(meta) => {
                 self.held = Some(meta);
@@ -514,7 +634,7 @@ impl<const CALLS: usize, K: OwnedToken> ClientInbox<CALLS, K> {
                 Err(error)
             }
         };
-        Some((response, row.body))
+        (response, row.storage.body(), row.storage.datagram())
     }
 }
 
@@ -522,40 +642,47 @@ impl<const CALLS: usize, K: OwnedToken> ClientInbox<CALLS, K> {
 #[derive(Clone, Copy, Debug)]
 struct RetainedQueries {
     bytes: [u8; 256],
-    lengths: [u16; MAX_PATH_SEGMENTS],
-    count: usize,
+    lengths: [u8; MAX_PATH_SEGMENTS],
+    count: u8,
 }
 
 impl RetainedQueries {
+    const EMPTY: Self = Self {
+        bytes: [0; 256],
+        lengths: [0; MAX_PATH_SEGMENTS],
+        count: 0,
+    };
+
     fn new(queries: &[&str]) -> Result<Self, EncodeError> {
-        let mut retained = Self {
-            bytes: [0; 256],
-            lengths: [0; MAX_PATH_SEGMENTS],
-            count: queries.len(),
-        };
         if queries.len() > MAX_PATH_SEGMENTS {
             return Err(EncodeError::OptionValueTooLong);
         }
+        let mut retained = Self {
+            count: queries.len() as u8,
+            ..Self::EMPTY
+        };
         let mut offset = 0;
         for (i, query) in queries.iter().enumerate() {
             if query.len() > 255 || query.len() > retained.bytes.len() - offset {
                 return Err(EncodeError::OptionValueTooLong);
             }
             retained.bytes[offset..offset + query.len()].copy_from_slice(query.as_bytes());
-            retained.lengths[i] = query.len() as u16;
+            retained.lengths[i] = query.len() as u8;
             offset += query.len();
         }
         Ok(retained)
     }
 
-    fn values(&self) -> impl Iterator<Item = &str> {
+    fn values(&self) -> impl Iterator<Item = &[u8]> {
         let mut offset = 0;
-        self.lengths[..self.count].iter().map(move |len| {
-            let end = offset + usize::from(*len);
-            let value = core::str::from_utf8(&self.bytes[offset..end]).expect("copied UTF-8 query");
-            offset = end;
-            value
-        })
+        self.lengths[..usize::from(self.count)]
+            .iter()
+            .map(move |len| {
+                let end = offset + usize::from(*len);
+                let value = &self.bytes[offset..end];
+                offset = end;
+                value
+            })
     }
 }
 
@@ -629,10 +756,12 @@ pub(crate) struct ClientLives<const CALLS: usize, K: OwnedToken = Token> {
 
 impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
     pub(super) fn usage(&self) -> (usize, usize) {
-        (
-            self.rows.iter().flatten().count(),
-            self.rows.iter().flatten().filter(|row| row.retired).count(),
-        )
+        self.rows
+            .iter()
+            .flatten()
+            .fold((0, 0), |(used, retired), row| {
+                (used + 1, retired + usize::from(row.retired))
+            })
     }
 
     pub(super) fn next_timeout_after<Mem: Storage<Token = K> + Exchanges + ObserveSlots>(
@@ -669,30 +798,28 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
             .min()
     }
 
-    pub(super) fn response_credits(&self, inbox: &ClientInbox<CALLS, K>) -> usize {
-        self.rows
+    fn response_credits_exhausted(&self, inbox: &ClientInbox<CALLS, K>, limit: usize) -> bool {
+        if limit > CALLS.saturating_mul(2) {
+            return false;
+        }
+        let active = self
+            .rows
             .iter()
             .flatten()
-            .filter(|row| {
-                !row.retired
-                    && !inbox.rows.iter().flatten().any(|reply| {
-                        reply.call == row.call && reply.complete && reply.meta.is_err()
-                    })
-            })
-            .count()
-            + inbox
-                .rows
-                .iter()
-                .flatten()
-                .filter(|row| {
-                    row.meta.is_ok()
-                        && !self
-                            .rows
-                            .iter()
-                            .flatten()
-                            .any(|live| !live.retired && live.call == row.call)
-                })
-                .count()
+            .filter(|row| !row.retired)
+            .count();
+        let mut credits = active;
+        // Each live Call owns one credit until its terminal failure. A successful
+        // reply that outlives its Call still owns a credit until collection.
+        for reply in inbox.rows.iter().flatten() {
+            let has_live = active != 0 && self.get(reply.call).is_some();
+            if reply.meta.is_ok() && !has_live {
+                credits += 1;
+            } else if reply.meta.is_err() && reply.storage.complete() && has_live {
+                credits -= 1;
+            }
+        }
+        credits >= limit
     }
 
     pub(super) fn has_protocol_state(&self) -> bool {
@@ -707,13 +834,19 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
 
     fn expire_backoffs(&mut self, now_ms: u64) {
         for slot in &mut self.rows {
-            if let Some(row) = slot
-                && row.backoff_until_ms <= now_ms
-            {
+            Self::expire_backoff(slot, now_ms);
+        }
+    }
+
+    fn expire_backoff(slot: &mut Option<LiveCall<K>>, now_ms: u64) {
+        if let Some(row) = slot
+            && row.backoff_until_ms != 0
+            && row.backoff_until_ms <= now_ms
+        {
+            if row.retired {
+                *slot = None;
+            } else {
                 row.backoff_until_ms = 0;
-                if row.retired {
-                    *slot = None;
-                }
             }
         }
     }
@@ -739,22 +872,11 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
             .max()
     }
 
-    fn record_backoff(&mut self, call: Call<K>, parsed: &ParsedMessage<'_, K>, now_ms: u64) {
-        if !matches!(
-            parsed.code(),
-            Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
-        ) {
+    fn record_backoff(&mut self, call: Call<K>, options: &ResponseOptions<'_>, now_ms: u64) {
+        if options.repeated_age {
             return;
         }
-        // Invalid or duplicate Max-Age cannot become a remote scheduling instruction.
-        if parsed
-            .get_options(crate::message::OptionNumber::MAX_AGE)
-            .count()
-            > 1
-        {
-            return;
-        }
-        let seconds = match parsed.max_age() {
+        let seconds = match options.max_age {
             Some(Ok(value)) => value,
             None => super::DEFAULT_MAX_AGE_SECS,
             Some(Err(_)) => return,
@@ -775,82 +897,63 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
         }
     }
 
-    fn can_admit(&self, token: K, peer: Endpoint) -> bool {
-        self.rows.iter().any(|row| match row {
-            None => true,
-            Some(live) => !live.retired && live.call.token == token && live.call.peer == peer,
-        })
+    fn get(&self, call: Call<K>) -> Option<&LiveCall<K>> {
+        self.rows
+            .iter()
+            .flatten()
+            .find(|row| !row.retired && row.call == call)
     }
 
-    fn insert(&mut self, live: LiveCall<K>) {
-        if let Some(existing) = self.rows.iter_mut().find(|row| {
-            row.as_ref().is_some_and(|row| {
-                !row.retired && row.call.token == live.call.token && row.call.peer == live.call.peer
-            })
-        }) {
-            *existing = Some(live);
-            return;
-        }
-        if let Some(slot) = self.rows.iter_mut().find(|row| row.is_none()) {
-            *slot = Some(live);
-        }
+    fn get_mut(&mut self, call: Call<K>) -> Option<&mut LiveCall<K>> {
+        self.rows
+            .iter_mut()
+            .flatten()
+            .find(|row| !row.retired && row.call == call)
     }
 
-    fn get(&self, call: Call<K>) -> Option<LiveCall<K>> {
-        self.rows.iter().copied().find_map(|row| {
-            row.filter(|row| {
-                !row.retired && row.call.token == call.token && row.call.peer == call.peer
-            })
-        })
-    }
-
-    fn observe_fresh(&self, call: Call<K>, parsed: &ParsedMessage<'_, K>, now_ms: u64) -> bool {
-        let Some(sequence) = observation_start(parsed) else {
-            return true;
-        };
-        let Some((previous, received)) = self.get(call).and_then(|live| live.observed) else {
-            return true;
-        };
-        let delta = sequence.wrapping_sub(previous) & 0x00ff_ffff;
-        (delta != 0 && delta < 0x0080_0000) || now_ms.saturating_sub(received) > 128_000
-    }
-
-    pub(crate) fn observe_format_admissible(
+    fn classify_observation(
         &self,
         call: Call<K>,
-        parsed: &ParsedMessage<'_, K>,
+        code: Code,
+        options: &ResponseOptions<'_>,
         now_ms: u64,
         protected: bool,
-    ) -> bool {
-        (!protected && !self.observe_fresh(call, parsed, now_ms))
-            || self.observe_format_matches(call, parsed)
-    }
-
-    fn observe_format_matches(&self, call: Call<K>, parsed: &ParsedMessage<'_, K>) -> bool {
-        if observation_start(parsed).is_none() {
-            return true;
+    ) -> Result<ResponseObservation, CallFailure> {
+        let Some(sequence) = options
+            .observe
+            .filter(|_| code.is_success() && !options.later_block2)
+        else {
+            return Ok(ResponseObservation::Ordinary);
+        };
+        let live = self.get(call);
+        if !protected && let Some((previous, received)) = live.and_then(|row| row.observed) {
+            let delta = sequence.wrapping_sub(previous) & 0x00ff_ffff;
+            if (delta == 0 || delta >= 0x0080_0000) && now_ms.saturating_sub(received) <= 128_000 {
+                return Ok(ResponseObservation::Stale);
+            }
         }
-        if parsed
-            .content_format()
-            .is_some_and(|format| format.is_err())
-            || parsed
-                .get_options(crate::message::OptionNumber::CONTENT_FORMAT)
-                .count()
-                > 1
+        let format = options
+            .format
+            .transpose()
+            .map_err(|_| CallFailure::ObserveFormatMismatch)?;
+        if options.repeated_format {
+            return Err(CallFailure::ObserveFormatMismatch);
+        }
+        // A 2.03 without Content-Format validates the cached format.
+        let update = (format.is_some() || code != Code::VALID).then_some(format);
+        if let (Some(initial), Some(new)) = (live.and_then(|row| row.observed_format), update)
+            && initial != new
         {
-            return false;
+            return Err(CallFailure::ObserveFormatMismatch);
         }
-        // 2.03 may validate a cached representation without repeating its format.
-        if parsed.code() == Code::VALID && parsed.content_format().is_none() {
-            return true;
-        }
-        self.get(call)
-            .and_then(|live| live.observed_format)
-            .is_none_or(|initial| initial == parsed.content_format().and_then(Result::ok))
+        Ok(ResponseObservation::New {
+            sequence,
+            format: update,
+        })
     }
 
-    fn record_observation(&mut self, call: Call<K>, parsed: &ParsedMessage<'_, K>, now_ms: u64) {
-        if let Some(sequence) = observation_start(parsed)
+    fn record_observation(&mut self, call: Call<K>, observation: ResponseObservation, now_ms: u64) {
+        if let ResponseObservation::New { sequence, format } = observation
             && let Some(live) = self
                 .rows
                 .iter_mut()
@@ -858,10 +961,8 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
                 .find(|live| live.call == call)
         {
             live.observed = Some((sequence, now_ms));
-            if live.observed_format.is_none()
-                && (parsed.code() != Code::VALID || parsed.content_format().is_some())
-            {
-                live.observed_format = Some(parsed.content_format().and_then(Result::ok));
+            if live.observed_format.is_none() {
+                live.observed_format = format;
             }
         }
     }
@@ -912,45 +1013,40 @@ impl<const CALLS: usize, K: OwnedToken> ClientLives<CALLS, K> {
         }
     }
 
-    fn observe_call<E>(
+    fn observe_slot<E>(
         &self,
         peer: Endpoint,
-        identity: ObserveRequest,
+        identity: &ObserveRequest,
         target: Option<Call<K>>,
         is_live: impl Fn(Call<K>) -> bool,
-    ) -> Result<Call<K>, Error<E>> {
-        let mut matches = self.rows.iter().flatten().filter(|live| {
-            live.call.peer == peer
+    ) -> Result<(usize, &LiveCall<K>), Error<E>> {
+        let mut matches = self.rows.iter().enumerate().filter_map(|(index, slot)| {
+            let live = slot.as_ref()?;
+            (live.call.peer == peer
                 && live.observe == OutgoingObserve::Register
                 && live.due_ms != 0
-                && is_live(live.call)
-                && live.request_identity == Some(identity)
                 && target.is_none_or(|call| live.call == call)
+                && live.request_identity.as_ref() == Some(identity)
+                && is_live(live.call))
+            .then_some((index, live))
         });
-        let call = matches
-            .next()
-            .ok_or(Error::ObserveCancellationMismatch)?
-            .call;
+        let found = matches.next().ok_or(Error::ObserveCancellationMismatch)?;
         if matches.next().is_some() {
             return Err(Error::ObserveCancellationAmbiguous);
         }
-        Ok(call)
+        Ok(found)
     }
 }
 
-// RFC 7959 section 2.6: only block zero carries a new notification.
-fn observation_start(parsed: &ParsedMessage<'_, impl OwnedToken>) -> Option<u32> {
-    if !parsed.code().is_success()
-        || parsed
-            .block2()
-            .is_some_and(|block| block.is_ok_and(|block| block.num() != 0))
-        || parsed
-            .q_block2()
-            .any(|block| block.is_ok_and(|block| block.num() != 0))
-    {
-        return None;
-    }
-    parsed.observe().and_then(Result::ok)
+#[derive(Clone, Copy)]
+enum ResponseObservation {
+    Ordinary,
+    Stale,
+    New {
+        sequence: u32,
+        // None keeps the representation validated by a 2.03 response.
+        format: Option<Option<ContentFormat>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1218,25 +1314,30 @@ where
         &mut self,
         call: Call<S::Token>,
     ) -> Option<Result<Response<'_, S::Token>, CallFailure>> {
-        if let Some(rx) = self.inbox.take_datagram(call) {
+        let index = self.inbox.completed_index(call)?;
+        let (response, body, datagram) = self.inbox.take_at(index);
+        if let Some(rx) = datagram {
             let _ = self.engine.release_rx(rx);
         }
-        let (response, body) = self.inbox.take(call)?;
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
             super::oscore::cancel(&mut self.oscore, call.peer, call.token());
         }
         if let Some(id) = body {
-            if rx_body_payload(&self.engine, id)
-                .is_some_and(|bytes| bytes.len() > super::RESPONSE_BODY)
-            {
-                release_rx_body(&mut self.engine, id);
-                return Some(Err(CallFailure::ResponseBodyBounds));
+            let result = match self.engine.rx_body_payload(id) {
+                Some(bytes) if bytes.len() <= super::RESPONSE_BODY => {
+                    P::store::<S>(&mut self.assembled, bytes);
+                    Ok(())
+                }
+                Some(_) => Err(CallFailure::ResponseBodyBounds),
+                None => Err(CallFailure::BlockTransfer(BlockTransferError::Slot(
+                    crate::storage::SlotError::NotOccupied,
+                ))),
+            };
+            let _ = self.engine.release_rx_body(id);
+            if let Err(failure) = result {
+                return Some(Err(failure));
             }
-            if let Some(bytes) = rx_body_payload(&self.engine, id) {
-                P::store::<S>(&mut self.assembled, bytes);
-            }
-            release_rx_body(&mut self.engine, id);
             if let Some(bytes) = P::view::<S>(&self.assembled) {
                 return Some(response.map(|response| response.with_assembled(bytes)));
             }
@@ -1260,71 +1361,79 @@ where
         call: Call<S::Token>,
         output: &'a mut [u8],
     ) -> Result<Option<Result<Response<'a, S::Token>, CallFailure>>, ResponseBufferError> {
-        let Some(row) = self.inbox.completed(call) else {
+        let Some(index) = self.inbox.completed_index(call) else {
             return Ok(None);
         };
-        let body = row.body;
-        let datagram = row.datagram;
-        if let Ok(meta) = row.meta {
-            let bytes = if let Some(body) = body {
-                self.engine
-                    .rx_body_payload(body)
-                    .ok_or(ResponseBufferError::Unavailable)?
-            } else if let Some(rx) = datagram {
-                self.engine
-                    .decode_rx(rx)
-                    .map_err(|_| ResponseBufferError::Unavailable)?
-                    .payload()
-            } else {
-                if meta.payload_src_len > meta.payload_len {
-                    return Err(ResponseBufferError::Unavailable);
-                }
-                &meta.payload[..usize::from(meta.payload_len)]
-            };
+        let row = self.inbox.rows[index].as_ref().expect("completed reply");
+        let len = if let Ok(meta) = &row.meta {
+            let bytes = row.storage.complete_payload(meta, &self.engine)?;
             if bytes.len() > output.len() {
                 return Err(ResponseBufferError::TooSmall {
                     required: bytes.len(),
                     available: output.len(),
                 });
             }
-        }
-        // Copy before releasing the occupied storage; bounds were proven above.
-        let len = if let Some(body) = body {
-            let bytes = self
-                .engine
-                .rx_body_payload(body)
-                .ok_or(ResponseBufferError::Unavailable)?;
             output[..bytes.len()].copy_from_slice(bytes);
             bytes.len()
-        } else if let Some(rx) = datagram {
-            let parsed = self
-                .engine
-                .decode_rx(rx)
-                .map_err(|_| ResponseBufferError::Unavailable)?;
-            let bytes = parsed.payload();
-            output[..bytes.len()].copy_from_slice(bytes);
-            bytes.len()
-        } else if let Ok(meta) = row.meta {
-            let len = usize::from(meta.payload_len);
-            output[..len].copy_from_slice(&meta.payload[..len]);
-            len
         } else {
             0
         };
-        if let Some(rx) = self.inbox.take_datagram(call) {
+        let storage = row.storage;
+        self.release_complete_reply(call, storage);
+        let (response, _, _) = self.inbox.take_at(index);
+        Ok(Some(response.map(|response| {
+            response.with_complete_payload(&output[..len], storage.body().is_some())
+        })))
+    }
+
+    /// Consume a complete reply by borrowing its payload and metadata for `read`.
+    ///
+    /// The callback can inspect or decode the bytes directly in the occupied
+    /// datagram, assembled body, or inbox. Its result can outlive the callback.
+    /// After it returns, the reply's slots are available for reuse. An active
+    /// Observe Call continues to receive subsequent notifications.
+    ///
+    /// As with [`Self::take_response_into`], enable
+    /// [`super::AppBuilder::full_responses`] to collect a complete ordinary
+    /// reply larger than the inline limit. Unavailable bytes leave the reply
+    /// available for snapshot collection. A pending Call or a local failure
+    /// never invokes the callback. Remote error responses do invoke it.
+    pub fn take_response_with<R>(
+        &mut self,
+        call: Call<S::Token>,
+        read: impl FnOnce(Response<'_, S::Token>) -> R,
+    ) -> Result<Option<Result<R, CallFailure>>, ResponseBufferError> {
+        let Some(index) = self.inbox.completed_index(call) else {
+            return Ok(None);
+        };
+        let row = self.inbox.rows[index].as_ref().expect("completed reply");
+        let storage = row.storage;
+        let result = match &row.meta {
+            Ok(meta) => {
+                let bytes = storage.complete_payload(meta, &self.engine)?;
+                Ok(read(
+                    meta.response()
+                        .with_complete_payload(bytes, storage.body().is_some()),
+                ))
+            }
+            Err(failure) => Err(*failure),
+        };
+        self.inbox.rows[index] = None;
+        self.release_complete_reply(call, storage);
+        Ok(Some(result))
+    }
+
+    fn release_complete_reply(&mut self, call: Call<S::Token>, storage: ReplyStorage) {
+        if let Some(rx) = storage.datagram() {
             let _ = self.engine.release_rx(rx);
         }
-        let (response, _) = self.inbox.take(call).expect("completed reply");
-        if let Some(body) = body {
+        if let Some(body) = storage.body() {
             let _ = self.engine.release_rx_body(body);
         }
         if !client_observe_live(&self.engine, call) {
             self.lives.remove(call);
             super::oscore::cancel(&mut self.oscore, call.peer, call.token());
         }
-        Ok(Some(response.map(|response| {
-            response.with_complete_payload(&output[..len], body.is_some())
-        })))
     }
 
     /// Cancel an active call and reclaim its exchange, body, Observe and OSCORE
@@ -1785,7 +1894,7 @@ where
             let mut prepared = prepared.map_err(AsyncCallError::Request)?;
             let mut completed_at = completed_at;
             if prepared.staged.is_none() {
-                return Ok(prepared.commit());
+                return Ok(prepared.commit(None));
             }
             let staged = prepared.accept(&mut completed_at, timer).await?;
             if staged.continue_q {
@@ -1800,7 +1909,7 @@ where
                     }
                 }
             }
-            Ok(prepared.commit())
+            Ok(prepared.commit(staged.body))
         }
     }
 
@@ -1900,7 +2009,7 @@ where
             etag: self.etag,
             if_match: self.if_match,
             if_none_match: self.if_none_match,
-            queries: &queries[..query_n],
+            queries: &retained_queries,
             q_block1: self.q_block1,
             q_block2: self.q_block2,
             block2: self.block2,
@@ -1931,12 +2040,12 @@ where
                 live.call.peer == dest
                     && live.observe == OutgoingObserve::Register
                     && live.due_ms != 0
-                    && (!self.app.inbox.contains(live.call)
-                        || client_observe_live(&self.app.engine, live.call))
                     && live
                         .request_identity
                         .as_ref()
                         .is_some_and(|original| original.same_target(identity))
+                    && (!self.app.inbox.contains(live.call)
+                        || client_observe_live(&self.app.engine, live.call))
             }) {
                 let call = existing.call;
                 let App {
@@ -1968,26 +2077,25 @@ where
         }
         if self.app.full_responses
             && !replacing
-            && self.app.lives.response_credits(&self.app.inbox)
-                >= self
-                    .app
+            && self.app.lives.response_credits_exhausted(
+                &self.app.inbox,
+                self.app
                     .engine
                     .capacities()
                     .rx_datagram_slots
-                    .saturating_sub(super::admission::RX_HEADROOM)
+                    .saturating_sub(super::admission::RX_HEADROOM),
+            )
         {
             Metrics::inc(&mut self.app.engine.metrics_mut().admission_rx_refused);
             return Err(Error::Saturated);
         }
-        if !replacing && self.app.lives.rows.iter().flatten().count() >= CALLS {
-            return Err(Error::Saturated);
-        }
-        let token = if replacing {
-            self.app
+        let (live_index, token, prior) = if replacing {
+            let (index, live) = self
+                .app
                 .lives
-                .observe_call::<T::Error>(
+                .observe_slot::<T::Error>(
                     dest,
-                    request_identity.expect("Observe identity"),
+                    request_identity.as_ref().expect("Observe identity"),
                     self.observe_target,
                     |call| {
                         !self.app.inbox.contains(call)
@@ -2000,14 +2108,22 @@ where
                     } else {
                         error
                     }
-                })?
-                .token()
+                })?;
+            (
+                index,
+                live.call.token(),
+                refreshing.then_some((live.deadline_ms, live.observed, live.observed_format)),
+            )
         } else {
-            self.app.next_token()?
+            let index = self
+                .app
+                .lives
+                .rows
+                .iter()
+                .position(Option::is_none)
+                .ok_or(Error::Saturated)?;
+            (index, self.app.next_token()?, None)
         };
-        if !self.app.lives.can_admit(token, dest) {
-            return Err(Error::Saturated);
-        }
         if self.q_block1 && self.request_tag.is_absent() {
             return Err(Error::RequestTagRequired);
         }
@@ -2021,10 +2137,8 @@ where
         {
             return Err(Error::RequestTagInUse);
         }
-        let prior = refreshing
-            .then(|| self.app.lives.get(Call::new(token, dest)))
-            .flatten();
-        let deadline_ms = match (self.deadline_ms, prior.and_then(|live| live.deadline_ms)) {
+        let (prior_deadline, observed, observed_format) = prior.unwrap_or_default();
+        let deadline_ms = match (self.deadline_ms, prior_deadline) {
             (Some(new), Some(old)) => Some(new.min(old)),
             (new, old) => new.or(old),
         };
@@ -2090,18 +2204,14 @@ where
             echo: self.echo,
             no_response: self.no_response,
             observe,
-            observed: prior.and_then(|live| live.observed),
-            observed_format: prior.and_then(|live| live.observed_format),
+            observed,
+            observed_format,
             request_identity,
             deadline_ms,
             q_pace_ms: 0,
             backoff_until_ms: 0,
             retired: false,
-            due_ms: now_ms.saturating_add(u64::from(if self.ty == Type::NonConfirmable {
-                Transmission::NON_LIFETIME_MS
-            } else {
-                Transmission::EXCHANGE_LIFETIME_MS
-            })),
+            due_ms: 0, // Armed from transport acceptance in PreparedCall::commit.
         };
         let App {
             engine,
@@ -2122,7 +2232,7 @@ where
             oscore,
             staged: Some(staged),
             pending: None,
-            live: Some(live),
+            live: Some((live_index, live)),
             call,
             now_ms,
             replacing,
@@ -2181,7 +2291,7 @@ struct ClientSend<'a, K: OwnedToken = Token> {
     etag: Option<&'a [u8]>,
     if_match: Option<&'a [u8]>,
     if_none_match: bool,
-    queries: &'a [&'a str],
+    queries: &'a RetainedQueries,
     q_block1: bool,
     q_block2: bool,
     block2: Option<BlockValue>,
@@ -2231,8 +2341,11 @@ fn with_client_options<R>(
         if let Some(ref encoded) = cf {
             push_opt(&mut opts, Opt::content_format(encoded))?;
         }
-        for query in spec.queries {
-            push_opt(&mut opts, Opt::uri_query(query))?;
+        for query in spec.queries.values() {
+            push_opt(
+                &mut opts,
+                Opt::new(crate::message::OptionNumber::URI_QUERY, query),
+            )?;
         }
         if let Some(ref encoded) = acc {
             push_opt(&mut opts, Opt::accept(encoded))?;
@@ -2764,6 +2877,7 @@ mod async_request_tests {
             app.engine.encode_rx(rx, &message).unwrap();
             app.engine.set_rx_endpoint(rx, PEER).unwrap();
             {
+                let mut acknowledged = false;
                 let future = complete_client_async(
                     &mut app.engine,
                     &mut app.io,
@@ -2776,7 +2890,9 @@ mod async_request_tests {
                     90,
                     PEER,
                     &parsed,
+                    None,
                     rx,
+                    &mut acknowledged,
                 );
                 let mut future = pin!(future);
                 if poll_before_drop {
@@ -2891,6 +3007,7 @@ mod async_request_tests {
         app.engine.encode_rx(rx, &message).unwrap();
         app.engine.set_rx_endpoint(rx, PEER).unwrap();
         {
+            let mut acknowledged = false;
             let future = complete_client_async(
                 &mut app.engine,
                 &mut app.io,
@@ -2903,7 +3020,9 @@ mod async_request_tests {
                 90,
                 PEER,
                 &parsed,
+                None,
                 rx,
+                &mut acknowledged,
             );
             let continuation_bytes = core::mem::size_of_val(&future);
             assert!(
@@ -3151,7 +3270,7 @@ struct PreparedCall<'a, S: super::AppStorage, T, const C: usize, const R: usize>
     oscore: &'a mut super::oscore::Field<R, S::Token>,
     staged: Option<StagedClient>,
     pending: Option<crate::storage::PendingCon>,
-    live: Option<LiveCall<S::Token>>,
+    live: Option<(usize, LiveCall<S::Token>)>,
     call: Call<S::Token>,
     now_ms: u64,
     replacing: bool,
@@ -3183,7 +3302,8 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         self.engine
             .record_request(staged.tx, self.call.peer)?
             .ok_or(Error::Saturated)?;
-        if self.live.as_ref().expect("prepared call").ty == Type::Confirmable {
+        let (_, live) = self.live.as_ref().expect("prepared call");
+        if live.ty == Type::Confirmable {
             self.pending = Some(
                 self.engine
                     .reserve_pending_con(staged.tx, self.call.peer, staged.mid)
@@ -3193,13 +3313,12 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         Ok(())
     }
 
-    fn commit(&mut self) -> Call<S::Token> {
-        if let Some(mut live) = self.live.take() {
-            if self.replacing {
-                if let Some(rx) = self.inbox.take_datagram(self.call) {
-                    let _ = self.engine.release_rx(rx);
-                }
-                self.inbox.discard(self.call);
+    fn commit(&mut self, body: Option<SlotId>) -> Call<S::Token> {
+        if let Some((index, mut live)) = self.live.take() {
+            if self.replacing
+                && let Some(slot) = self.inbox.slot_for(self.call)
+            {
+                replace_reply(self.engine, slot, None);
             }
             live.due_ms =
                 self.now_ms
@@ -3208,8 +3327,9 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
                     } else {
                         Transmission::EXCHANGE_LIFETIME_MS
                     }));
-            self.lives.insert(live);
-            arm_q_pacing(self.engine, self.lives, self.ids, self.now_ms, self.call);
+            arm_q_pacing(self.engine, &mut live, body, self.ids, self.now_ms);
+            // Preparation exclusively borrows the App through transport acceptance.
+            self.lives.rows[index] = Some(live);
         }
         self.owned = false;
         self.call
@@ -3223,13 +3343,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
             Err(BlockTransferError::OutsideWindow) => return Ok(None),
             Err(error) => return Err(Error::Block(error)),
         };
-        let live = self.live.as_ref().expect("prepared Q upload");
-        let mut queries = [""; MAX_PATH_SEGMENTS];
-        let mut count = 0;
-        for query in live.queries.values() {
-            queries[count] = query;
-            count += 1;
-        }
+        let (_, live) = self.live.as_ref().expect("prepared Q upload");
         let staged = stage_block1_issued(
             self.engine,
             self.io,
@@ -3241,7 +3355,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
             live.code,
             self.call.token(),
             live.path.segments(),
-            &queries[..count],
+            &live.queries,
             live.accept,
             live.content_format,
             live.echo,
@@ -3263,7 +3377,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         T: DatagramIo,
     {
         let Some(staged) = self.staged.take() else {
-            return Ok(self.commit());
+            return Ok(self.commit(None));
         };
         let pending = self.pending.take().map(|p| (p, staged.jitter));
         super::send::finish_prepared(
@@ -3292,7 +3406,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
                 }
             }
         }
-        Ok(self.commit())
+        Ok(self.commit(staged.body))
     }
 
     async fn accept<CError>(
@@ -3304,7 +3418,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         T: crate::storage::AsyncDatagramIo,
     {
         let completed = core::cell::Cell::new(None);
-        let own_deadline = self.live.as_ref().and_then(|live| live.deadline_ms);
+        let own_deadline = self.live.as_ref().and_then(|(_, live)| live.deadline_ms);
         let other_deadline = self
             .lives
             .next_timeout_after(self.engine, self.inbox, None)
@@ -3380,7 +3494,7 @@ impl<S: super::AppStorage, T: crate::storage::DatagramTransport, const C: usize,
         if self
             .live
             .as_ref()
-            .and_then(|live| live.deadline_ms)
+            .and_then(|(_, live)| live.deadline_ms)
             .is_some_and(|deadline| self.now_ms >= deadline)
         {
             return Err(AsyncCallError::Request(Error::DeadlineElapsed));
@@ -3560,7 +3674,7 @@ fn send_client_block1<Mem, T, const REQUESTS: usize>(
     code: Code,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     payload: &[u8],
     request_tag: BodyTag,
@@ -3642,7 +3756,7 @@ fn stage_client_block1<Mem, T, const REQUESTS: usize>(
     code: Code,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     payload: &[u8],
     request_tag: BodyTag,
@@ -3775,7 +3889,9 @@ pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>
     now_ms: u64,
     peer: Endpoint,
     parsed: &ParsedMessage<'_, Mem::Token>,
+    plaintext: Option<(&[u8], usize)>,
     rx: SlotId,
+    acknowledged: &mut bool,
 ) -> Result<(), Error<T::Error>>
 where
     Mem: Storage
@@ -3788,8 +3904,23 @@ where
     T: DatagramIo,
 {
     let via_exchange = matching_exchange(engine, parsed, peer);
-    let via_observe = matching_observe(engine, parsed, peer);
-    if via_exchange.is_none() && !via_observe {
+    let matched = via_exchange.is_some() || matching_observe(engine, parsed, peer);
+    let options = matched.then(|| ResponseOptions::read(parsed));
+    let overloaded = matches!(
+        parsed.code(),
+        Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
+    );
+    if let Some((wire, received_len)) = plaintext {
+        // Block fragments are owned by the assembly. Overload replies carry
+        // their complete ordinary payload even if the peer included Block2.
+        let retain = full_responses
+            && options.as_ref().is_some_and(|facts| {
+                !facts.unknown_critical
+                    && (overloaded || (facts.block2.is_none() && facts.q_block2.is_none()))
+            });
+        super::admit_plaintext_rx(engine, rx, wire, peer, received_len, retain)?;
+    }
+    let Some(options) = options else {
         let outcome = if parsed.ty() == Type::Confirmable {
             super::send_empty_rst(engine, io, peer, parsed.message_id())
         } else {
@@ -3797,10 +3928,10 @@ where
         };
         let _ = engine.release_rx(rx);
         return outcome;
-    }
+    };
     // RFC 7252 sections 5.4.1 and 4.2: reject the response, not an
     // otherwise matching ACK. No inbox/body/Observe state may accept it.
-    if parsed.unknown_critical().is_some() {
+    if options.unknown_critical {
         if parsed.ty() == Type::Acknowledgement
             && let Some(entry) = via_exchange
             && let Some(tx) = engine.take_pending_con(entry.message_id(), peer)
@@ -3816,72 +3947,59 @@ where
         return outcome;
     }
     let call = Call::new(parsed.token(), peer);
-    let fresh = super::oscore::is_active(oscore) || lives.observe_fresh(call, parsed, now_ms);
-    if !lives.observe_format_admissible(call, parsed, now_ms, super::oscore::is_active(oscore)) {
-        let outcome = if parsed.ty() == Type::Confirmable {
-            super::send_empty_rst(engine, io, peer, parsed.message_id())
-        } else {
-            Ok(())
-        };
-        fail_call(
-            engine,
-            inbox,
-            lives,
-            oscore,
-            call,
-            CallFailure::ObserveFormatMismatch,
-            true,
-        );
-        let _ = engine.release_rx(rx);
-        return outcome;
-    }
-    if parsed.ty() == Type::Confirmable
-        && let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id())
-    {
-        let _ = engine.release_rx(rx);
-        return Err(e);
+    let observation = match lives.classify_observation(
+        call,
+        parsed.code(),
+        &options,
+        now_ms,
+        super::oscore::is_active(oscore),
+    ) {
+        Ok(observation) => observation,
+        Err(failure) => {
+            let outcome = if parsed.ty() == Type::Confirmable {
+                super::send_empty_rst(engine, io, peer, parsed.message_id())
+            } else {
+                Ok(())
+            };
+            fail_call(engine, inbox, lives, oscore, call, failure, true);
+            let _ = engine.release_rx(rx);
+            return outcome;
+        }
+    };
+    if parsed.ty() == Type::Confirmable {
+        if let Err(e) = super::send_empty_ack(engine, io, peer, parsed.message_id()) {
+            let _ = engine.release_rx(rx);
+            return Err(e);
+        }
+        *acknowledged = true;
     }
     if let Err(error) = super::oscore::commit_response(oscore, peer, response_state) {
         let _ = engine.release_rx(rx);
         return Err(error);
     }
-    // A matching piggybacked ACK ends retransmission even if its Observe
-    // value is stale. A delayed NON/CON notification cannot acknowledge a
-    // concurrently refreshed request merely by sharing its Token.
-    if parsed.ty() == Type::Acknowledgement
+    // A stale piggybacked ACK still ends request retransmission. A stale
+    // notification with the same token cannot acknowledge a refreshed exchange.
+    let stale = matches!(observation, ResponseObservation::Stale);
+    if (!stale || parsed.ty() == Type::Acknowledgement)
         && let Some(entry) = via_exchange
         && let Some(tx) = engine.take_pending_con(entry.message_id(), peer)
     {
         let _ = engine.release_tx(tx);
     }
-    // ACK stale CON notifications too, but do not refresh their lifetime,
-    // replace the inbox, or alter assembly. OSCORE already authenticated and
-    // ordered notifications by Partial IV (RFC 8613 section 4.1.3.5.2).
-    if !fresh {
+    if stale {
         let _ = engine.release_rx(rx);
         return Ok(());
     }
-    // Piggybacked ACK shares the request MID. A separate CON/NON response
-    // uses a new MID; stop RTO using the exchange's request MID.
-    if let Some(entry) = via_exchange
-        && let Some(tx) = engine.take_pending_con(entry.message_id(), peer)
+    if via_exchange.is_none_or(|entry| entry.message_id() != parsed.message_id())
+        && let Some(tx) = engine.take_pending_con(parsed.message_id(), peer)
     {
-        let _ = engine.release_tx(tx);
-    }
-    if let Some(tx) = engine.take_pending_con(parsed.message_id(), peer) {
         let _ = engine.release_tx(tx);
     }
 
-    if let Some(body) = upload_body(engine, lives.upload_key(Call::new(parsed.token(), peer)))
-        && let Some(transfer) = engine.tx_body_transfer(body)
-        && matches!(
-            transfer.role(),
-            BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
-        )
-    {
-        if transfer.role() == BlockRole::OutgoingQBlock1
+    if let Some((body, transfer)) = upload_body(engine, || lives.upload_key(call)) {
+        if transfer.role == BlockRole::OutgoingQBlock1
             && parsed.code() == Code::REQUEST_ENTITY_INCOMPLETE
-            && parsed.content_format() == Some(Ok(ContentFormat::MISSING_BLOCKS))
+            && options.format == Some(Ok(ContentFormat::MISSING_BLOCKS))
             && lives
                 .get(Call::new(parsed.token(), peer))
                 .is_some_and(|live| live.ty == Type::NonConfirmable)
@@ -3912,8 +4030,8 @@ where
                 oscore,
                 now_ms,
                 parsed.token(),
-                parsed.block1().and_then(Result::ok),
-                parsed.q_block1().and_then(Result::ok),
+                options.block1.and_then(Result::ok),
+                options.q_block1.and_then(Result::ok),
                 peer,
                 body,
             );
@@ -3935,7 +4053,7 @@ where
         let _ = engine.release_tx_body(body);
     }
 
-    let metadata = match ReplyMeta::from_parsed(parsed, peer, now_ms) {
+    let metadata = match ReplyCapture::checked(parsed, peer, now_ms, &options) {
         Ok(metadata) => metadata,
         Err(error) => {
             fail_call(
@@ -3952,18 +4070,22 @@ where
         }
     };
 
-    lives.record_backoff(call, parsed, now_ms);
-    let overloaded = matches!(
-        parsed.code(),
-        Code::TOO_MANY_REQUESTS | Code::SERVICE_UNAVAILABLE
-    );
+    if overloaded {
+        lives.record_backoff(call, &options, now_ms);
+    }
 
     // Classify from the already-decoded response. A plain 2.05 must not
     // stack Block IO scratch via MissingBlock probes.
-    if !overloaded && parsed.block2().is_some() {
-        match engine.apply_call_block2_rx(rx, false) {
+    if !overloaded && let Some(block) = options.block2 {
+        let progress = block.map_err(BlockTransferError::from).and_then(|block| {
+            let which = crate::storage::RxBlockOpt::Block2;
+            let (key, expected) =
+                which.body_key(call.token(), peer, options.size2, options.etag)?;
+            engine.apply_call_block2(key, block, parsed.payload(), expected, false)
+        });
+        match progress {
             Ok(progress) if progress.complete() => {
-                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                lives.record_observation(call, observation, now_ms);
                 finish_assembled(
                     engine,
                     inbox,
@@ -3974,27 +4096,24 @@ where
                     rx,
                     progress.id(),
                     metadata,
-                    via_exchange.is_some(),
                     full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
-                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
-                if let Some(previous) = inbox.take_datagram(call) {
-                    let _ = engine.release_rx(previous);
-                }
-                match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
+                lives.record_observation(call, observation, now_ms);
+                if store_block_reply(
+                    engine,
+                    inbox.slot_for(call),
+                    call,
+                    progress.id(),
+                    metadata,
+                    false,
+                )
+                .is_none()
                 {
-                    Ok(Some(previous)) if previous != progress.id() => {
-                        let _ = engine.release_rx_body(previous);
-                    }
-                    Ok(_) => {}
-                    Err(()) => {
-                        let _ = engine.release_rx_body(progress.id());
-                        let _ = engine.release_rx(rx);
-                        return Err(Error::Saturated);
-                    }
+                    let _ = engine.release_rx(rx);
+                    return Err(Error::Saturated);
                 }
                 take_exchange(engine, parsed, peer);
                 let outcome = send_block2_continue(
@@ -4041,10 +4160,16 @@ where
                 return Ok(());
             }
         }
-    } else if !overloaded && parsed.q_block2().next().is_some() {
-        match engine.apply_call_block2_rx(rx, true) {
+    } else if !overloaded && let Some(block) = options.q_block2 {
+        let progress = block.map_err(BlockTransferError::from).and_then(|block| {
+            let which = crate::storage::RxBlockOpt::QBlock2;
+            let (key, expected) =
+                which.body_key(call.token(), peer, options.size2, options.etag)?;
+            engine.apply_call_block2(key, block, parsed.payload(), expected, true)
+        });
+        match progress {
             Ok(progress) if progress.complete() => {
-                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
+                lives.record_observation(call, observation, now_ms);
                 let _ = engine.note_q2_receive(progress.id(), now_ms, parsed.ty());
                 finish_assembled(
                     engine,
@@ -4056,27 +4181,24 @@ where
                     rx,
                     progress.id(),
                     metadata,
-                    via_exchange.is_some(),
                     full_responses,
                 );
                 return Ok(());
             }
             Ok(progress) => {
-                lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
-                if let Some(previous) = inbox.take_datagram(call) {
-                    let _ = engine.release_rx(previous);
-                }
-                match inbox.retain_partial(Call::new(parsed.token(), peer), metadata, progress.id())
+                lives.record_observation(call, observation, now_ms);
+                if store_block_reply(
+                    engine,
+                    inbox.slot_for(call),
+                    call,
+                    progress.id(),
+                    metadata,
+                    false,
+                )
+                .is_none()
                 {
-                    Ok(Some(previous)) if previous != progress.id() => {
-                        let _ = engine.release_rx_body(previous);
-                    }
-                    Ok(_) => {}
-                    Err(()) => {
-                        let _ = engine.release_rx_body(progress.id());
-                        let _ = engine.release_rx(rx);
-                        return Err(Error::Saturated);
-                    }
+                    let _ = engine.release_rx(rx);
+                    return Err(Error::Saturated);
                 }
                 let _ = engine.note_q2_receive(progress.id(), now_ms, parsed.ty());
                 // CON payloads advance through their individual ACKs (RFC 9177
@@ -4136,13 +4258,12 @@ where
 
     // An Observe replacement releases its previous RX ownership before keeping
     // the new packet. Unexpected/custom states still cannot consume headroom.
-    let replacing_rx = inbox
-        .rows
-        .iter()
-        .flatten()
-        .any(|row| row.call == call && row.datagram.is_some());
+    let slot = inbox.slot_for(call);
     if full_responses
-        && !replacing_rx
+        && !slot
+            .as_deref()
+            .and_then(Option::as_ref)
+            .is_some_and(|row| row.storage.datagram().is_some())
         && super::admission::free_rx(engine) < super::admission::RX_HEADROOM
     {
         Metrics::inc(&mut engine.metrics_mut().admission_rx_refused);
@@ -4159,25 +4280,28 @@ where
         return Ok(());
     }
 
-    lives.record_observation(Call::new(parsed.token(), peer), parsed, now_ms);
-    accept_client_observe(engine, lives, parsed, peer, now_ms, via_exchange.is_some());
+    lives.record_observation(call, observation, now_ms);
+    accept_client_observe(engine, lives, call, metadata.observe_age, now_ms);
     take_exchange(engine, parsed, peer);
-    store_reply(
-        engine,
-        inbox,
-        Call::new(parsed.token(), peer),
-        metadata,
-        None,
-    );
-    if full_responses {
-        if let Some(row) = inbox.rows.iter_mut().flatten().find(|row| row.call == call) {
-            row.datagram = Some(rx);
-        } else {
-            let _ = engine.release_rx(rx);
+    if let Some(slot) = slot {
+        replace_reply(
+            engine,
+            slot,
+            Some(InboxRow {
+                call,
+                meta: Ok(metadata.retain()),
+                storage: if full_responses {
+                    ReplyStorage::Datagram(rx)
+                } else {
+                    ReplyStorage::Inline
+                },
+            }),
+        );
+        if full_responses {
+            return Ok(());
         }
-    } else {
-        let _ = engine.release_rx(rx);
     }
+    let _ = engine.release_rx(rx);
     Ok(())
 }
 
@@ -4191,8 +4315,7 @@ fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
     peer: Endpoint,
     rx: SlotId,
     body: SlotId,
-    metadata: ReplyMeta,
-    via_exchange: bool,
+    metadata: ReplyCapture<'_, '_, Mem::Token>,
     full_responses: bool,
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
@@ -4215,54 +4338,82 @@ fn finish_assembled<Mem, const CALLS: usize, const REQUESTS: usize>(
         let _ = engine.release_rx(rx);
         return;
     }
-    let metadata = inbox.partial_meta(call, body).unwrap_or(metadata);
-    let original = crate::message::decode_with_token::<Mem::Token>(
-        &metadata.header[..usize::from(metadata.header_len)],
-    )
-    .expect("encoded response header");
-    accept_client_observe(
-        engine,
-        lives,
-        &original,
-        peer,
-        metadata.received_at_ms,
-        via_exchange,
-    );
+    let incoming = (metadata.observe_age, metadata.received_at_ms);
+    let (age, received_at_ms) =
+        store_block_reply(engine, inbox.slot_for(call), call, body, metadata, true)
+            .unwrap_or(incoming);
+    accept_client_observe(engine, lives, call, age, received_at_ms);
     take_exchange(engine, parsed, peer);
-    store_reply(
-        engine,
-        inbox,
-        Call::new(parsed.token(), peer),
-        metadata,
-        Some(body),
-    );
     let _ = engine.release_rx(rx);
 }
 
-fn store_reply<Mem: Storage + BodySlots + DatagramSlots, const CALLS: usize>(
+// A replacement transfers ownership before releasing displaced slots. A retained
+// assembly can change state in place without moving its first fragment's header.
+fn replace_reply<Mem: Storage + BodySlots + DatagramSlots>(
     engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS, Mem::Token>,
-    call: Call<Mem::Token>,
-    meta: ReplyMeta,
-    body: Option<SlotId>,
+    slot: &mut Option<InboxRow<Mem::Token>>,
+    next: Option<InboxRow<Mem::Token>>,
 ) {
-    if let Some(rx) = inbox.take_datagram(call) {
-        let _ = engine.release_rx(rx);
-    }
-    match inbox.insert(call, Ok(meta), body) {
-        Ok(prev) => {
-            if let Some(id) = prev
-                && Some(id) != body
-            {
-                let _ = engine.release_rx_body(id);
-            }
+    if let Some(previous) = slot.as_ref() {
+        if let Some(rx) = previous.storage.datagram() {
+            let _ = engine.release_rx(rx);
         }
-        Err(()) => {
-            if let Some(id) = body {
-                let _ = engine.release_rx_body(id);
-            }
+        if let Some(body) = previous.storage.body()
+            && next.as_ref().and_then(|row| row.storage.body()) != Some(body)
+        {
+            let _ = engine.release_rx_body(body);
         }
     }
+    *slot = next;
+}
+
+fn store_block_reply<Mem: Storage + BodySlots + DatagramSlots>(
+    engine: &mut Engine<Mem>,
+    slot: Option<&mut Option<InboxRow<Mem::Token>>>,
+    call: Call<Mem::Token>,
+    body: SlotId,
+    meta: ReplyCapture<'_, '_, Mem::Token>,
+    complete: bool,
+) -> Option<(Option<u32>, u64)> {
+    let Some(slot) = slot else {
+        let _ = engine.release_rx_body(body);
+        return None;
+    };
+    if let Some(row) = slot.as_mut()
+        && let ReplyStorage::Partial {
+            body: current,
+            observe_age,
+        } = row.storage
+        && current == body
+    {
+        if complete {
+            row.storage = ReplyStorage::Assembled(body);
+        }
+        return Some((
+            observe_age,
+            row.meta
+                .as_ref()
+                .expect("partial reply metadata")
+                .received_at_ms,
+        ));
+    }
+    let observe_age = meta.observe_age;
+    let received_at_ms = meta.received_at_ms;
+    let storage = if complete {
+        ReplyStorage::Assembled(body)
+    } else {
+        ReplyStorage::Partial { body, observe_age }
+    };
+    replace_reply(
+        engine,
+        slot,
+        Some(InboxRow {
+            call,
+            meta: Ok(meta.retain()),
+            storage,
+        }),
+    );
+    Some((observe_age, received_at_ms))
 }
 
 /// Check unencrypted routing fields before touching protected response state.
@@ -4354,7 +4505,7 @@ where
     send_followup(
         engine,
         io,
-        lives,
+        lives.get(Call::new(parsed.token(), peer)),
         ids,
         oscore,
         now_ms,
@@ -4392,7 +4543,7 @@ where
     send_followup(
         engine,
         io,
-        lives,
+        lives.get(Call::new(parsed.token(), peer)),
         ids,
         oscore,
         now_ms,
@@ -4421,9 +4572,9 @@ where
     T: DatagramIo,
 {
     let call = Call::new(recover.key().token(), recover.key().endpoint());
-    if lives.get(call).is_none() {
+    let Some(live) = lives.get(call) else {
         return Ok(false);
-    }
+    };
     let mut nums = [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize];
     let count = recover.copy_missing_nums(&mut nums);
     let mut blocks = [BlockValue::new(0, false, 0).expect("valid block");
@@ -4436,7 +4587,7 @@ where
     let outcome = send_followup(
         engine,
         io,
-        lives,
+        Some(live),
         ids,
         oscore,
         now_ms,
@@ -4463,10 +4614,10 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[coaptic_io::dual_io(send_followup_async, bound(crate::app::async_server::ProtocolIo), calls(send_client_block1 => send_client_block1_async, super::finish_send => super::finish_send_async))]
-fn send_followup<Mem, T, const CALLS: usize, const REQUESTS: usize>(
+fn send_followup<Mem, T, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     io: &mut T,
-    lives: &ClientLives<CALLS, Mem::Token>,
+    live: Option<&LiveCall<Mem::Token>>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
     now_ms: u64,
@@ -4480,7 +4631,6 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots,
     T: DatagramIo,
 {
-    let live = lives.get(Call::new(token, peer));
     let ty = recovery_ty.unwrap_or_else(|| live.map(|live| live.ty).unwrap_or(Type::Confirmable));
     let code = live.map(|live| live.code).unwrap_or(Code::GET);
     let mut opts = OptionsBuilder::<
@@ -4501,7 +4651,6 @@ where
         *encoded = block.encode();
     }
     let retained_request = live
-        .as_ref()
         .and_then(|live| live.request_identity.as_ref())
         .map(|identity| {
             crate::message::decode_with_token::<Mem::Token>(&identity.bytes[..identity.len])
@@ -4511,7 +4660,7 @@ where
         .and_then(|live| live.content_format)
         .map(ContentFormat::encode);
     let filled = (|| -> Result<(), EncodeError> {
-        if let Some(live) = live.as_ref() {
+        if let Some(live) = live {
             if let Some(tag) = live.if_match.as_slice() {
                 push_opt(&mut opts, Opt::if_match(tag))?;
             }
@@ -4527,17 +4676,20 @@ where
                 push_opt(&mut opts, Opt::etag(tag))?;
             }
         }
-        if let Some(ref encoded) = cf {
-            push_opt(&mut opts, Opt::content_format(encoded))?;
-        }
-        if let Some(live) = live.as_ref() {
+        if let Some(live) = live {
             for segment in live.path.segments() {
                 push_opt(&mut opts, Opt::uri_path(segment))?;
             }
         }
-        if let Some(live) = live.as_ref() {
+        if let Some(ref encoded) = cf {
+            push_opt(&mut opts, Opt::content_format(encoded))?;
+        }
+        if let Some(live) = live {
             for query in live.queries.values() {
-                push_opt(&mut opts, Opt::uri_query(query))?;
+                push_opt(
+                    &mut opts,
+                    Opt::new(crate::message::OptionNumber::URI_QUERY, query),
+                )?;
             }
         }
         if let Some(ref encoded) = accept {
@@ -4552,10 +4704,10 @@ where
         if let Some(ref value) = no_response {
             push_opt(&mut opts, Opt::no_response(value))?;
         }
-        if let Some(echo) = live.as_ref().and_then(|live| live.echo.as_ref()) {
+        if let Some(echo) = live.and_then(|live| live.echo.as_ref()) {
             push_opt(&mut opts, Opt::echo(echo.as_slice()))?;
         }
-        if let Some(tag) = live.as_ref().and_then(|live| live.request_tag.as_slice()) {
+        if let Some(tag) = live.and_then(|live| live.request_tag.as_slice()) {
             push_opt(&mut opts, Opt::request_tag(tag))?;
         }
         if let Some(request) = retained_request.as_ref() {
@@ -4594,12 +4746,6 @@ where
                 let _ = engine.release_tx(tx);
                 return Err(Error::Saturated);
             };
-            let mut queries = [""; MAX_PATH_SEGMENTS];
-            let mut count = 0;
-            for query in live.queries.values() {
-                queries[count] = query;
-                count += 1;
-            }
             // Q response selection uses Q-Block1; same-side classic/Q mixing is
             // forbidden. The existing request tag remains the operation identity.
             if !q_block2.is_empty() && live.request_tag.is_absent() {
@@ -4617,7 +4763,7 @@ where
                 code,
                 token,
                 live.path.segments(),
-                &queries[..count],
+                &live.queries,
                 live.accept,
                 retained_request
                     .as_ref()
@@ -4693,15 +4839,9 @@ where
             return Ok(());
         }
     }
-    let Some(live) = lives.get(Call::new(parsed.token(), peer)) else {
+    let Some(live) = lives.get_mut(Call::new(parsed.token(), peer)) else {
         return Ok(());
     };
-    let mut queries = [""; MAX_PATH_SEGMENTS];
-    let mut query_n = 0;
-    for query in live.queries.values() {
-        queries[query_n] = query;
-        query_n += 1;
-    }
     for &num in &nums[..count] {
         let issued = engine.reissue_q_block1(body, num).map_err(Error::Block)?;
         send_block1_issued(
@@ -4715,7 +4855,7 @@ where
             live.code,
             parsed.token(),
             live.path.segments(),
-            &queries[..query_n],
+            &live.queries,
             live.accept,
             live.content_format,
             live.echo,
@@ -4730,49 +4870,40 @@ where
     }
     if count != 0 {
         let completed = super::completion_time(io, now_ms);
-        arm_q_pacing(engine, lives, ids, completed, live.call);
+        arm_q_pacing(engine, live, Some(body), ids, completed);
     }
     Ok(())
 }
 
 // Only success-suppressed NON uploads use timer progression. The last packet's
 // bounded unbiased 0..=1000ms jitter sample also schedules its next payload set.
-fn arm_q_pacing<Mem: Storage + BodySlots, const CALLS: usize>(
+fn arm_q_pacing<Mem: Storage + BodySlots>(
     engine: &Engine<Mem>,
-    lives: &mut ClientLives<CALLS, Mem::Token>,
+    live: &mut LiveCall<Mem::Token>,
+    body: Option<SlotId>,
     ids: &AppIds,
     now_ms: u64,
-    call: Call<Mem::Token>,
 ) {
-    let body = upload_body(engine, lives.upload_key(call));
-    let ready = body
-        .and_then(|body| engine.tx_body_transfer(body))
-        .is_some_and(|t| {
-            t.role() == BlockRole::OutgoingQBlock1
-                && !t.is_complete()
-                && t.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1
-        });
-    if let Some(live) = lives
-        .rows
-        .iter_mut()
-        .flatten()
-        .find(|live| live.call == call)
-    {
-        live.q_pace_ms = if ready
-            && live.ty == Type::NonConfirmable
-            && live
-                .no_response
-                .is_some_and(|mask| mask.suppresses(Code::CONTINUE))
-        {
-            now_ms
-                .checked_add(u64::from(
-                    crate::message::QBlockTransmission::NON_TIMEOUT_MS + ids.jitter(),
-                ))
-                .unwrap_or(0)
-        } else {
-            0
-        };
-    }
+    live.q_pace_ms = if live.ty == Type::NonConfirmable
+        && live
+            .no_response
+            .is_some_and(|mask| mask.suppresses(Code::CONTINUE))
+        && body
+            .and_then(|id| engine.tx_body_transfer(id))
+            .is_some_and(|transfer| {
+                transfer.role() == BlockRole::OutgoingQBlock1
+                    && !transfer.is_complete()
+                    && transfer.window_mask()
+                        == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1
+            }) {
+        now_ms
+            .checked_add(u64::from(
+                crate::message::QBlockTransmission::NON_TIMEOUT_MS + ids.jitter(),
+            ))
+            .unwrap_or(0)
+    } else {
+        0
+    };
 }
 
 /// At most one due payload set per poll, oldest deadline first. Missed time does
@@ -4795,25 +4926,19 @@ where
 {
     let Some(live) = lives
         .rows
-        .iter()
+        .iter_mut()
         .flatten()
         .filter(|live| live.q_pace_ms != 0 && live.q_pace_ms <= now_ms)
         .min_by_key(|live| live.q_pace_ms)
-        .copied()
     else {
         return Ok(());
     };
     // Clear before attempting: every success rearms from now, every failure
     // retires the Call without changing the uncertainty of remote effects.
-    if let Some(row) = lives
-        .rows
-        .iter_mut()
-        .flatten()
-        .find(|row| row.call == live.call)
-    {
-        row.q_pace_ms = 0;
-    }
-    let Some(body) = upload_body(engine, lives.upload_key(live.call)) else {
+    live.q_pace_ms = 0;
+    let call = live.call;
+    let key = BlockKey::new(call.token, call.peer).with_identity(live.request_tag);
+    let Some((body, _)) = upload_body(engine, || key) else {
         return Ok(());
     };
     let result = match engine.pace_q_block1(body).map_err(Error::Block) {
@@ -4824,22 +4949,22 @@ where
             ids,
             oscore,
             now_ms,
-            live.call.token(),
+            call.token(),
             None,
             None,
-            live.call.peer,
+            call.peer,
             body,
         ),
         Err(error) => Err(error),
     };
     if result.is_err() {
-        abandon_send(engine, oscore, live.call.token(), live.call.peer);
+        abandon_send(engine, oscore, call.token(), call.peer);
         fail_call(
             engine,
             inbox,
             lives,
             oscore,
-            live.call,
+            call,
             CallFailure::ContinuationFailed,
             true,
         );
@@ -4876,26 +5001,24 @@ where
     if live.ty != Type::Confirmable {
         return Ok(());
     }
-    let Some(body) = upload_body(engine, lives.upload_key(call)) else {
+    let Some((body, transfer)) = upload_body(engine, || {
+        BlockKey::new(call.token, call.peer).with_identity(live.request_tag)
+    }) else {
         return Ok(());
     };
-    let Some(transfer) = engine.tx_body_transfer(body) else {
-        return Ok(());
-    };
-    if transfer.role() != BlockRole::OutgoingQBlock1 || transfer.is_complete() {
+    if transfer.role != BlockRole::OutgoingQBlock1 || transfer.complete {
         return Ok(());
     }
-    let acknowledged =
-        if transfer.window_mask() == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1 {
-            // Every earlier payload was individually ACKed before the next
-            // was issued, so this ACK confirms the entire current set.
-            engine
-                .ack_q_block1(body, transfer.num())
-                .map_err(Error::Block)
-                .map(|_| ())
-        } else {
-            Ok(())
-        };
+    let acknowledged = if transfer.full_window {
+        // Every earlier payload was individually ACKed before the next
+        // was issued, so this ACK confirms the entire current set.
+        engine
+            .ack_q_block1(body, transfer.num)
+            .map_err(Error::Block)
+            .map(|_| ())
+    } else {
+        Ok(())
+    };
     let outcome = match acknowledged {
         Ok(()) => continue_block1_tx(
             engine,
@@ -4960,25 +5083,18 @@ where
     if transfer.is_complete() {
         return Ok(());
     }
-    let live = lives.get(Call::new(token, peer));
+    let row = lives.get_mut(Call::new(token, peer));
+    let live = row.as_deref();
     let ty = live.map(|live| live.ty).unwrap_or(Type::Confirmable);
     let code = live.map(|live| live.code).unwrap_or(Code::PUT);
-    let path = live.map(|live| live.path);
     let content_format = live.and_then(|live| live.content_format);
     let echo = live.and_then(|live| live.echo);
     let no_response = live.and_then(|live| live.no_response);
-    let if_match = live.as_ref().and_then(|live| live.if_match.as_slice());
-    let etag = live.as_ref().and_then(|live| live.etag.as_slice());
+    let if_match = live.and_then(|live| live.if_match.as_slice());
+    let etag = live.and_then(|live| live.etag.as_slice());
     let if_none_match = live.is_some_and(|live| live.if_none_match);
-    let segments: &[&str] = path.as_ref().map_or(&[], Path::segments);
-    let mut queries = [""; MAX_PATH_SEGMENTS];
-    let mut query_n = 0;
-    if let Some(live) = live.as_ref() {
-        for query in live.queries.values() {
-            queries[query_n] = query;
-            query_n += 1;
-        }
-    }
+    let segments: &[&str] = live.map_or(&[], |live| live.path.segments());
+    let queries = live.map_or(&RetainedQueries::EMPTY, |live| &live.queries);
     let accept = live.and_then(|live| live.accept);
     match transfer.role() {
         BlockRole::OutgoingBlock1 => {
@@ -4994,7 +5110,7 @@ where
                 code,
                 token,
                 segments,
-                &queries[..query_n],
+                queries,
                 accept,
                 content_format,
                 echo,
@@ -5040,7 +5156,7 @@ where
                 code,
                 token,
                 segments,
-                &queries[..query_n],
+                queries,
                 accept,
                 content_format,
                 echo,
@@ -5054,7 +5170,9 @@ where
             )
             .map(|_| ())?;
             let completed = super::completion_time(io, now_ms);
-            arm_q_pacing(engine, lives, ids, completed, Call::new(token, peer));
+            if let Some(live) = row {
+                arm_q_pacing(engine, live, Some(body), ids, completed);
+            }
             Ok(())
         }
         _ => Ok(()),
@@ -5074,7 +5192,7 @@ fn issue_block1<Mem, T, const REQUESTS: usize>(
     code: Code,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
@@ -5128,7 +5246,7 @@ fn issue_q_block1_window<Mem, T, const REQUESTS: usize>(
     code: Code,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
@@ -5200,7 +5318,7 @@ fn send_block1_issued<Mem, T, const REQUESTS: usize>(
     code: Code,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
@@ -5263,7 +5381,7 @@ fn stage_block1_issued<Mem, T, const REQUESTS: usize>(
     code: Code,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
@@ -5363,7 +5481,7 @@ fn encode_block1_request<Mem, E, const REQUESTS: usize>(
     mid: MessageId,
     token: Mem::Token,
     path: &[&str],
-    queries: &[&str],
+    queries: &RetainedQueries,
     accept: Option<ContentFormat>,
     content_format: Option<ContentFormat>,
     echo: Option<crate::message::Echo>,
@@ -5416,8 +5534,11 @@ where
         if let Some(ref encoded) = cf {
             push_opt(&mut opts, Opt::content_format(encoded))?;
         }
-        for query in queries {
-            push_opt(&mut opts, Opt::uri_query(query))?;
+        for query in queries.values() {
+            push_opt(
+                &mut opts,
+                Opt::new(crate::message::OptionNumber::URI_QUERY, query),
+            )?;
         }
         if let Some(ref encoded) = acc {
             push_opt(&mut opts, Opt::accept(encoded))?;
@@ -5564,21 +5685,47 @@ fn copy_tx_range<Mem: Storage + BodySlots>(
     Ok(issued.len())
 }
 
+// Keep only the facts callers use across a mutation. A full transfer also
+// contains request bindings and notification metadata.
+struct UploadProgress {
+    role: BlockRole,
+    num: u32,
+    complete: bool,
+    full_window: bool,
+}
+
 fn upload_body<Mem: Storage + BodySlots>(
-    engine: &Engine<Mem>,
-    key: BlockKey<Mem::Token>,
-) -> Option<SlotId> {
-    engine
-        .lookup_tx_body_role(key, BlockRole::OutgoingBlock1)
-        .or_else(|| engine.lookup_tx_body_role(key, BlockRole::OutgoingQBlock1))
-}
-
-fn rx_body_payload<Mem: Storage + BodySlots>(engine: &Engine<Mem>, id: SlotId) -> Option<&[u8]> {
-    engine.rx_body_payload(id)
-}
-
-fn release_rx_body<Mem: Storage + BodySlots>(engine: &mut Engine<Mem>, id: SlotId) {
-    let _ = engine.release_rx_body(id);
+    engine: &mut Engine<Mem>,
+    key: impl FnOnce() -> BlockKey<Mem::Token>,
+) -> Option<(SlotId, UploadProgress)> {
+    let occupied = super::tx_body_slots_to_scan(engine);
+    if occupied.is_empty() {
+        return None;
+    }
+    let key = key();
+    let mut q = None;
+    for i in occupied {
+        let id = SlotId::from_index(i);
+        let Some(transfer) = engine.tx_body_transfer(id) else {
+            continue;
+        };
+        if transfer.key() != key {
+            continue;
+        }
+        let progress = || UploadProgress {
+            role: transfer.role(),
+            num: transfer.num(),
+            complete: transfer.is_complete(),
+            full_window: transfer.window_mask()
+                == (1u16 << crate::storage::BlockTransfer::MAX_PAYLOADS) - 1,
+        };
+        match transfer.role() {
+            BlockRole::OutgoingBlock1 => return Some((id, progress())),
+            BlockRole::OutgoingQBlock1 if q.is_none() => q = Some((id, progress())),
+            _ => {}
+        }
+    }
+    q
 }
 
 fn client_observe_live<Mem: Storage + ObserveSlots>(
@@ -5592,31 +5739,30 @@ fn client_observe_live<Mem: Storage + ObserveSlots>(
 fn accept_client_observe<Mem, const CALLS: usize>(
     engine: &mut Engine<Mem>,
     lives: &ClientLives<CALLS, Mem::Token>,
-    parsed: &ParsedMessage<'_, Mem::Token>,
-    peer: Endpoint,
+    call: Call<Mem::Token>,
+    observe_age: Option<u32>,
     now_ms: u64,
-    via_exchange: bool,
 ) where
     Mem: Storage + ObserveSlots,
 {
-    let key = ObserveKey::new_client(parsed.token(), peer);
-    let live = lives.get(Call::new(parsed.token(), peer));
-    if live.is_some_and(|live| live.observe == OutgoingObserve::Deregister) {
-        let _ = engine.take_observe(key);
-        return;
+    let key = ObserveKey::new_client(call.token(), call.peer);
+    if let Some(max_age) = observe_age {
+        let mode = lives.get(call).map(|live| live.observe);
+        if mode != Some(OutgoingObserve::Deregister)
+            && (mode == Some(OutgoingObserve::Register) || engine.lookup_observe(key).is_some())
+        {
+            if let Some(id) =
+                engine.insert_observe(ObserveInterest::new_client(call.token(), call.peer))
+            {
+                let _ = engine.refresh_observe_lifetime_at(
+                    id,
+                    crate::storage::ObserveLifetime::max_age(now_ms, max_age),
+                );
+            }
+            return;
+        }
     }
-    let subscribed = live.is_some_and(|live| live.observe == OutgoingObserve::Register)
-        || engine.lookup_observe(key).is_some();
-    if subscribed && parsed.observe().and_then(Result::ok).is_some() && parsed.code().is_success() {
-        let _ = engine.insert_observe(ObserveInterest::new_client(parsed.token(), peer));
-        let max_age = parsed
-            .max_age()
-            .and_then(Result::ok)
-            .unwrap_or(super::DEFAULT_MAX_AGE_SECS);
-        let _ = engine.refresh_observe_max_age(key, now_ms, max_age, None);
-    } else if via_exchange || subscribed {
-        let _ = engine.take_observe(key);
-    }
+    let _ = engine.take_observe(key);
 }
 
 /// Retransmission give-up completes the call rather than silently losing it.
@@ -5716,6 +5862,28 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
+    fail_call_row(
+        engine,
+        inbox,
+        oscore,
+        call,
+        lives.get_mut(call),
+        failure,
+        release_pending,
+    );
+}
+
+fn fail_call_row<Mem, const CALLS: usize, const REQUESTS: usize>(
+    engine: &mut Engine<Mem>,
+    inbox: &mut ClientInbox<CALLS, Mem::Token>,
+    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    call: Call<Mem::Token>,
+    live: Option<&mut LiveCall<Mem::Token>>,
+    failure: CallFailure,
+    release_pending: bool,
+) where
+    Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
+{
     let key = ExchangeKey::new(call.token(), call.peer);
     if let Some(entry) = engine.take_exchange(key) {
         // NON/empty ACK may have released and reused the old TX slot. Only
@@ -5739,11 +5907,16 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
         }
     }
     let _ = engine.take_observe(ObserveKey::new_client(call.token(), call.peer));
-    if let Some(rx) = inbox.take_datagram(call) {
-        let _ = engine.release_rx(rx);
-    }
-    if let Ok(Some(body)) = inbox.insert(call, Err(failure), None) {
-        let _ = engine.release_rx_body(body);
+    if let Some(slot) = inbox.slot_for(call) {
+        replace_reply(
+            engine,
+            slot,
+            Some(InboxRow {
+                call,
+                meta: Err(failure),
+                storage: ReplyStorage::Inline,
+            }),
+        );
     }
     for i in 0..engine.capacities().rx_body_slots.unwrap_or(0) {
         let id = SlotId::from_index(i);
@@ -5758,24 +5931,15 @@ fn fail_call<Mem, const CALLS: usize, const REQUESTS: usize>(
             let _ = engine.release_rx_body(id);
         }
     }
-    if let Some(body) = upload_body(engine, lives.upload_key(call))
-        && engine.tx_body_transfer(body).is_some_and(|transfer| {
-            matches!(
-                transfer.role(),
-                BlockRole::OutgoingBlock1 | BlockRole::OutgoingQBlock1
-            )
-        })
-    {
+    if let Some((body, _)) = upload_body(engine, || {
+        BlockKey::new(call.token, call.peer)
+            .with_identity(live.as_ref().map_or(BodyTag::ABSENT, |row| row.request_tag))
+    }) {
         let _ = engine.release_tx_body(body);
     }
     super::oscore::cancel(oscore, call.peer, call.token());
     // Untaken failures occupy the same bounded completion budget as replies.
-    for live in lives
-        .rows
-        .iter_mut()
-        .flatten()
-        .filter(|live| live.call == call)
-    {
+    if let Some(live) = live {
         live.due_ms = 0;
         live.deadline_ms = None;
     }
@@ -5949,10 +6113,11 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    lives.expire_backoffs(now_ms);
-    let mut due = [None; CALLS];
-    for (i, live) in lives.rows.iter().enumerate() {
-        let Some(live) = live.as_ref() else {
+    // A failure only clears this Call's owners. The live table keeps stable
+    // slots, so unrelated Calls can be examined and expired in the same pass.
+    for slot in &mut lives.rows {
+        ClientLives::<CALLS, _>::expire_backoff(slot, now_ms);
+        let Some(live) = slot.as_mut() else {
             continue;
         };
         // Most polls precede both timers. Inspect only this row's metadata until
@@ -5977,10 +6142,9 @@ pub(crate) fn expire_client_exchanges<Mem, const CALLS: usize, const REQUESTS: u
         } else {
             None
         };
-        due[i] = failure.map(|failure| (live.call, failure));
-    }
-    for (call, failure) in due.into_iter().flatten() {
-        fail_call(engine, inbox, lives, oscore, call, failure, true);
+        if let Some(failure) = failure {
+            fail_call_row(engine, inbox, oscore, live.call, Some(live), failure, true);
+        }
     }
 }
 

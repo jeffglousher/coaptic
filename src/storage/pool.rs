@@ -545,14 +545,16 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
     /// Pool-owned static backing is omitted from this protocol snapshot.
     #[must_use]
     pub fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
+        self.transfer_ref(id)
+            .copied()
+            .map(BlockTransfer::without_static_body)
+    }
+
+    fn transfer_ref(&self, id: SlotId) -> Option<&BlockTransfer<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.transfers
-            .get(id.index())
-            .copied()
-            .flatten()
-            .map(BlockTransfer::without_static_body)
+        self.transfers.get(id.index())?.as_ref()
     }
 
     /// Replace the sidecar on an occupied slot.
@@ -621,7 +623,7 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
     pub fn lookup(&self, key: BlockKey<T>) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.transfer(id) {
+            match self.transfer_ref(id) {
                 Some(t) if t.key() == key => Some(id),
                 _ => None,
             }
@@ -633,7 +635,7 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
     pub fn lookup_role(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId> {
         (0..SLOTS).find_map(|i| {
             let id = SlotId::from_index(i);
-            self.transfer(id)
+            self.transfer_ref(id)
                 .filter(|transfer| transfer.key() == key && transfer.role() == role)
                 .map(|_| id)
         })
@@ -647,7 +649,7 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
         }
         (0..SLOTS).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.transfer(id) {
+            match self.transfer_ref(id) {
                 Some(t) if same_body_identity(t, key, role) => Some(id),
                 _ => None,
             }
@@ -708,20 +710,14 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
             });
         }
         let idx = id.index();
-        let offset = {
-            let transfer = self.transfers[idx]
-                .as_mut()
-                .ok_or(BlockTransferError::NoTransfer)?;
-            if transfer.role() != role {
-                return Err(BlockTransferError::IdentityMismatch);
-            }
-            accept_incoming_role(transfer, block, payload.len(), BYTES)?
-        };
-        let contiguous = role.is_q_block().then_some(
-            self.transfers[idx]
-                .ok_or(BlockTransferError::NoTransfer)?
-                .filled(),
-        );
+        let transfer = self.transfers[idx]
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let offset = accept_incoming_role(transfer, block, payload.len(), BYTES)?;
+        let contiguous = role.is_q_block().then_some(transfer.filled());
         store_incoming(
             &mut self.bytes[idx],
             &mut self.lens[idx],
@@ -729,7 +725,6 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
             payload,
             contiguous,
         )?;
-        let transfer = self.transfers[idx].ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,
             transfer.filled(),
@@ -756,14 +751,18 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> BodyPool<SLOTS, BYTE
             .lookup_role(key, role)
             .or_else(|| self.lookup_identity(key, role))
         {
-            let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+            let transfer = self
+                .transfer_ref(id)
+                .ok_or(BlockTransferError::NoTransfer)?;
             if role.is_q_block() && transfer.expected_len() != expected_len {
                 return Err(BlockTransferError::LengthInconsistent);
             }
             return self.write_incoming(id, role, block, payload);
         }
         let id = self.admit_incoming(key, role, block, payload, expected_len)?;
-        let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+        let transfer = self
+            .transfer_ref(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,
             transfer.filled(),
@@ -972,6 +971,10 @@ impl<const SLOTS: usize, const BYTES: usize, T: OwnedToken> super::block::BodyOp
 
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         BodyPool::transfer(self, id)
+    }
+
+    fn transfer_ref(&self, id: SlotId) -> Option<&BlockTransfer<T>> {
+        BodyPool::transfer_ref(self, id)
     }
 
     fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {

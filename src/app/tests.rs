@@ -2128,10 +2128,7 @@ fn route_removal_waits_for_call_cancellation_and_collection_without_io() {
     assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
     assert_eq!(app.transport().sent_n, sent);
     assert_eq!(app.metrics(), metrics);
-    assert!(
-        app.site
-            .contains_path(super::request::path_from_into("target").unwrap())
-    );
+    assert!(app.site.route_index(&["target"]).is_some());
     assert!(app.cancel(call));
     assert_eq!(app.remove_route("target"), Err(RouteRemovalError::Busy));
     assert_eq!(
@@ -3562,6 +3559,51 @@ fn notify_nstart_one_per_endpoint() {
     assert_eq!(app.metrics().nstart_reject, 1);
 }
 
+#[cfg(feature = "alloc")]
+#[test]
+fn notification_cache_overflow_checks_live_credit_and_wakes_after_release() {
+    use crate::storage::{AllocMemory, Capacities, Engine, ObserveInterest, ObserveLifetime};
+    let capacities = Capacities {
+        observe_entries: super::NOTIFY_HELD_CACHE + 1,
+        ..Capacities::from_profile::<profiles::Constrained>()
+    };
+    let mut engine =
+        Engine::from_storage(AllocMemory::<Token>::try_new(capacities, usize::MAX).unwrap());
+    let mid = MessageId::new(9);
+    for n in 0..super::NOTIFY_HELD_CACHE {
+        let mut row = ObserveInterest::new(Token::EMPTY, Endpoint::v4([192, 0, 2, n as u8], 5683));
+        row.record_notify(0, mid, true);
+        engine.insert_observe(row).unwrap();
+    }
+    // The ninth physical endpoint overflows the inline set and is held by
+    // both an Observe row and a pending CON. Releasing either alone is insufficient.
+    let endpoint = Endpoint::v4([192, 0, 2, 99], 5683);
+    let tx = engine.acquire_tx().unwrap();
+    let pending = engine.reserve_pending_con(tx, endpoint, mid).unwrap();
+    let mut row = ObserveInterest::new(Token::EMPTY, endpoint);
+    row.record_notify(0, mid, false);
+    let expiry = u64::from(ObserveTransmission::NON_TIMEOUT_MS);
+    row = row.with_lifetime(Some(ObserveLifetime::unacked(expiry, 30, mid)));
+    engine.insert_observe(row).unwrap();
+    let cache = super::NotifyHeldCache::from_engine(&engine, 0);
+    assert!(cache.overflow);
+    assert!(cache.contains(&engine, endpoint, 0));
+    assert_eq!(
+        super::notification_wakeup(&engine, endpoint, 0),
+        Some(expiry)
+    );
+    assert_eq!(super::notification_wakeup(&engine, endpoint, expiry), None);
+    engine.take_observe(row.key()).unwrap();
+    assert!(cache.contains(&engine, endpoint, expiry));
+    assert!(engine.cancel_pending_con(pending));
+    engine.release_tx(tx).unwrap();
+    assert!(!cache.contains(&engine, endpoint, expiry));
+    assert_eq!(
+        super::notification_wakeup(&engine, endpoint, expiry),
+        Some(expiry)
+    );
+}
+
 #[test]
 fn notify_fans_out_to_distinct_endpoints() {
     let peer_a = Endpoint::v4([192, 0, 2, 1], 5683);
@@ -3930,6 +3972,10 @@ fn client_take_response_truncates_non_block_payload_at_inline() {
     let payload = [b'x'; 200];
     inject_piggyback_ack(&mut app, peer, mid, token, &payload);
     app.poll(0).expect("match");
+    assert_eq!(
+        app.take_response_with(call, |_| panic!("incomplete representation")),
+        Err(crate::ResponseBufferError::Unavailable)
+    );
     let response = app
         .take_response(call)
         .expect("matched")
@@ -4489,14 +4535,15 @@ fn client_observe_register_notify_deregister() {
         .expect("send");
     app.poll(0).expect("server handle");
     app.poll(0).expect("client match");
-    let initial = app
-        .take_response(call)
-        .expect("initial")
-        .expect("remote response");
-    assert_eq!(initial.code(), Code::CONTENT);
-    assert_eq!(initial.payload(), b"obs-0");
-    assert_eq!(initial.observe_seq(), Some(0));
-    assert_eq!(initial.token(), Some(call.token()));
+    app.take_response_with(call, |initial| {
+        assert_eq!(initial.code(), Code::CONTENT);
+        assert_eq!(initial.payload(), b"obs-0");
+        assert_eq!(initial.observe_seq(), Some(0));
+        assert_eq!(initial.token(), Some(call.token()));
+    })
+    .expect("complete inline representation")
+    .expect("initial")
+    .expect("remote response");
     assert!(client_observe_live(&app, call));
 
     let sent = app
@@ -5564,6 +5611,24 @@ fn block2_outside_representation_refuses_without_retaining_body() {
 
 #[test]
 fn block2_continuations_preserve_ordered_queries_and_accept() {
+    const ROUTE: &[&str] = &["sensors", "zone/one", "history"];
+    const QUERIES: [&str; 4] = ["rt=Type1", "", "rt=Type1", "if=If1"];
+    const BODY: [u8; 2000] = {
+        let mut bytes = [0; 2000];
+        let mut i = 0;
+        while i < bytes.len() {
+            bytes[i] = (i / 64 + i % 64) as u8;
+            i += 1;
+        }
+        bytes
+    };
+    fn checked_large(request: Request<'_>) -> Response<'static> {
+        assert_eq!(request.path(), ROUTE);
+        assert!(request.uri_query().eq(QUERIES.map(Ok)));
+        Response::content(&BODY)
+            .content_format(ContentFormat::OCTET_STREAM)
+            .etag(b"history")
+    }
     #[derive(Default)]
     struct CheckedPipe {
         pipe: Pipe,
@@ -5580,11 +5645,12 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         fn send(&mut self, dest: Endpoint, bytes: &[u8]) -> Result<usize, Self::Error> {
             let parsed = decode(bytes).unwrap();
             if parsed.code() == Code::GET {
-                let mut queries = parsed.uri_query();
-                assert_eq!(queries.next(), Some(Ok("rt=Type1")));
-                assert_eq!(queries.next(), Some(Ok("")));
-                assert_eq!(queries.next(), Some(Ok("if=If1")));
-                assert_eq!(queries.next(), None);
+                assert!(parsed.uri_path().eq(ROUTE.iter().copied().map(Ok)));
+                assert!(parsed.uri_query().eq(QUERIES.map(Ok)));
+                assert_eq!(
+                    parsed.block2().unwrap().unwrap().num() as usize,
+                    self.requests
+                );
                 assert_eq!(parsed.accept(), Some(Ok(ContentFormat::OCTET_STREAM)));
                 assert_eq!(parsed.echo(), Some(&b"challenge"[..]));
                 assert_eq!(
@@ -5600,15 +5666,16 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
     let mut app = App::profile::<profiles::Default>()
         .deterministic_for_tests()
         .block_wise::<true>()
-        .route("large", get(get_large))
+        .route(ROUTE, get(checked_large))
         .allow_unprotected()
         .bind(CheckedPipe::default())
         .unwrap();
     let call = app
-        .get("large")
+        .get(ROUTE)
         .to(Endpoint::v4([192, 0, 2, 2], 5683))
         .query("rt=Type1")
         .query("")
+        .query("rt=Type1")
         .query("if=If1")
         .accept(ContentFormat::OCTET_STREAM)
         .echo(EchoOpt::new(b"challenge").unwrap())
@@ -5622,13 +5689,13 @@ fn block2_continuations_preserve_ordered_queries_and_accept() {
         app.poll(now).unwrap();
         if let Some(response) = app.take_response(call) {
             let response = response.expect("remote response");
-            assert_eq!(response.body(), Some(&LARGE[..]));
+            assert_eq!(response.body(), Some(&BODY[..]));
             complete = true;
             break;
         }
     }
     assert!(complete);
-    assert!(app.transport().requests > 1);
+    assert_eq!(app.transport().requests, BODY.len().div_ceil(64));
     assert_eq!(app.engine_mut().rx_occupied(), 0);
     assert_eq!(app.engine_mut().tx_occupied(), 0);
 }
@@ -6046,7 +6113,10 @@ fn local_failures_are_not_remote_gateway_timeout_responses() {
         "completed response must not be replaced by cancellation"
     );
     assert_eq!(
-        app.take_response(call).unwrap().unwrap().code(),
+        app.take_response_with(call, |reply| reply.code())
+            .unwrap()
+            .unwrap()
+            .unwrap(),
         Code::GATEWAY_TIMEOUT
     );
     assert!(!app.cancel(call));
@@ -6074,6 +6144,32 @@ fn untaken_cancelled_calls_remain_bounded_and_release_after_take() {
         assert!(app.take_response(call).is_none());
     }
     assert!(app.get("value").to(peer).send(2).is_ok());
+}
+
+#[test]
+fn one_pass_expires_simultaneous_calls_and_preserves_a_later_deadline() {
+    let mut app = record_client();
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let first = app.get("a").non().to(peer).deadline(20).send(0).unwrap();
+    let later = app.get("b").non().to(peer).deadline(30).send(1).unwrap();
+    let last = app.get("c").to(peer).deadline(20).send(2).unwrap();
+    app.poll(20).unwrap();
+    for call in [last, first] {
+        assert_eq!(
+            app.take_response(call).unwrap().unwrap_err(),
+            crate::CallFailure::DeadlineExceeded
+        );
+    }
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    assert_eq!(app.next_timeout(), Some(30));
+    assert!(app.take_response(later).is_none());
+    let reused = app.get("d").to(peer).send(21).unwrap();
+    app.poll(30).unwrap();
+    assert_eq!(
+        app.take_response(later).unwrap().unwrap_err(),
+        crate::CallFailure::DeadlineExceeded
+    );
+    assert!(app.cancel(reused));
 }
 
 #[test]
@@ -7141,6 +7237,107 @@ fn client_metadata_byte_count_and_location_bounds_refuse_without_partial_reply()
         assert_eq!(app.engine_mut().rx_occupied(), 0);
         assert_eq!(app.engine_mut().tx_occupied(), 0);
         assert!(app.get("next").to(peer).send(2).is_ok());
+    }
+}
+
+#[test]
+fn legacy_collection_requires_the_completed_body_and_recovers_after_release() {
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for (index, bytes) in [b"first".as_slice(), b"missing", b"reused"]
+        .into_iter()
+        .enumerate()
+    {
+        let now = index as u64 * 2;
+        let call = app.get("value").non().to(peer).send(now).unwrap();
+        let block = BlockValue::from_size(0, false, 16).unwrap().encode();
+        let options = [Opt::block2(&block)];
+        let message = Message::new(
+            Type::NonConfirmable,
+            Code::CONTENT,
+            MessageId::new(60 + index as u16),
+        )
+        .with_token(call.token())
+        .with_options(&options)
+        .with_payload(bytes);
+        let mut wire = [0; WIRE];
+        let len = encode(&message, &mut wire).unwrap();
+        app.transport_mut().inbox = Some((peer, wire, len));
+        app.poll(now + 1).unwrap();
+        if index == 1 {
+            let engine = app.engine_mut();
+            let body = engine
+                .lookup_rx_body(BlockKey::new(call.token(), peer))
+                .unwrap();
+            engine.release_rx_body(body).unwrap();
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap_err(),
+                crate::CallFailure::BlockTransfer(crate::error::BlockTransferError::Slot(
+                    crate::storage::SlotError::NotOccupied
+                ))
+            );
+        } else {
+            assert_eq!(
+                app.take_response(call).unwrap().unwrap().body(),
+                Some(bytes)
+            );
+        }
+        assert!(app.take_response(call).is_none());
+    }
+}
+
+#[test]
+fn later_block_metadata_refusal_releases_the_assembly_for_reuse() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    for (start, oversize) in [(0u64, true), (10, false)] {
+        let call = app.get("value").to(peer).send(start).unwrap();
+        for num in 0..2 {
+            let last = app.transport().send_n - 1;
+            let mid = decode(&app.transport().sends[last][..app.transport().send_lens[last]])
+                .unwrap()
+                .message_id();
+            let block = BlockValue::from_size(num, num == 0, 16).unwrap().encode();
+            let mut options = OptionsBuilder::<{ super::LOCATION_MAX + 2 }>::new();
+            if oversize && num == 1 {
+                for _ in 0..=super::LOCATION_MAX {
+                    options.push(Opt::location_path("x")).unwrap();
+                }
+            }
+            options.push(Opt::block2(&block)).unwrap();
+            let message = Message::new(Type::Acknowledgement, Code::CONTENT, mid)
+                .with_token(call.token())
+                .with_options(options.as_slice())
+                .with_payload(if num == 0 { b"abcdefghijklmnop" } else { b"q" });
+            let mut wire = [0; WIRE];
+            let n = encode(&message, &mut wire).unwrap();
+            app.transport_mut().inbox = Some((peer, wire, n));
+            app.poll(start + u64::from(num) + 1).unwrap();
+            if num == 0 {
+                assert!(app.take_response(call).is_none());
+            }
+        }
+        let result = app.take_response(call).unwrap();
+        if oversize {
+            assert_eq!(
+                result.unwrap_err(),
+                crate::CallFailure::ResponseMetadataBounds
+            );
+        } else {
+            assert_eq!(result.unwrap().body(), Some(&b"abcdefghijklmnopq"[..]));
+        }
+        use crate::storage::Storage;
+        assert!(app.engine_mut().storage_mut().rx_body().unwrap().is_empty());
     }
 }
 
@@ -11814,7 +12011,7 @@ fn qblock2_repeated_aligned_requests_reselect_without_advancing_or_losing_state(
         app.transport_mut().inbox = Some((peer, wire, n));
         app.poll(0).unwrap();
         assert_eq!(app.transport().count, 10);
-        let id = super::response_body_for(&app.engine, key).unwrap();
+        let id = super::response_body_for(&mut app.engine, key).unwrap();
         assert!(core::ptr::eq(
             app.engine.tx_body_payload(id).unwrap(),
             BODY.as_slice()
@@ -12704,7 +12901,7 @@ fn notification_snapshot_lifecycle_reclaims_only_server_response_body() {
         let note = last_wide(&app);
         let mid = note.message_id();
         assert_eq!(note.ty() == Type::Confirmable, mode == 1 || mode == 4);
-        let body = super::response_body_for(&app.engine, key).unwrap();
+        let body = super::response_body_for(&mut app.engine, key).unwrap();
         let mut unrelated = [0; WIRE];
         let n = encode(
             &Message::empty_rst(MessageId::new(mid.get().wrapping_add(1))),
@@ -12816,7 +13013,7 @@ fn classic_block2_replays_exact_fragment_without_reexecuting_handler() {
                 assert_eq!(app.engine.rx_occupied(), 0);
                 assert!(
                     super::response_body_for(
-                        &app.engine,
+                        &mut app.engine,
                         BlockKey::new(Token::new(&[0xa1]).unwrap(), peer)
                     )
                     .is_none()
@@ -13427,7 +13624,16 @@ fn qblock1_missing_reports_are_one_per_poll_and_not_held_for_nstart() {
 
 #[test]
 fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
-    use crate::ResponseBufferError;
+    for borrowed in [false, true] {
+        exercise_full_datagram_collection(borrowed);
+    }
+}
+
+fn exercise_full_datagram_collection(borrowed: bool) {
+    use crate::{
+        CallFailure, ResponseBufferError,
+        storage::{DatagramSlots, SlotId},
+    };
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut app = crate::App::profile::<profiles::Default>()
         .deterministic_for_tests()
@@ -13466,6 +13672,46 @@ fn full_datagram_collection_preserves_bytes_and_retries_short_buffer() {
         })
     ));
     assert_eq!(short, [0xA5; 199]);
+    if borrowed {
+        let slot = (0..app.engine().capacities().rx_datagram_slots)
+            .find_map(|index| {
+                let wire = app
+                    .engine()
+                    .storage()
+                    .rx_payload(SlotId::from_index(index))?;
+                Some(decode(wire).unwrap().payload().as_ptr())
+            })
+            .unwrap();
+        let format = app
+            .take_response_with(call, |reply| {
+                assert_eq!(reply.payload().as_ptr(), slot);
+                assert_eq!(reply.payload(), body);
+                assert_eq!(reply.location_paths(), &["receipt"]);
+                reply.format()
+            })
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(format, Some(ContentFormat::new(60)));
+        assert_eq!(app.engine_mut().rx_occupied(), 0);
+        assert!(
+            app.take_response_with(call, |_| panic!("consumed reply"))
+                .unwrap()
+                .is_none()
+        );
+        let reuse = app.get("value").to(peer).send(3).unwrap();
+        assert!(
+            app.take_response_with(reuse, |_| panic!("pending Call"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(app.cancel(reuse));
+        assert_eq!(
+            app.take_response_with(reuse, |_| panic!("local failure")),
+            Ok(Some(Err(CallFailure::Cancelled)))
+        );
+        return;
+    }
     let mut output = [0; 200];
     let response = app
         .take_response_into(call, &mut output)
@@ -13626,6 +13872,13 @@ fn client_alloc_without_block_storage_refuses_fragments_and_recovers() {
 #[cfg(feature = "alloc")]
 #[test]
 fn one_app_allocated_storage_collects_beyond_legacy_hold_without_truncation() {
+    for borrowed in [false, true] {
+        exercise_large_collection(borrowed);
+    }
+}
+
+#[cfg(feature = "alloc")]
+fn exercise_large_collection(borrowed: bool) {
     let peer = Endpoint::v4([192, 0, 2, 1], 5683);
     let mut capacities = crate::storage::Capacities::from_profile::<profiles::Default>()
         .with_block_wise::<profiles::Default>();
@@ -13669,15 +13922,33 @@ fn one_app_allocated_storage_collects_beyond_legacy_hold_without_truncation() {
         })
     ));
     assert_eq!(output, [0xA5; 6000]);
-    let response = app
-        .take_response_into(call, &mut output)
+    let held = (0..capacities.rx_body_slots.unwrap())
+        .find_map(|index| {
+            app.engine()
+                .rx_body_payload(crate::storage::SlotId::from_index(index))
+                .map(|bytes| bytes.as_ptr())
+        })
+        .unwrap();
+    if borrowed {
+        app.take_response_with(call, |reply| {
+            assert_eq!(reply.payload().as_ptr(), held);
+            assert_eq!(reply.payload(), body);
+            assert_eq!(reply.body(), Some(&body[..]));
+        })
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(response.payload(), body);
-    assert_eq!(response.body(), Some(&body[..]));
-    assert_eq!(response.payload_src_len(), body.len());
-    assert!(!response.payload_truncated());
+    } else {
+        let response = app
+            .take_response_into(call, &mut output)
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.payload(), body);
+        assert_eq!(response.body(), Some(&body[..]));
+        assert_eq!(response.payload_src_len(), body.len());
+        assert!(!response.payload_truncated());
+    }
     for i in 0..capacities.rx_body_slots.unwrap() {
         assert!(
             app.engine()
@@ -14649,7 +14920,8 @@ fn supersession_mid_exhaustion_refuses_and_retained_block2_can_shrink() {
             assert_ne!(last_wide(&app).message_id(), mid);
             assert_eq!(last_wide(&app).payload(), b"obs-snap");
             assert!(
-                super::response_body_for(&app.engine, BlockKey::new(key.token(), peer)).is_none()
+                super::response_body_for(&mut app.engine, BlockKey::new(key.token(), peer))
+                    .is_none()
             );
             assert_eq!(
                 app.engine.pending_con(slot).unwrap().rto(),
@@ -16020,7 +16292,7 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
     let slot = app.engine.lookup_pending_con(mid, peer).unwrap();
     let original = app.engine.pending_con(slot).unwrap();
     let block_key = BlockKey::new(key.token(), peer);
-    assert!(super::response_body_for(&app.engine, block_key).is_some());
+    assert!(super::response_body_for(&mut app.engine, block_key).is_some());
     let row = app
         .engine
         .observe_interest(app.engine.lookup_observe(key).unwrap())
@@ -16033,7 +16305,7 @@ fn deleted_observe_supersedes_pending_con_and_releases_retained_body() {
     assert_ne!(reply.message_id(), mid);
     assert_eq!(reply.observe(), None);
     assert!(app.engine.lookup_observe(key).is_none());
-    assert!(super::response_body_for(&app.engine, block_key).is_none());
+    assert!(super::response_body_for(&mut app.engine, block_key).is_none());
     let terminal = app.engine.pending_con(slot).unwrap();
     assert_eq!(terminal.rto(), original.rto().next_attempt(due).unwrap());
 }

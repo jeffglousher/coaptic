@@ -849,6 +849,14 @@ impl<T: OwnedToken> BodySlots for AllocMemory<T> {
         self.rx_body.as_ref()?.transfer(id)
     }
 
+    fn with_rx_body_transfer<R>(
+        &self,
+        id: SlotId,
+        read: impl FnOnce(&BlockTransfer<T>) -> R,
+    ) -> Option<R> {
+        self.rx_body.as_ref()?.transfer_ref(id).map(read)
+    }
+
     fn set_rx_body_transfer(
         &mut self,
         id: SlotId,
@@ -1243,7 +1251,29 @@ impl<T: OwnedToken> ObserveSlots for AllocMemory<T> {
     }
 
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<T>> {
-        self.observe.entry(id)
+        self.observe.entry_ref(id).copied()
+    }
+
+    fn with_observe_interest<R>(
+        &self,
+        id: SlotId,
+        read: impl FnOnce(&ObserveInterest<T>) -> R,
+    ) -> Option<R> {
+        self.observe.entry_ref(id).map(read)
+    }
+
+    fn signal_observe(&mut self, key: ObserveKey<T>) -> Option<SlotId> {
+        let id = self.observe.lookup(key)?;
+        self.observe.entry_mut(id)?.mark_due();
+        Some(id)
+    }
+
+    fn update_observe_interest<R>(
+        &mut self,
+        id: SlotId,
+        edit: impl FnOnce(&mut ObserveInterest<T>) -> R,
+    ) -> Option<R> {
+        self.observe.entry_mut(id).map(edit)
     }
 
     fn set_observe_interest(
@@ -1337,13 +1367,16 @@ impl<T: OwnedToken> AllocBodyPool<T> {
     }
 
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
+        self.transfer_ref(id)
+            .copied()
+            .map(BlockTransfer::without_static_body)
+    }
+
+    fn transfer_ref(&self, id: SlotId) -> Option<&BlockTransfer<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.slots
-            .get(id.index())?
-            .transfer
-            .map(BlockTransfer::without_static_body)
+        self.slots.get(id.index())?.transfer.as_ref()
     }
 
     fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {
@@ -1366,7 +1399,7 @@ impl<T: OwnedToken> AllocBodyPool<T> {
     fn lookup(&self, key: BlockKey<T>) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.transfer(id) {
+            match self.transfer_ref(id) {
                 Some(t) if t.key() == key => Some(id),
                 _ => None,
             }
@@ -1378,7 +1411,7 @@ impl<T: OwnedToken> AllocBodyPool<T> {
     fn lookup_role(&self, key: BlockKey<T>, role: BlockRole) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
-            self.transfer(id)
+            self.transfer_ref(id)
                 .filter(|transfer| transfer.key() == key && transfer.role() == role)
                 .map(|_| id)
         })
@@ -1390,7 +1423,7 @@ impl<T: OwnedToken> AllocBodyPool<T> {
         }
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.transfer(id) {
+            match self.transfer_ref(id) {
                 Some(t) if same_body_identity(t, key, role) => Some(id),
                 _ => None,
             }
@@ -1446,26 +1479,17 @@ impl<T: OwnedToken> AllocBodyPool<T> {
                 SlotError::InvalidSlot.into()
             });
         }
-        let slot_bytes = self.slot_bytes;
-        let offset = {
-            let transfer = self.slots[id.index()]
-                .transfer
-                .as_mut()
-                .ok_or(BlockTransferError::NoTransfer)?;
-            if transfer.role() != role {
-                return Err(BlockTransferError::IdentityMismatch);
-            }
-            accept_incoming_role(transfer, block, payload.len(), slot_bytes)?
-        };
-        let contiguous = role.is_q_block().then_some(
-            self.slots[id.index()]
-                .transfer
-                .ok_or(BlockTransferError::NoTransfer)?
-                .filled(),
-        );
         let slot = &mut self.slots[id.index()];
+        let transfer = slot
+            .transfer
+            .as_mut()
+            .ok_or(BlockTransferError::NoTransfer)?;
+        if transfer.role() != role {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        let offset = accept_incoming_role(transfer, block, payload.len(), self.slot_bytes)?;
+        let contiguous = role.is_q_block().then_some(transfer.filled());
         store_incoming(&mut slot.buf, &mut slot.len, offset, payload, contiguous)?;
-        let transfer = slot.transfer.ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,
             transfer.filled(),
@@ -1485,14 +1509,18 @@ impl<T: OwnedToken> AllocBodyPool<T> {
             .lookup_role(key, role)
             .or_else(|| self.lookup_identity(key, role))
         {
-            let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+            let transfer = self
+                .transfer_ref(id)
+                .ok_or(BlockTransferError::NoTransfer)?;
             if role.is_q_block() && transfer.expected_len() != expected_len {
                 return Err(BlockTransferError::LengthInconsistent);
             }
             return self.write_incoming(id, role, block, payload);
         }
         let id = self.admit_incoming(key, role, block, payload, expected_len)?;
-        let transfer = self.transfer(id).ok_or(BlockTransferError::NoTransfer)?;
+        let transfer = self
+            .transfer_ref(id)
+            .ok_or(BlockTransferError::NoTransfer)?;
         Ok(BlockProgress::new(
             id,
             transfer.filled(),
@@ -1666,6 +1694,10 @@ impl<T: OwnedToken> BodyOps<T> for AllocBodyPool<T> {
 
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>> {
         AllocBodyPool::transfer(self, id)
+    }
+
+    fn transfer_ref(&self, id: SlotId) -> Option<&BlockTransfer<T>> {
+        AllocBodyPool::transfer_ref(self, id)
     }
 
     fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError> {
@@ -2049,7 +2081,7 @@ impl<T: OwnedToken> ObserveStore<T> for AllocObserveTable<T> {
     fn lookup(&self, key: ObserveKey<T>) -> Option<SlotId> {
         (0..self.occ.slot_count()).find_map(|i| {
             let id = SlotId::from_index(i);
-            match self.entry(id) {
+            match self.entry_ref(id) {
                 Some(interest) if interest.key() == key => Some(id),
                 _ => None,
             }
@@ -2065,16 +2097,23 @@ impl<T: OwnedToken> ObserveStore<T> for AllocObserveTable<T> {
 
     fn take(&mut self, key: ObserveKey<T>) -> Option<ObserveInterest<T>> {
         let id = self.lookup(key)?;
-        let interest = self.entry(id)?;
+        let interest = *self.entry_ref(id)?;
         let _ = self.release(id);
         Some(interest)
     }
 
-    fn entry(&self, id: SlotId) -> Option<ObserveInterest<T>> {
+    fn entry_ref(&self, id: SlotId) -> Option<&ObserveInterest<T>> {
         if !self.occ.is_occupied(id) {
             return None;
         }
-        self.entries.get(id.index()).copied().flatten()
+        self.entries.get(id.index())?.as_ref()
+    }
+
+    fn entry_mut(&mut self, id: SlotId) -> Option<&mut ObserveInterest<T>> {
+        if !self.occ.is_occupied(id) {
+            return None;
+        }
+        self.entries.get_mut(id.index())?.as_mut()
     }
 
     fn set_entry(&mut self, id: SlotId, interest: ObserveInterest<T>) -> Result<(), SlotError> {
@@ -2450,7 +2489,7 @@ mod tests {
                     assert_eq!(observe.insert(interest(i)), Some(id));
                     assert_eq!(exchange.insert(request(i)), Some(id));
                     assert_eq!(dedup.entry_ref(id), Some(&row(i)));
-                    assert_eq!(observe.entry(id), Some(interest(i)));
+                    assert_eq!(observe.entry_ref(id).copied(), Some(interest(i)));
                     assert_eq!(exchange.entry(id), Some(request(i)));
                     assert!(!dedup.is_pinned(id));
                     assert!(!observe.is_pinned(id));
@@ -2486,7 +2525,7 @@ mod tests {
                     let o = observe.acquire().unwrap();
                     let x = exchange.acquire().unwrap();
                     assert_eq!(dedup.entry_ref(d), None);
-                    assert_eq!(observe.entry(o), None);
+                    assert_eq!(observe.entry_ref(o).copied(), None);
                     assert_eq!(exchange.entry(x), None);
                     dedup.release(d).unwrap();
                     observe.release(o).unwrap();

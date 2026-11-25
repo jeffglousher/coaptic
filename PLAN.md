@@ -1,18 +1,159 @@
 # Project plan
 
-Updated 2026-11-22 after the Windows foreground server and Tokio comparisons
-with companion `8215e25`.
+Updated 2026-11-25 after matched Windows and ESP32 worker measurements.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
 
+The current packet-path batch is frozen at diff `510df7f0`. It carries Call
+expiry and admission decisions forward, borrows deferred rows, and reduces
+option and upload-binding work. Six balanced rounds of verified eight-fragment
+PUTs through the fixed-pool App took 6.03 to 5.38 microseconds without a
+Request-Tag and 6.32 to 5.59 with one, relative to `3eb1b847`. Neither
+comparison includes UDP or an executor. The preceding build refused a valid
+original-size retry after an invalid smaller block. The new one accepts it.
+At Windows capacity the original and current releases used 17.58 and 16.60
+microseconds of server CPU per 64-byte unprotected read, and 72.92 and 66.41
+at 4 KiB. Established OSCORE used 19.53 and 18.07 for the small read, and
+95.05 and 85.94 at 4 KiB. Each comparison used six order-balanced rounds.
+On the Waveshare, current Coaptic and libcoap workers used 2.86 and 1.59 ms
+for seven bytes, and 6.53 and 3.82 ms for 2,000 bytes. Both Windows 50%
+server CPU targets remain open against the original project. On the Waveshare,
+192 eight-fragment uploads took 62.71 to 60.25 ms untagged and 65.08 to
+60.88 ms tagged across two reversed boot pairs. Protected read worker CPU
+was 14.21 to 14.14 ms small and 34.35 to 34.78 ms large. A separate receive
+queue change regressed four-Call paths and stayed out. The
+[packet-path report](architecture/requirements/PACKET-WORK-20261125.md)
+records the rates, both process roles, stack traces, candidate decisions and
+five verified restorations. A separate six-order rotation isolated the original
+AES pin. The 4 KiB protected CPU saving repeated with AES matched. The small
+protected saving varied from 7.5% to zero across historical-control rotations.
+All-feature workspace tests passed (1,719).
+
+The earlier chained-read controls used the working tree on `161a22569c1d` with source diff
+`e412562a082fcc1f7f46b6b0c4789a7cae31892db9e9f41b972e943d490e3b05`.
+Diff identities cover `git -c core.safecrlf=false diff --binary --no-ext-diff HEAD -- src examples`.
+The working tree also lends completed responses to a synchronous caller and
+extracts OSCORE key material once per association setup.
+
+- Call setup carries the selected live row to send acceptance. Block follow-ups
+  use the retained path and query bytes. Ordinary reply collection uses the
+  saved payload boundary, and the first accepted block supplies header metadata
+  for the finished representation.
+- Classic and Q block assembly copy each admitted fragment directly from the
+  parsed payload into its bounded body slot. Authenticated requests and block
+  responses consume plaintext in dispatch scratch. Full ordinary replies retain
+  plaintext in RX for the caller. Token-capacity refusals reuse the original
+  validated datagram and authenticate protected requests before replying.
+- Admission skips exemption lookups when packet headroom suffices. Observe
+  scheduling borrows interest rows, accounts for each physical endpoint's send
+  credit, and handles queued ingress before scanning deadlines. The desktop
+  client and protected two-peer example wait for socket readiness or the
+  earliest deadline on Windows and Unix.
+
+Windows passed 1,716 all-feature workspace tests. Loopback returned the expected
+unprotected value and both protected examples verified all 200 bytes. An idle
+socket initially returned before its deadline. The wait now re-arms after an
+early timeout and passed 32 consecutive idle checks. Rust 1.89 and ESP32-S3
+Xtensa library checks passed, including heap-free OSCORE. The device read comparisons used the integrated server. Later Windows runs also covered
+the borrowed client API and revised association setup on the exact checkout.
+
+The [chained-read measurements](architecture/requirements/CHAINED-READS-20261125.md)
+retain each process window and boot. In four position-balanced capacity rounds
+the integrated server used 6–10% less CPU per verified read than the original
+`b8f44fa` across 64-byte and 4 KiB unprotected and established OSCORE reads.
+At 800/s the small unprotected CPU result reversed between campaigns.
+Both original 50% server CPU targets remain open. On the Waveshare, unprotected
+2,000-byte reads with automatic Block2 took 16.91 ms with Coaptic and 13.29 ms
+with libcoap. The cached-history-deadline experiment increased latency in all
+three boot pairs and was removed. Native release images, process-local traces
+and same-board controls retain their separate source identities.
+
+The exact working source diff is `3eb1b84701050813796a3f07aa283aff75a1425b7e29d6c56c012727808b59a5`.
+Four original/current pairs per workload verified 658,944 reads. At capacity
+the current release served 1.8% to 10.1% more reads/s across the four cells.
+Small protected p99 rose and small unprotected server/client CPU rose at 800/s.
+Borrowing a 4 KiB result eliminated a caller-owned destination of that size.
+One extraction per association reduced complete Windows setup by 43.1%.
+The revised Xtensa setup has the same 1,360-byte deepest identified frame sum
+as the original three-extraction code. In one image on two Waveshare boots,
+6,144 complete setups used 52.7% to 53.0% less CPU and 96 fewer stack bytes
+per worker across both inputs. The protected read worker used 14.6/38.4 ms
+of CPU for 7/2,000 bytes, with 48.1% of observed CPU inside durable state I/O.
+The protected option-reuse build traded wins across boots and was removed.
+
+For unprotected reads the matched Waveshare worker clocks measured 2.94/6.72 ms
+of CPU for Coaptic against 1.62/3.74 ms for libcoap. Ready-to-run time was
+similar. Four more boots isolate the gap before the UDP send. The two workers
+used 2.079 vs 0.834 ms there for seven bytes and 4.916 vs 2.095 ms for
+2,000 bytes. Inside send the differences were 0.045 and 0.120 ms. The next
+server attribution boundary is ingress/dispatch versus encode/replay bookkeeping.
+A role-lookup experiment reduced a fixed-slot search from 11.4 to 8.2 ns,
+but 454,144 complete reads did not support a client CPU gain. It was rejected.
+Per-read energy needs a physical power meter.
+
+The preceding packet-path fixture followed a multi-segment, multi-query GET through
+Block2 reassembly. Server admission and Observe planning reuse the option
+validation pass. The client encodes follow-ups from the live Call's retained
+query bytes. An empty TX body pool skips its slot search. A retained response
+carries its slot and metadata into the sender, which checks representation
+identity before reusing the bytes. The client classifies notification freshness
+and format once and records ACK replay only after an admitted response succeeds.
+Against `161a22569c1d`, identical verified Windows fixtures counted codec
+option-header reads for each 2,000-byte transfer. The unprotected 32-block
+read went from 7,530 to 4,982 and the established OSCORE read with
+negotiated blocks went from 274 to 158. The counts include both endpoints
+and the test's wire checks. Outgoing body slot inspections went from
+384 to 0 and 20 to 0 respectively. On x64 the borrowed Request view grew
+from 304 to 328 bytes and each live Call row fell from 1,136 to 1,128 bytes.
+Physical ESP32-S3 performance and the two original server CPU targets remain open.
+
 The [Windows foreground server](architecture/requirements/WINDOWS-FOREGROUND-READS-20261122.md)
 now waits for socket readability or the next App deadline. In three alternating
 release-build pairs it sustained 800 offered reads/s for 64 B and 4 KiB in
 unprotected and established OSCORE modes. Both original Tokio server CPU-time
-targets remain open. At equal delivered rates the readiness loop reduced
+targets remain open. A [281,600-read follow-up](architecture/requirements/WINDOWS-ESP-READ-VALIDATION-20261122.md)
+repeated the foreground latency gain in all 16 pairs. Against the original
+Tokio baseline at 800/s, protected 4 KiB reads used less server CPU in all
+four pairs; unprotected 64 B reads used more in three and tied in one. The
+ESP32-S3 was offline on November 22. On November 23 the
+[fresh physical Wi-Fi campaign](architecture/requirements/ESP32-WIFI-READS-20261123.md)
+verified 816 reads. The instrumented protected worker used 15.16 ms of CPU
+for the 7-byte value and 38.88 ms for the 2,000-byte value. Normal firmware
+was restored and identified after every trial.
+The [24-boot libcoap comparison](architecture/requirements/ESP32-LIBCOAP-HEAD-TO-HEAD-20261123.md)
+verified another 2,208 unprotected reads. Coaptic sync and libcoap traded
+the single-read lead with the client. Libcoap finished pairs of overlapping
+reads sooner and had more free heap. Coaptic async trailed libcoap on both
+body sizes in every native-client rotation. The single-datagram device path
+is the next profiling target. Both security modes still need baseline CPU evidence.
+The [GET source audit](architecture/requirements/ESP32-GET-SOURCE-AUDIT-20261124.md)
+traced the installed async binary and tested reusing the parsed Observe flag.
+Two option walks disappeared and Windows loopback improved, but 2,176 physical
+reads across eight boots gave mixed latency and worse overlapping small reads.
+The production path retains its original behavior.
+The [route and Block2 comparison](architecture/requirements/ESP32-ROUTES-BLOCK2-20261124.md)
+verified 1,152 unprotected Waveshare reads across all six orders of baseline
+Coaptic, a heapless route index and libcoap. The index cut a mixed 128-route
+Windows lookup from 670 to 34 ns. With six registered device handlers its gains
+varied with the request, and libcoap still served both ordinary reads faster.
+An explicit 1,024-byte first block eliminated one failed encode and one TX
+acquisition on a large response. The board's normal image was restored.
+Passing an already matched route through Observe dispatch reduced complete
+Windows registration time by 31% at the last of 128 routes. On the Waveshare,
+960 timed operations across eight boots showed mixed registration latency and
+slower small ordinary reads in three of four pairs. That packet-path change
+remains experimental. The checkout keeps the independent route-removal change:
+after the App drains, it frees the slot it already found. Removing and reusing
+the last of eight routes fell from 266 to 175 ns and improved in all twelve
+host pairs. The final Windows build sustained 800 verified reads/s in all four
+cells. Against the original project, aggregate server CPU per read was 20%
+and 5.5% lower for unprotected 64 B and 4 KiB, and 18.2% and 6.0% higher for
+established OSCORE. Route removal is outside the GET path. Both 50% targets
+remain open.
+At equal delivered rates the original foreground comparison reduced
 blockwise server CPU in both modes. Small-read server CPU medians increased.
 Direct ACK encoding, duplicate-slot reuse, admission recounting and Mio rearm
 each regressed at least one capacity workload. Reusing validated OSCORE option

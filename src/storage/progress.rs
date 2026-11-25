@@ -17,7 +17,7 @@ use super::Retransmit;
 use super::SlotId;
 use super::Storage;
 use super::engine::endpoint_notify_held;
-use crate::message::{OwnedToken, Token, Transmission};
+use crate::message::{OwnedToken, Token};
 
 /// Outcome of one bounded [`Engine::progress`] pass.
 ///
@@ -175,20 +175,6 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         self.progress_inner(now_ms, false, false, eligible_rx)
     }
 
-    pub(crate) fn claim_observe_notification(&mut self, id: SlotId, now_ms: u64) -> Option<SlotId> {
-        let mut interest = self.observe_interest(id)?;
-        if interest.key().is_client()
-            || !interest.is_pending()
-            || endpoint_notify_held(self.storage(), interest.endpoint(), now_ms)
-                >= usize::from(Transmission::NSTART)
-        {
-            return None;
-        }
-        interest.take_due()?;
-        self.storage_mut().set_observe_interest(id, interest).ok()?;
-        Some(id)
-    }
-
     #[allow(clippy::type_complexity)]
     pub(crate) fn next_qblock_recovery(
         &mut self,
@@ -263,13 +249,6 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
         let rx_busy = !self.storage_mut().rx_datagram().is_empty();
         let tx_busy = !self.storage_mut().tx_datagram().is_empty();
         let observe_busy = !self.storage_mut().observe().is_empty();
-        let qblock_busy = self
-            .storage_mut()
-            .rx_body()
-            .is_some_and(|pool| !pool.is_empty());
-        if !rx_busy && !tx_busy && !observe_busy && !qblock_busy {
-            return Progress::idle();
-        }
         let retransmit = if tx_busy {
             if consume_retransmit {
                 self.poll_retransmit(now_ms)
@@ -307,7 +286,7 @@ impl<S: Storage + DatagramSlots + PendingCons + ObserveSlots + BodySlots> Engine
                 None
             },
             observe_expired,
-            qblock_recover: if qblock_busy && immediate_later_work {
+            qblock_recover: if immediate_later_work {
                 progress_qblock(self, now_ms, &mut None, true)
             } else {
                 None
@@ -334,41 +313,28 @@ fn progress_observe<S: Storage + ObserveSlots>(
         return None;
     }
     let start = engine.storage_mut().observe().cursor();
-    let mut found = None;
     for offset in 0..n {
         let id = SlotId::from_index((start + offset) % n);
-        let Some(mut interest) = engine.observe_interest(id) else {
+        let Some(endpoint) = engine
+            .with_observe_interest(id, |row| {
+                (!row.key().is_client() && row.is_pending()).then(|| row.endpoint())
+            })
+            .flatten()
+        else {
             continue;
         };
-        if interest.key().is_client() || !interest.is_pending() {
+        if endpoint_notify_held(engine.storage(), endpoint, now_ms) {
             continue;
         }
-        if endpoint_notify_held(engine.storage(), interest.endpoint(), now_ms)
-            >= usize::from(Transmission::NSTART)
-        {
-            continue;
-        }
-        if !select_notification {
-            engine.advance_observe(offset + 1);
-            return Some(id);
-        }
-        if interest.take_due().is_none() {
-            continue;
-        }
-        found = Some((id, offset, interest));
-        break;
-    }
-    match found {
-        Some((id, offset, interest)) => {
+        if select_notification {
             engine
                 .storage_mut()
-                .set_observe_interest(id, interest)
-                .ok()?;
-            engine.advance_observe(offset + 1);
-            Some(id)
+                .update_observe_interest(id, super::ObserveInterest::take_due)??;
         }
-        None => None,
+        engine.advance_observe(offset + 1);
+        return Some(id);
     }
+    None
 }
 
 /// First incoming Q-Block window whose receive wait is due, starting at the
@@ -470,33 +436,17 @@ fn next_unpinned_rx<S: Storage>(
     engine: &mut Engine<S>,
     mut eligible: impl FnMut(SlotId) -> bool,
 ) -> Option<SlotId> {
-    if engine.storage_mut().rx_datagram().is_empty() {
-        return None;
-    }
-    let n = engine.storage_mut().rx_datagram().slot_count();
-    if n == 0 {
-        return None;
-    }
-    let start = engine.storage_mut().rx_datagram().cursor();
-    let mut found = None;
+    let pool = engine.storage_mut().rx_datagram();
+    let n = pool.slot_count();
+    let start = pool.cursor();
     for offset in 0..n {
         let id = SlotId::from_index((start + offset) % n);
-        let pool = engine.storage_mut().rx_datagram();
         if pool.is_occupied(id) && !pool.is_pinned(id) && eligible(id) {
-            found = Some((id, offset));
-            break;
+            pool.advance(offset + 1);
+            return Some(id);
         }
     }
-    match found {
-        Some((id, offset)) => {
-            engine.advance_rx(offset + 1);
-            Some(id)
-        }
-        None => {
-            if engine.storage_mut().rx_datagram().occupied_count() > 0 {
-                engine.rotate_rx();
-            }
-            None
-        }
-    }
+    // The caller has already established that this pool has occupied slots.
+    pool.rotate();
+    None
 }

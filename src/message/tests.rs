@@ -35,6 +35,18 @@ fn validated_layout_reborrows_classic_and_extended_wire_boundaries() {
                 let mut original = [0; 1024];
                 let n = message.encode(&mut original).unwrap();
                 let parsed = super::decode_with_token::<Extended>(&original[..n]).unwrap();
+                let header_len = parsed.encoded_header_len().unwrap();
+                assert_eq!(
+                    n,
+                    header_len + usize::from(!payload.is_empty()) + payload.len()
+                );
+                let header =
+                    super::ParsedMessage::<Extended>::from_retained_header(&original[..header_len])
+                        .unwrap();
+                assert_eq!(header.token(), token);
+                assert_eq!(header.header(), parsed.header());
+                assert_eq!(header.options().next(), Some(options[0]));
+                assert!(header.payload().is_empty());
                 let layout = parsed.layout(n);
                 let mut retained = [0; 1024];
                 retained[..n].copy_from_slice(&original[..n]);
@@ -332,6 +344,26 @@ fn encode_empty_with_payload_fails() {
         encode(&msg, &mut buf),
         Err(EncodeError::EmptyMessageNotEmpty)
     );
+}
+
+#[test]
+fn option_extension_boundaries_round_trip_and_refuse_short_output() {
+    let bytes = [0xa5; 269];
+    for delta in [0, 12, 13, 268, 269, u16::MAX] {
+        for length in [0, 12, 13, 268, 269] {
+            let opt = Opt::new(OptionNumber::new(delta), &bytes[..length]);
+            let options = [opt];
+            let message = Message::new(Type::Confirmable, Code::GET, MessageId::new(1))
+                .with_options(&options);
+            let mut output = [0; 280];
+            let n = encode(&message, &mut output).unwrap();
+            assert!(decode(&output[..n]).unwrap().options().eq(options));
+            assert_eq!(
+                encode(&message, &mut output[..n - 1]),
+                Err(EncodeError::BufferTooSmall)
+            );
+        }
+    }
 }
 
 #[test]

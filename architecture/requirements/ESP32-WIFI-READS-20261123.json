@@ -1,0 +1,926 @@
+{
+  "cells": [
+    {
+      "case": "sync-unprotected",
+      "path": "identity",
+      "bytes": 32,
+      "n": 64,
+      "median": 6.55025,
+      "p95": 11.1873,
+      "maximum": 26.0258,
+      "boot_medians": [
+        6.38955,
+        6.59585
+      ]
+    },
+    {
+      "case": "sync-unprotected",
+      "path": "test",
+      "bytes": 7,
+      "n": 64,
+      "median": 6.0852,
+      "p95": 9.0238,
+      "maximum": 11.0102,
+      "boot_medians": [
+        6.01485,
+        6.235849999999999
+      ]
+    },
+    {
+      "case": "sync-unprotected",
+      "path": "large",
+      "bytes": 2000,
+      "n": 64,
+      "median": 16.055799999999998,
+      "p95": 22.2567,
+      "maximum": 24.6018,
+      "boot_medians": [
+        14.479700000000001,
+        17.73095
+      ]
+    },
+    {
+      "case": "async-unprotected",
+      "path": "identity",
+      "bytes": 32,
+      "n": 64,
+      "median": 6.326499999999999,
+      "p95": 10.7476,
+      "maximum": 14.3391,
+      "boot_medians": [
+        6.9032,
+        5.96475
+      ]
+    },
+    {
+      "case": "async-unprotected",
+      "path": "test",
+      "bytes": 7,
+      "n": 64,
+      "median": 7.2504,
+      "p95": 11.0166,
+      "maximum": 12.6068,
+      "boot_medians": [
+        7.4765999999999995,
+        7.11205
+      ]
+    },
+    {
+      "case": "async-unprotected",
+      "path": "large",
+      "bytes": 2000,
+      "n": 64,
+      "median": 16.95005,
+      "p95": 23.1714,
+      "maximum": 25.9479,
+      "boot_medians": [
+        16.86355,
+        17.0805
+      ]
+    },
+    {
+      "case": "sync-oscore",
+      "path": "identity",
+      "bytes": 32,
+      "n": 64,
+      "median": 19.37875,
+      "p95": 22.6854,
+      "maximum": 43.4947,
+      "boot_medians": [
+        18.78705,
+        19.5663
+      ]
+    },
+    {
+      "case": "sync-oscore",
+      "path": "test",
+      "bytes": 7,
+      "n": 64,
+      "median": 16.94275,
+      "p95": 20.2384,
+      "maximum": 23.6434,
+      "boot_medians": [
+        16.29485,
+        17.651249999999997
+      ]
+    },
+    {
+      "case": "sync-oscore",
+      "path": "large",
+      "bytes": 2000,
+      "n": 64,
+      "median": 42.785,
+      "p95": 50.7291,
+      "maximum": 53.3601,
+      "boot_medians": [
+        42.1713,
+        43.499700000000004
+      ]
+    },
+    {
+      "case": "async-oscore",
+      "path": "identity",
+      "bytes": 32,
+      "n": 64,
+      "median": 19.9251,
+      "p95": 24.656,
+      "maximum": 405.8855,
+      "boot_medians": [
+        19.51645,
+        20.298099999999998
+      ]
+    },
+    {
+      "case": "async-oscore",
+      "path": "test",
+      "bytes": 7,
+      "n": 64,
+      "median": 17.2605,
+      "p95": 21.1477,
+      "maximum": 28.4204,
+      "boot_medians": [
+        17.03115,
+        17.2941
+      ]
+    },
+    {
+      "case": "async-oscore",
+      "path": "large",
+      "bytes": 2000,
+      "n": 64,
+      "median": 44.832449999999994,
+      "p95": 50.706,
+      "maximum": 56.4507,
+      "boot_medians": [
+        44.572100000000006,
+        45.7798
+      ]
+    }
+  ],
+  "mixed": [
+    {
+      "case": "sync-unprotected",
+      "rate": 103.2367284970161,
+      "host_us": 651.0416666666666,
+      "host_mem_mib": 5.4375,
+      "host_private_mib": 1.1484375,
+      "min_free": 169852
+    },
+    {
+      "case": "async-unprotected",
+      "rate": 97.90757808878355,
+      "host_us": 325.5208333333333,
+      "host_mem_mib": 5.44140625,
+      "host_private_mib": 1.14453125,
+      "min_free": 70996
+    },
+    {
+      "case": "sync-oscore",
+      "rate": 37.2591491357514,
+      "host_us": 488.28125,
+      "host_mem_mib": 5.66015625,
+      "host_private_mib": 1.28515625,
+      "min_free": 169592
+    },
+    {
+      "case": "async-oscore",
+      "rate": 36.3620770433542,
+      "host_us": 325.5208333333333,
+      "host_mem_mib": 5.66015625,
+      "host_private_mib": 1.28515625,
+      "min_free": 70704
+    }
+  ],
+  "cpu": [
+    {
+      "path": "identity",
+      "host_ms": 22.520325,
+      "wall": 17.46425,
+      "task_cpu": 16.4415,
+      "blocked": 0.562375,
+      "ready_unscheduled": 0.460375
+    },
+    {
+      "path": "test",
+      "host_ms": 21.14795,
+      "wall": 15.9385,
+      "task_cpu": 15.15775,
+      "blocked": 0.53,
+      "ready_unscheduled": 0.25075
+    },
+    {
+      "path": "large",
+      "host_ms": 50.418,
+      "wall": 43.467125,
+      "task_cpu": 38.882,
+      "blocked": 3.404,
+      "ready_unscheduled": 1.181125
+    }
+  ],
+  "device_cpu_samples": [
+    {
+      "at": 10164371,
+      "rx": 1,
+      "tx": 0,
+      "free": 41268,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 65284
+    },
+    {
+      "at": 10669579,
+      "rx": 21,
+      "tx": 21,
+      "free": 41136,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 11173346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 11674346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 12175346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 12676347,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 13177348,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 13678346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 14179346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 14680346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 15182346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    },
+    {
+      "at": 15683346,
+      "rx": 32,
+      "tx": 32,
+      "free": 40964,
+      "minimum": 31680,
+      "largest": 30720,
+      "stack_free": 62324
+    }
+  ],
+  "device_state_cpu_ms": {
+    "read": 109.829,
+    "commit": 135.035
+  },
+  "cpu_ledger_rows": 350,
+  "extra_sends": 0,
+  "total_reads": 816,
+  "firmware": [
+    {
+      "boot": 1,
+      "case": "sync-unprotected",
+      "image_sha256": "1bcb05cd8ff5994283307970c44cef7c56a1957acfd88504fb3c925c87101e37",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 1,
+      "case": "async-unprotected",
+      "image_sha256": "41010617fe014287b11e855b44331dbdc7220e76f14a8516150245212746280b",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 1,
+      "case": "sync-oscore",
+      "image_sha256": "2aa958cb2950bbeb47f77071c2de362d4c78dc2f5e264af8ea6a5c73dd032272",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 1,
+      "case": "async-oscore",
+      "image_sha256": "314224d17be2b08bc4b862c342fc3c894db3c8f68b8c2bca51ad8ef3c6df6a3e",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 1,
+      "case": "async-oscore-cpu",
+      "image_sha256": "a006e8c79958cfed39782ab5bf46486a10022e15caead88e39aa1cf186721b06",
+      "client_sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5",
+      "run_id": "1cd2c5c4fd51465e84511ad62b547c4e",
+      "passed": false,
+      "restored": true
+    },
+    {
+      "boot": 2,
+      "case": "sync-unprotected",
+      "image_sha256": "1bcb05cd8ff5994283307970c44cef7c56a1957acfd88504fb3c925c87101e37",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "9f0c308abd624dbbbdf1e4f70aece8a8",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 2,
+      "case": "async-unprotected",
+      "image_sha256": "41010617fe014287b11e855b44331dbdc7220e76f14a8516150245212746280b",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "89f0b9969b9c43dc8c53ae8c61850a54",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 2,
+      "case": "sync-oscore",
+      "image_sha256": "2aa958cb2950bbeb47f77071c2de362d4c78dc2f5e264af8ea6a5c73dd032272",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "6e72c1b5a3a14b06a2a25c03c693f99d",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 2,
+      "case": "async-oscore",
+      "image_sha256": "314224d17be2b08bc4b862c342fc3c894db3c8f68b8c2bca51ad8ef3c6df6a3e",
+      "client_sha256": "5586fc9414eb65d8afb9f92e5511a86e4b7be27b1f6ebd6e4933961f3d515b3d",
+      "run_id": "37cff69143f044fb9bd346ab21ca36e7",
+      "passed": true,
+      "restored": true
+    },
+    {
+      "boot": 3,
+      "case": "async-oscore-cpu",
+      "image_sha256": "a006e8c79958cfed39782ab5bf46486a10022e15caead88e39aa1cf186721b06",
+      "client_sha256": "7facd8314719ccaffb2f25d340a5e2889001f19787985f42f9170dc87b2dccc5",
+      "run_id": "1cd2c5c4fd51465e84511ad62b547c4e",
+      "passed": true,
+      "restored": true,
+      "clock_source": "management"
+    }
+  ],
+  "host_batches": [
+    {
+      "case": "sync-unprotected",
+      "batch": 0,
+      "user_us": 0.0,
+      "kernel_us": 15625.0,
+      "sampled_max_rss": 5701632,
+      "sampled_max_private": 1204224,
+      "samples": 13
+    },
+    {
+      "case": "sync-unprotected",
+      "batch": 1,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5697536,
+      "sampled_max_private": 1196032,
+      "samples": 10
+    },
+    {
+      "case": "sync-unprotected",
+      "batch": 2,
+      "user_us": 15625.0,
+      "kernel_us": 31250.0,
+      "sampled_max_rss": 5693440,
+      "sampled_max_private": 1191936,
+      "samples": 10
+    },
+    {
+      "case": "sync-unprotected",
+      "batch": 3,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5697536,
+      "sampled_max_private": 1196032,
+      "samples": 11
+    },
+    {
+      "case": "async-unprotected",
+      "batch": 0,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5701632,
+      "sampled_max_private": 1200128,
+      "samples": 14
+    },
+    {
+      "case": "async-unprotected",
+      "batch": 1,
+      "user_us": 0.0,
+      "kernel_us": 15625.0,
+      "sampled_max_rss": 5705728,
+      "sampled_max_private": 1196032,
+      "samples": 11
+    },
+    {
+      "case": "async-unprotected",
+      "batch": 2,
+      "user_us": 0.0,
+      "kernel_us": 15625.0,
+      "sampled_max_rss": 5697536,
+      "sampled_max_private": 1196032,
+      "samples": 10
+    },
+    {
+      "case": "async-unprotected",
+      "batch": 3,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5701632,
+      "sampled_max_private": 1187840,
+      "samples": 10
+    },
+    {
+      "case": "sync-oscore",
+      "batch": 0,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5926912,
+      "sampled_max_private": 1335296,
+      "samples": 28
+    },
+    {
+      "case": "sync-oscore",
+      "batch": 1,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5935104,
+      "sampled_max_private": 1347584,
+      "samples": 26
+    },
+    {
+      "case": "sync-oscore",
+      "batch": 2,
+      "user_us": 0.0,
+      "kernel_us": 31250.0,
+      "sampled_max_rss": 5931008,
+      "sampled_max_private": 1343488,
+      "samples": 27
+    },
+    {
+      "case": "sync-oscore",
+      "batch": 3,
+      "user_us": 15625.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5935104,
+      "sampled_max_private": 1347584,
+      "samples": 26
+    },
+    {
+      "case": "async-oscore",
+      "batch": 0,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5931008,
+      "sampled_max_private": 1347584,
+      "samples": 31
+    },
+    {
+      "case": "async-oscore",
+      "batch": 1,
+      "user_us": 0.0,
+      "kernel_us": 15625.0,
+      "sampled_max_rss": 5926912,
+      "sampled_max_private": 1327104,
+      "samples": 27
+    },
+    {
+      "case": "async-oscore",
+      "batch": 2,
+      "user_us": 0.0,
+      "kernel_us": 0.0,
+      "sampled_max_rss": 5931008,
+      "sampled_max_private": 1343488,
+      "samples": 27
+    },
+    {
+      "case": "async-oscore",
+      "batch": 3,
+      "user_us": 0.0,
+      "kernel_us": 15625.0,
+      "sampled_max_rss": 5935104,
+      "sampled_max_private": 1343488,
+      "samples": 29
+    }
+  ],
+  "throughput": [
+    {
+      "case": "sync-unprotected",
+      "boot": 1,
+      "batch": 0,
+      "ops_per_s": 82.64084323961747
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 1,
+      "batch": 1,
+      "ops_per_s": 104.23574999576542
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 1,
+      "batch": 2,
+      "ops_per_s": 116.29501525645232
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 1,
+      "batch": 3,
+      "ops_per_s": 114.70158947727619
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 1,
+      "batch": 0,
+      "ops_per_s": 74.59780129197175
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 1,
+      "batch": 1,
+      "ops_per_s": 100.42345222354261
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 1,
+      "batch": 2,
+      "ops_per_s": 96.51089004755575
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 1,
+      "batch": 3,
+      "ops_per_s": 97.85745186534652
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 1,
+      "batch": 0,
+      "ops_per_s": 34.285116745108155
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 1,
+      "batch": 1,
+      "ops_per_s": 38.335198180994844
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 1,
+      "batch": 2,
+      "ops_per_s": 37.227754594021256
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 1,
+      "batch": 3,
+      "ops_per_s": 39.47645665246556
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "batch": 0,
+      "ops_per_s": 22.356741493748917
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "batch": 1,
+      "ops_per_s": 37.2596288195777
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "batch": 2,
+      "ops_per_s": 36.758495003065505
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "batch": 3,
+      "ops_per_s": 36.30291698475837
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 1,
+      "batch": 0,
+      "ops_per_s": 22.17638896499189
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 2,
+      "batch": 0,
+      "ops_per_s": 81.83730198782807
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 2,
+      "batch": 1,
+      "ops_per_s": 102.89164095447431
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 2,
+      "batch": 2,
+      "ops_per_s": 103.58181603955789
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 2,
+      "batch": 3,
+      "ops_per_s": 93.29583877235116
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 2,
+      "batch": 0,
+      "ops_per_s": 73.2539240448375
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 2,
+      "batch": 1,
+      "ops_per_s": 97.95770431222059
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 2,
+      "batch": 2,
+      "ops_per_s": 98.14606178703531
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 2,
+      "batch": 3,
+      "ops_per_s": 103.9479428702106
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 2,
+      "batch": 0,
+      "ops_per_s": 34.6699214018436
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 2,
+      "batch": 1,
+      "ops_per_s": 37.290543677481544
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 2,
+      "batch": 2,
+      "ops_per_s": 36.949396262260656
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 2,
+      "batch": 3,
+      "ops_per_s": 37.72053546814799
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "batch": 0,
+      "ops_per_s": 32.212905832280825
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "batch": 1,
+      "ops_per_s": 36.65610767120693
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "batch": 2,
+      "ops_per_s": 36.42123710195003
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "batch": 3,
+      "ops_per_s": 34.0615551910023
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 3,
+      "batch": 0,
+      "ops_per_s": 31.64897488970332
+    }
+  ],
+  "heap_samples": [
+    {
+      "case": "sync-unprotected",
+      "boot": 1,
+      "free": 169852,
+      "reserved": 98304
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 1,
+      "free": 70996,
+      "reserved": 196608
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 1,
+      "free": 169616,
+      "reserved": 98304
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "free": 70912,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "free": 70856,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 1,
+      "free": 41052,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 1,
+      "free": 39420,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 1,
+      "free": 40720,
+      "reserved": 196608
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 2,
+      "free": 169852,
+      "reserved": 98304
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 2,
+      "free": 71052,
+      "reserved": 196608
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 2,
+      "free": 169592,
+      "reserved": 98304
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "free": 70792,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "free": 70704,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 3,
+      "free": 41036,
+      "reserved": 196608
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 3,
+      "free": 40964,
+      "reserved": 196608
+    }
+  ],
+  "signal": [
+    {
+      "case": "sync-unprotected",
+      "boot": 1,
+      "dBm": -42.0
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 1,
+      "dBm": -48.0
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 1,
+      "dBm": -45.0
+    },
+    {
+      "case": "async-oscore",
+      "boot": 1,
+      "dBm": -47.0
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 1,
+      "dBm": -47.0
+    },
+    {
+      "case": "sync-unprotected",
+      "boot": 2,
+      "dBm": -43.0
+    },
+    {
+      "case": "async-unprotected",
+      "boot": 2,
+      "dBm": -43.0
+    },
+    {
+      "case": "sync-oscore",
+      "boot": 2,
+      "dBm": -45.0
+    },
+    {
+      "case": "async-oscore",
+      "boot": 2,
+      "dBm": -45.0
+    },
+    {
+      "case": "async-oscore-cpu",
+      "boot": 3,
+      "dBm": -43.0
+    }
+  ]
+}

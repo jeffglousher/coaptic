@@ -30,6 +30,7 @@ mod builder;
 mod capacities;
 mod endpoint;
 mod engine;
+pub(crate) use engine::RxBlockOpt;
 mod exchange;
 mod io;
 mod memory;
@@ -386,6 +387,34 @@ pub trait ObserveSlots: Storage {
     /// Occupied payload at `id`.
     fn observe_interest(&self, id: SlotId) -> Option<ObserveInterest<Self::Token>>;
 
+    /// Inspect one occupied row. In-memory backends lend the stored row.
+    fn with_observe_interest<R>(
+        &self,
+        id: SlotId,
+        read: impl FnOnce(&ObserveInterest<Self::Token>) -> R,
+    ) -> Option<R>
+    where
+        Self: Sized,
+    {
+        self.observe_interest(id).as_ref().map(read)
+    }
+
+    /// Edit an occupied interest. Backends may refuse the write. RAM pools
+    /// edit in place; other implementations can commit through their setter.
+    fn update_observe_interest<R>(
+        &mut self,
+        id: SlotId,
+        edit: impl FnOnce(&mut ObserveInterest<Self::Token>) -> R,
+    ) -> Option<R>
+    where
+        Self: Sized,
+    {
+        let mut row = self.observe_interest(id)?;
+        let result = edit(&mut row);
+        self.set_observe_interest(id, row).ok()?;
+        Some(result)
+    }
+
     /// Write payload into an already-occupied Observe slot.
     fn set_observe_interest(
         &mut self,
@@ -444,6 +473,16 @@ pub trait BodySlots: Storage {
 
     /// Incoming Block1 / Block2 sidecar, if `id` holds a transfer.
     fn rx_body_transfer(&self, id: SlotId) -> Option<BlockTransfer<Self::Token>>;
+
+    /// Read fields from a live incoming transfer. Built-in pools lend their
+    /// resident sidecar, including its request binding, for this call.
+    fn with_rx_body_transfer<R>(
+        &self,
+        id: SlotId,
+        read: impl FnOnce(&BlockTransfer<Self::Token>) -> R,
+    ) -> Option<R> {
+        self.rx_body_transfer(id).as_ref().map(read)
+    }
 
     /// Write the sidecar into an already-occupied incoming body slot.
     fn set_rx_body_transfer(
