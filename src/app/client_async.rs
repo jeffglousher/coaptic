@@ -78,7 +78,9 @@ pub(crate) fn complete_client_async<'a, Mem, T, const CALLS: usize, const REQUES
     now_ms: u64,
     peer: Endpoint,
     parsed: &'a ParsedMessage<'_, Mem::Token>,
+    plaintext: Option<(&'a [u8], usize)>,
     rx: SlotId,
+    acknowledged: &'a mut bool,
 ) -> impl Future<Output = Result<(), Error<T::Error>>> + 'a
 where
     Mem: Storage
@@ -115,7 +117,9 @@ where
             now_ms,
             peer,
             parsed,
+            plaintext,
             rx,
+            acknowledged,
         )
         .await;
         owner.finish::<T>(&result);

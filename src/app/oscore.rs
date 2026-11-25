@@ -631,7 +631,7 @@ pub(crate) fn send_token_capacity_refusal<S, T, const R: usize>(
     ids: &mut super::AppIds,
     now_ms: u64,
     peer: Endpoint,
-    wire: &[u8],
+    raw: crate::message::extended::Datagram<'_>,
     ctx: &mut Field<R, S::Token>,
     checkpoint: &mut CheckpointState,
     commit: &mut Option<&mut CheckpointCommit<'_>>,
@@ -643,15 +643,10 @@ where
 {
     use crate::message::{Code, NoResponse, Type};
     use crate::storage::DedupEntry;
-    let Ok(raw) = crate::message::extended::decode(wire) else {
-        return Ok(());
-    };
     if !raw.code().is_request() || !matches!(raw.ty(), Type::Confirmable | Type::NonConfirmable) {
         return Ok(());
     }
-    let Ok(projected) = crate::message::decode_without_token::<S::Token>(wire) else {
-        return Ok(());
-    };
+    let projected = raw.for_capacity_refusal::<S::Token>();
     let Ok(peer) = ctx.inbound_route(peer, &projected) else {
         return Ok(());
     };

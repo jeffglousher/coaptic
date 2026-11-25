@@ -39,6 +39,10 @@ for checks. Humans and agents may author and review.
   initialization, security, transport and runtime costs without double-counting.
   Keep whole-object ceilings. Start device comparisons with SmallDevice/Constrained
   and name the route, Call, deferred, security and body capacities.
+- Count passes, lookups and bytes copied per request. Parse, look up or compute
+  each fact once and pass it by borrow or value while its inputs and trust
+  context remain valid. When choosing a data structure, measure lookup cost,
+  update cost and memory at realistic capacities, then verify the gain end to end.
 - Preserve authentication, protocol invariants, credentials, identity, NVS and
   unresolved effects. Missing history is never first use. Hardware qualification
   and software tests are separate claims.

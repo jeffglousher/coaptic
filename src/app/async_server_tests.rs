@@ -211,7 +211,7 @@ fn cancelled_deferred_observe_keeps_handle_without_unsent_hold() {
     }
     assert_eq!(app.engine.tx_occupied(), 0);
     assert_eq!(app.engine.rx_occupied(), 0);
-    let row = app.deferred.rows[0].unwrap();
+    let row = app.deferred.rows[0].as_ref().unwrap();
     assert_eq!(row.handle, handle);
     assert!(!row.completed);
     let interest = deferred_observe_owner(&app.engine, row).unwrap();
@@ -291,6 +291,7 @@ fn cancelled_partial_deferred_q_keeps_immutable_snapshot() {
     }
     assert_eq!(accepted.get(), before + 1);
     let (body, _) = app.deferred.rows[0]
+        .as_ref()
         .unwrap()
         .snapshot
         .expect("retained snapshot");
@@ -406,7 +407,7 @@ fn cancelled_deferred_q_followup_keeps_snapshot_for_recovery() {
             Poll::Ready(Ok(()))
         ));
     }
-    let row = app.deferred.rows[0].unwrap();
+    let row = app.deferred.rows[0].as_ref().unwrap();
     assert!(row.completed);
     let (body, retained) = row.snapshot.expect("completed Q snapshot");
     assert_eq!(app.engine.tx_body_payload(body), Some(payload.as_slice()));
@@ -438,7 +439,7 @@ fn cancelled_deferred_q_followup_keeps_snapshot_for_recovery() {
     assert_eq!(accepted.get(), before);
     assert_eq!(app.engine.rx_occupied(), 0);
     assert_eq!(app.engine.tx_occupied(), 0);
-    let row = app.deferred.rows[0].unwrap();
+    let row = app.deferred.rows[0].as_ref().unwrap();
     assert_eq!(row.handle, handle);
     assert!(row.completed);
     let (retained_body, metadata) = row.snapshot.unwrap();
@@ -486,15 +487,16 @@ fn cancelled_deferred_q_followup_keeps_snapshot_for_recovery() {
     assert_eq!(retry_len, pending_len);
     assert_eq!(&retry_packet[..2], &pending_packet[..2]);
     assert_eq!(&retry_packet[4..retry_len], &pending_packet[4..pending_len]);
-    let row = app.deferred.rows[0].unwrap();
+    let row = app.deferred.rows[0].as_ref().unwrap();
     assert_eq!(row.handle, handle);
     assert!(row.completed);
     let (retained_body, metadata) = row.snapshot.unwrap();
     assert_eq!(retained_body, body);
     assert!(metadata.same_header(&retained));
     assert_eq!(app.engine.tx_body_payload(body), Some(payload.as_slice()));
+    let deadline = row.deadline_ms;
     assert!(!app.cancel_deferred(handle));
-    app.deferred.expire(&mut app.engine, row.deadline_ms);
+    app.deferred.expire(&mut app.engine, deadline);
     assert!(app.deferred.rows[0].is_none());
     assert!(app.engine.tx_body_payload(body).is_none());
 }

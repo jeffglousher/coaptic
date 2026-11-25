@@ -37,7 +37,7 @@ fn main() -> Result<(), host_error::Error> {
         #[cfg(any(unix, windows))]
         {
             let due = server.next_poll_at(now);
-            udp_wait::wait(server.transport().socket(), clock, due)?;
+            udp_wait::wait([server.transport().socket()], clock, due)?;
         }
         #[cfg(not(any(unix, windows)))]
         std::thread::sleep(std::time::Duration::from_millis(1));

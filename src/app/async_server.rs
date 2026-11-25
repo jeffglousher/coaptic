@@ -267,7 +267,7 @@ impl<S: AppStorage> Drop for DeferredObserveOwner<'_, S> {
         if !self.armed {
             return;
         }
-        if let Some(mut interest) = deferred_observe_owner(self.engine, *self.row)
+        if let Some(mut interest) = deferred_observe_owner(self.engine, self.row)
             && let Some(id) = self.engine.lookup_observe(interest.key())
         {
             interest.clear_notify_hold();

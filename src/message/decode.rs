@@ -62,9 +62,29 @@ impl<'a, T: OwnedToken> ParsedMessage<'a, T> {
         }
     }
 
-    /// Borrow the validated options descriptor without copying the packet view.
-    pub(crate) const fn options_bytes(&self) -> &&'a [u8] {
-        &self.options
+    /// Encoded header, token (including its length extension), and options.
+    pub(crate) fn encoded_header_len(&self) -> Option<usize> {
+        let len = self.token.len();
+        let (_, _, extended) = super::extended::encode_length(len).ok()?;
+        (4 + extended + len).checked_add(self.options.len())
+    }
+
+    /// Borrow the encoded options of the validated packet.
+    pub(crate) const fn options_bytes(&self) -> &'a [u8] {
+        self.options
+    }
+
+    /// Reopen the App's immutable, previously validated header-only encoding.
+    /// Every byte following the token belongs to its retained option sequence.
+    pub(crate) fn from_retained_header(bytes: &'a [u8]) -> Result<Self, TokenDecodeError> {
+        let (header, token, start) =
+            decode_prefix(bytes, true).map_err(TokenDecodeError::Malformed)?;
+        Ok(Self {
+            header,
+            token: T::try_from_bytes(token).map_err(TokenDecodeError::Capacity)?,
+            options: &bytes[start..],
+            payload: &[],
+        })
     }
 
     /// Parsed header.
@@ -219,30 +239,34 @@ pub enum TokenDecodeError {
 pub fn decode_with_token<T: OwnedToken>(
     buf: &[u8],
 ) -> Result<ParsedMessage<'_, T>, TokenDecodeError> {
-    let parts = decode_parts(buf, true).map_err(TokenDecodeError::Malformed)?;
-    let token = T::try_from_bytes(parts.token).map_err(TokenDecodeError::Capacity)?;
-    Ok(ParsedMessage {
-        header: parts.header,
-        token,
-        options: parts.options,
-        payload: parts.payload,
-    })
+    super::extended::decode(buf)
+        .map_err(TokenDecodeError::Malformed)?
+        .retain_token()
+        .map_err(TokenDecodeError::Capacity)
 }
 
-// OSCORE excludes the outer token from authentication. Capacity refusal can
-// authenticate options/payload with an empty local token, then echo the original
-// borrowed token on its response. Never use this view to dispatch application work.
-#[cfg(feature = "oscore")]
-pub(crate) fn decode_without_token<T: OwnedToken>(
-    buf: &[u8],
-) -> Result<ParsedMessage<'_, T>, ParseError> {
-    let parts = decode_parts(buf, true)?;
-    Ok(ParsedMessage {
-        header: parts.header,
-        token: T::EMPTY,
-        options: parts.options,
-        payload: parts.payload,
-    })
+impl<'a> super::extended::Datagram<'a> {
+    pub(crate) fn retain_token<T: OwnedToken>(
+        self,
+    ) -> Result<ParsedMessage<'a, T>, super::extended::CapacityError> {
+        Ok(self.with_owned_token(T::try_from_bytes(self.token())?))
+    }
+
+    // OSCORE excludes the outer token from authentication. This projection is
+    // only for authenticating a refusal; the reply echoes the original token.
+    #[cfg(feature = "oscore")]
+    pub(crate) fn for_capacity_refusal<T: OwnedToken>(self) -> ParsedMessage<'a, T> {
+        self.with_owned_token(T::EMPTY)
+    }
+
+    fn with_owned_token<T: OwnedToken>(self, token: T) -> ParsedMessage<'a, T> {
+        ParsedMessage {
+            header: self.header(),
+            token,
+            options: self.options,
+            payload: self.payload(),
+        }
+    }
 }
 
 pub(super) struct Parts<'a> {
@@ -253,6 +277,17 @@ pub(super) struct Parts<'a> {
 }
 
 pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, ParseError> {
+    let (header, token, options_start) = decode_prefix(buf, extended)?;
+    let (options, payload) = split_options_and_payload(buf, options_start)?;
+    Ok(Parts {
+        header,
+        token,
+        options,
+        payload,
+    })
+}
+
+fn decode_prefix(buf: &[u8], extended: bool) -> Result<(Header, &[u8], usize), ParseError> {
     if buf.len() < 4 {
         return Err(ParseError::TruncatedHeader);
     }
@@ -294,25 +329,14 @@ pub(super) fn decode_parts(buf: &[u8], extended: bool) -> Result<Parts<'_>, Pars
         .get(token_start..options_start)
         .ok_or(ParseError::TruncatedToken)?;
 
-    if code.is_empty() {
-        if tkl != 0 || options_start != buf.len() {
-            return Err(ParseError::EmptyMessageNotEmpty);
-        }
-        return Ok(Parts {
-            header: Header::new(version, ty, tkl, code, id),
-            token: token_bytes,
-            options: &[],
-            payload: &[],
-        });
+    if code.is_empty() && (tkl != 0 || options_start != buf.len()) {
+        return Err(ParseError::EmptyMessageNotEmpty);
     }
-
-    let (options, payload) = split_options_and_payload(buf, options_start)?;
-    Ok(Parts {
-        header: Header::new(version, ty, tkl, code, id),
-        token: token_bytes,
-        options,
-        payload,
-    })
+    Ok((
+        Header::new(version, ty, tkl, code, id),
+        token_bytes,
+        options_start,
+    ))
 }
 
 #[cfg(feature = "oscore")]
@@ -322,18 +346,18 @@ pub(crate) fn decode_options_payload(bytes: &[u8]) -> Result<(Options<'_>, &[u8]
 }
 
 fn split_options_and_payload(bytes: &[u8], start: usize) -> Result<(&[u8], &[u8]), ParseError> {
-    let mut i = start;
-    let mut prev = 0u32;
-    while i < bytes.len() {
-        if bytes[i] == 0xFF {
-            if i + 1 == bytes.len() {
+    let options = bytes.get(start..).ok_or(ParseError::TruncatedOption)?;
+    let mut remaining = options;
+    let mut previous = 0;
+    while let Some((&head, mut rest)) = remaining.split_first() {
+        if head == 0xff {
+            if rest.is_empty() {
                 return Err(ParseError::PayloadMarkerWithoutPayload);
             }
-            let options = bytes.get(start..i).ok_or(ParseError::TruncatedOption)?;
-            return Ok((options, &bytes[i + 1..]));
+            return Ok((&options[..options.len() - remaining.len()], rest));
         }
-        let _ = read_option(bytes, &mut i, &mut prev)?;
+        read_option(head, &mut rest, &mut previous)?;
+        remaining = rest;
     }
-    let options = bytes.get(start..).ok_or(ParseError::TruncatedOption)?;
     Ok((options, &[]))
 }

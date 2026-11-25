@@ -166,17 +166,37 @@ impl From<u16> for OptionNumber {
 /// Yields [`Opt`] values already validated by [`crate::message::decode`].
 #[derive(Clone, Debug)]
 pub struct Options<'a> {
+    tail: OptionTail<'a>,
+}
+
+/// Position in one validated packet, including the base for its next delta.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct OptionTail<'a> {
     bytes: &'a [u8],
-    i: usize,
-    prev: u32,
+    previous: u16,
+}
+
+impl<'a> OptionTail<'a> {
+    pub(crate) fn is_empty(self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub(crate) fn options(self) -> Options<'a> {
+        Options { tail: self }
+    }
 }
 
 impl<'a> Options<'a> {
+    pub(crate) fn positioned(mut self) -> impl Iterator<Item = (OptionTail<'a>, Opt<'a>)> {
+        core::iter::from_fn(move || {
+            let tail = self.tail;
+            self.next().map(|option| (tail, option))
+        })
+    }
+
     pub(crate) const fn new(bytes: &'a [u8]) -> Self {
         Self {
-            bytes,
-            i: 0,
-            prev: 0,
+            tail: OptionTail { bytes, previous: 0 },
         }
     }
 }
@@ -185,72 +205,55 @@ impl<'a> Iterator for Options<'a> {
     type Item = Opt<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.bytes.len() {
-            return None;
-        }
-        read_option(self.bytes, &mut self.i, &mut self.prev).ok()
+        let (&head, mut rest) = self.tail.bytes.split_first()?;
+        let opt = read_option(head, &mut rest, &mut self.tail.previous).ok()?;
+        self.tail.bytes = rest;
+        Some(opt)
     }
 }
 
+// The caller consumes the header while checking for the payload marker or
+// end of input. Only extended fields consume bytes before the value.
 pub(crate) fn read_option<'a>(
-    bytes: &'a [u8],
-    i: &mut usize,
-    prev: &mut u32,
+    head: u8,
+    rest: &mut &'a [u8],
+    previous: &mut u16,
 ) -> Result<Opt<'a>, ParseError> {
-    let head = *bytes.get(*i).ok_or(ParseError::TruncatedOption)?;
-    *i += 1;
-
-    let mut delta = u32::from(head >> 4);
-    let mut len = u32::from(head & 0x0f);
-
+    let delta = head >> 4;
+    let len = head & 15;
     if delta == 15 {
         return Err(ParseError::ReservedOptionDelta);
     }
     if len == 15 {
         return Err(ParseError::ReservedOptionLength);
     }
-
-    take_extended(bytes, i, &mut delta)?;
-    take_extended(bytes, i, &mut len)?;
-
-    let number = prev
-        .checked_add(delta)
-        .filter(|&n| n <= u32::from(u16::MAX))
-        .ok_or(ParseError::OptionNumberOverflow)?;
-    *prev = number;
-
-    let start = *i;
-    let value_len = usize::try_from(len).map_err(|_| ParseError::TruncatedOption)?;
-    let end = start
-        .checked_add(value_len)
+    let delta = extend(delta, rest)?;
+    let len = extend(len, rest)?;
+    let number = u16::try_from(u32::from(*previous) + delta)
+        .map_err(|_| ParseError::OptionNumberOverflow)?;
+    let len = usize::try_from(len).map_err(|_| ParseError::TruncatedOption)?;
+    let (value, next) = rest
+        .split_at_checked(len)
         .ok_or(ParseError::TruncatedOption)?;
-    if end > bytes.len() {
-        return Err(ParseError::TruncatedOption);
-    }
-    *i = end;
-
-    Ok(Opt::new(
-        OptionNumber::new(number as u16),
-        &bytes[start..end],
-    ))
+    *previous = number;
+    *rest = next;
+    Ok(Opt::new(OptionNumber::new(number), value))
 }
 
-fn take_extended(bytes: &[u8], i: &mut usize, n: &mut u32) -> Result<(), ParseError> {
-    match *n {
+fn extend(field: u8, rest: &mut &[u8]) -> Result<u32, ParseError> {
+    match field {
         13 => {
-            let extra = bytes.get(*i).copied().ok_or(ParseError::TruncatedOption)?;
-            *n = 13 + u32::from(extra);
-            *i += 1;
-            Ok(())
+            let (&extra, next) = rest.split_first().ok_or(ParseError::TruncatedOption)?;
+            *rest = next;
+            Ok(13 + u32::from(extra))
         }
         14 => {
-            if *i + 1 >= bytes.len() {
-                return Err(ParseError::TruncatedOption);
-            }
-            *n = 269 + u32::from(super::decode_u16_be([bytes[*i], bytes[*i + 1]]));
-            *i += 2;
-            Ok(())
+            let (extra, next) = rest
+                .split_first_chunk::<2>()
+                .ok_or(ParseError::TruncatedOption)?;
+            *rest = next;
+            Ok(269 + u32::from(super::decode_u16_be(*extra)))
         }
-        _ => Ok(()),
+        _ => Ok(u32::from(field)),
     }
 }

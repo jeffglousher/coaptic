@@ -601,7 +601,7 @@ impl RequestBinding {
         let mut binding = Self {
             bytes: [0; BlockTransfer::REQUEST_IDENTITY_BYTES],
             len: 1,
-            if_none_match: (num == 0).then(|| message.if_none_match()),
+            if_none_match: None,
             non_confirmable: message.ty() == crate::message::Type::NonConfirmable,
         };
         binding.bytes[0] = message.code().as_raw();
@@ -609,7 +609,7 @@ impl RequestBinding {
         for option in message.options() {
             let number = option.number();
             if number == N::IF_NONE_MATCH {
-                if saw_if_none_match || !option.value().is_empty() {
+                if num != 0 || saw_if_none_match || !option.value().is_empty() {
                     return Err(BlockTransferError::IdentityMismatch);
                 }
                 saw_if_none_match = true;
@@ -641,26 +641,30 @@ impl RequestBinding {
             binding.bytes[start + 4..end].copy_from_slice(value);
             binding.len = end as u16;
         }
+        binding.if_none_match = (num == 0).then_some(saw_if_none_match);
         Ok(binding)
     }
-    pub(crate) fn same_options(self, other: Self) -> bool {
-        self.len == other.len && self.bytes == other.bytes
+    pub(crate) fn same_options(&self, other: &Self) -> bool {
+        let n = usize::from(self.len);
+        self.len == other.len && self.bytes[..n] == other.bytes[..n]
     }
-    pub(crate) const fn if_none_match(self) -> bool {
+    pub(crate) const fn if_none_match(&self) -> bool {
         matches!(self.if_none_match, Some(true))
     }
-    /// Merge only validated NUM0 knowledge; later omission cannot erase it.
-    pub(crate) fn retain_condition(self, candidate: Self) -> Result<Self, BlockTransferError> {
-        if !self.same_options(candidate)
-            || matches!((self.if_none_match, candidate.if_none_match),
-                (Some(left), Some(right)) if left != right)
-        {
+    /// Both packets may bind NUM0, even when Q delivers it last.
+    pub(crate) fn check_condition(&self, candidate: &Self) -> Result<(), BlockTransferError> {
+        if matches!((self.if_none_match, candidate.if_none_match), (Some(a), Some(b)) if a != b) {
             return Err(BlockTransferError::IdentityMismatch);
         }
-        Ok(Self {
-            if_none_match: self.if_none_match.or(candidate.if_none_match),
-            ..self
-        })
+        Ok(())
+    }
+
+    /// The candidate already contains the same operation bytes. Retain it
+    /// only when NUM0 supplies a previously unknown condition, preserving
+    /// the transport mode from the packet that admitted the transfer.
+    pub(crate) fn supplies_condition(&mut self, stored: &Self) -> bool {
+        self.non_confirmable = stored.non_confirmable;
+        self.if_none_match.is_some() && stored.if_none_match.is_none()
     }
 }
 
@@ -801,6 +805,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
             BlockRole::IncomingBlock1 | BlockRole::IncomingQBlock1
         ) && self
             .request_binding
+            .as_ref()
             .is_some_and(RequestBinding::if_none_match)
     }
     pub(crate) fn issue_checkpoint(&self) -> IssueCheckpoint {
@@ -1111,79 +1116,79 @@ impl<T: OwnedToken> BlockTransfer<T> {
 
     /// Lookup identity.
     #[must_use]
-    pub const fn key(self) -> BlockKey<T> {
+    pub const fn key(&self) -> BlockKey<T> {
         self.key
     }
 
     /// Token of the transfer.
     #[must_use]
-    pub const fn token(self) -> T {
+    pub const fn token(&self) -> T {
         self.key.token()
     }
 
     /// Remote endpoint of the transfer.
     #[must_use]
-    pub const fn endpoint(self) -> Endpoint {
+    pub const fn endpoint(&self) -> Endpoint {
         self.key.endpoint()
     }
 
     /// Request-Tag or ETag stored on this transfer.
     #[must_use]
-    pub const fn identity(self) -> BodyTag {
+    pub const fn identity(&self) -> BodyTag {
         self.key.identity()
     }
 
     /// Incoming or outgoing Block / Q-Block role.
     #[must_use]
-    pub const fn role(self) -> BlockRole {
+    pub const fn role(&self) -> BlockRole {
         self.role
     }
 
     /// Whether this transfer is locked to BERT (SZX 7).
     #[must_use]
-    pub const fn is_bert(self) -> bool {
+    pub const fn is_bert(&self) -> bool {
         self.szx == BlockValue::SZX_BERT
     }
 
     /// Whether this sidecar is a Q-Block window (incoming or outgoing).
     #[must_use]
-    pub const fn is_q_block(self) -> bool {
+    pub const fn is_q_block(&self) -> bool {
         self.role.is_q_block()
     }
 
     /// Last accepted (incoming) or last issued (outgoing) NUM.
     #[must_use]
-    pub const fn num(self) -> u32 {
+    pub const fn num(&self) -> u32 {
         self.num
     }
 
     /// SZX locked for this transfer.
     #[must_use]
-    pub const fn szx(self) -> u8 {
+    pub const fn szx(&self) -> u8 {
         self.szx
     }
 
     /// M flag of the last accepted or issued block.
     #[must_use]
-    pub const fn more(self) -> bool {
+    pub const fn more(&self) -> bool {
         self.more
     }
 
     /// Next NUM classic Block will accept or issue.
     #[must_use]
-    pub const fn next_num(self) -> u32 {
+    pub const fn next_num(&self) -> u32 {
         self.next_num
     }
 
     /// Bytes assembled (incoming) or complete-body length (outgoing).
     #[must_use]
-    pub const fn filled(self) -> usize {
+    pub const fn filled(&self) -> usize {
         self.filled
     }
 
     /// Whether the transfer has accepted M=0 or issued the last outgoing block.
     #[must_use]
-    pub const fn is_complete(self) -> bool {
+    pub const fn is_complete(&self) -> bool {
         self.complete
     }
 
@@ -1193,13 +1198,13 @@ impl<T: OwnedToken> BlockTransfer<T> {
     /// follows M=0 and actual bytes remain bounded by the body slot. Q-Block
     /// requires an exact body length.
     #[must_use]
-    pub const fn expected_len(self) -> Option<u32> {
+    pub const fn expected_len(&self) -> Option<u32> {
         self.expected_len
     }
 
     /// First NUM of the current Q-Block window (`MAX_PAYLOADS_SET`).
     #[must_use]
-    pub const fn window_base(self) -> u32 {
+    pub const fn window_base(&self) -> u32 {
         match self.q {
             Some(q) => q.base,
             None => 0,
@@ -1208,7 +1213,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
 
     /// Bitmask of received NUMs in the current window (`bit i` is `base + i`).
     #[must_use]
-    pub const fn window_mask(self) -> u16 {
+    pub const fn window_mask(&self) -> u16 {
         match self.q {
             Some(q) => q.mask,
             None => 0,
@@ -1216,7 +1221,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
     }
 
     /// Acknowledged NUM when `num` is the block that completed the latest set.
-    pub(crate) fn q_continue_for(self, num: u32) -> Option<u32> {
+    pub(crate) fn q_continue_for(&self, num: u32) -> Option<u32> {
         match self.q {
             Some(q) if q.continue_trigger == Some(num) => q.continue_ack,
             _ => None,
@@ -1264,7 +1269,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
         }
     }
 
-    pub(crate) const fn terminal_deadline(self) -> Option<u64> {
+    pub(crate) const fn terminal_deadline(&self) -> Option<u64> {
         if matches!(
             self.role,
             BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
@@ -1289,7 +1294,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
         });
     }
 
-    pub(crate) const fn q_observe_sequence(self) -> Option<u32> {
+    pub(crate) const fn q_observe_sequence(&self) -> Option<u32> {
         if matches!(self.role, BlockRole::OutgoingQBlock2) {
             match self.q_receive.wait() {
                 Some(state) => Some(state.timeout_ms),
@@ -1319,7 +1324,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
         }
     }
 
-    pub(crate) fn q_observe_confirmable(self) -> bool {
+    pub(crate) fn q_observe_confirmable(&self) -> bool {
         self.q_observe_sequence().is_some()
             && self
                 .q_receive
@@ -1327,7 +1332,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
                 .is_some_and(|state| state.attempts & 1 != 0)
     }
 
-    pub(crate) fn q_observe_recovery(self) -> bool {
+    pub(crate) fn q_observe_recovery(&self) -> bool {
         self.q_observe_confirmable()
             && self
                 .q_receive
@@ -1379,12 +1384,12 @@ impl<T: OwnedToken> BlockTransfer<T> {
     }
 
     // Outgoing Q bodies do not use the incoming Continue-response cache.
-    pub(crate) fn q_observe_pending_mid(self) -> Option<crate::message::MessageId> {
+    pub(crate) fn q_observe_pending_mid(&self) -> Option<crate::message::MessageId> {
         self.q_observe_confirmable().then_some(())?;
         self.q_observe_last_mid()
     }
 
-    pub(crate) fn q_observe_last_mid(self) -> Option<crate::message::MessageId> {
+    pub(crate) fn q_observe_last_mid(&self) -> Option<crate::message::MessageId> {
         self.q_observe_sequence()?;
         self.q?
             .continue_ack
@@ -1441,7 +1446,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
     ///
     /// See `knowledge/rfcs/rfc9177.txt`.
     #[must_use]
-    pub const fn q_holes(self) -> Option<(u32, u16)> {
+    pub const fn q_holes(&self) -> Option<(u32, u16)> {
         if !self.role.is_incoming() || !self.role.is_q_block() || self.complete {
             return None;
         }
@@ -1497,7 +1502,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
 
     /// Armed [`QBlockReceiveWait`] for incoming Q-Block holes, if any.
     #[must_use]
-    pub const fn q_receive(self) -> Option<QBlockReceiveWait> {
+    pub const fn q_receive(&self) -> Option<QBlockReceiveWait> {
         if matches!(self.role, BlockRole::OutgoingBlock2) {
             None
         } else {
@@ -1559,30 +1564,27 @@ impl<T: OwnedToken> BlockTransfer<T> {
         // only when its number addresses the first byte not yet received.
         // A larger size, or a smaller size at any other offset, is not that
         // exchange. Q-Block keeps the size it started with.
-        if block.szx() != self.szx {
+        let size = usize::from(block.size());
+        if block.szx() == self.szx {
+            if block.num() < self.next_num {
+                return Err(BlockTransferError::Overlap);
+            }
+            if block.num() > self.next_num {
+                return Err(BlockTransferError::Gap);
+            }
+            if block.is_bert() {
+                return self.accept_bert_incoming(block, payload_len, capacity);
+            }
+        } else {
             if self.is_bert() || block.is_bert() || block.szx() > self.szx {
                 return Err(BlockTransferError::SzxMismatch);
             }
-            let new_size = usize::from(block.size());
-            let offset = block_offset(block.num(), new_size)?;
-            if offset != self.filled {
+            if block_offset(block.num(), size)? != self.filled {
                 return Err(BlockTransferError::Gap);
             }
-            self.szx = block.szx();
-            self.next_num = block.num();
         }
-        if block.num() < self.next_num {
-            return Err(BlockTransferError::Overlap);
-        }
-        if block.num() > self.next_num {
-            return Err(BlockTransferError::Gap);
-        }
+        let offset = self.filled;
 
-        if block.is_bert() {
-            return self.accept_bert_incoming(block, payload_len, capacity);
-        }
-
-        let size = usize::from(block.size());
         if block.more() {
             if payload_len != size {
                 return Err(BlockTransferError::PayloadLength);
@@ -1591,7 +1593,6 @@ impl<T: OwnedToken> BlockTransfer<T> {
             return Err(BlockTransferError::PayloadLength);
         }
 
-        let offset = block_offset(block.num(), size)?;
         let end = offset
             .checked_add(payload_len)
             .ok_or(BlockTransferError::Overflow)?;
@@ -1599,6 +1600,7 @@ impl<T: OwnedToken> BlockTransfer<T> {
             return Err(BlockTransferError::Overflow);
         }
 
+        self.szx = block.szx();
         self.num = block.num();
         self.more = block.more();
         self.filled = end;
@@ -1755,16 +1757,25 @@ impl<T: OwnedToken> BlockTransfer<T> {
     /// Validate a future Q1 payload without accepting its bytes or advancing the window.
     pub(crate) fn validate_q1_future(
         &self,
+        parsed: &crate::message::ParsedMessage<'_, T>,
         block: BlockValue,
-        payload_len: usize,
+        expected: u32,
         capacity: usize,
     ) -> Result<(), BlockTransferError> {
-        if self.role != BlockRole::IncomingQBlock1
-            || self.complete
-            || !self
-                .request_binding
-                .is_some_and(|binding| binding.non_confirmable)
-        {
+        if self.expected_len() != Some(expected) {
+            return Err(BlockTransferError::LengthInconsistent);
+        }
+        let stored = self
+            .request_binding
+            .as_ref()
+            .ok_or(BlockTransferError::IdentityMismatch)?;
+        let candidate = RequestBinding::from_message(parsed, block.num())?;
+        if !stored.same_options(&candidate) {
+            return Err(BlockTransferError::IdentityMismatch);
+        }
+        stored.check_condition(&candidate)?;
+        let payload_len = parsed.payload().len();
+        if self.role != BlockRole::IncomingQBlock1 || self.complete || !stored.non_confirmable {
             return Err(BlockTransferError::IdentityMismatch);
         }
         if block.is_bert() || block.szx() != self.szx {
@@ -1777,7 +1788,6 @@ impl<T: OwnedToken> BlockTransfer<T> {
             return Err(BlockTransferError::IdentityMismatch);
         }
         let (offset, _) = q_incoming_range(block, payload_len, capacity, self.expected_len)?;
-        let expected = self.expected_len.ok_or(BlockTransferError::MissingSize)?;
         if offset >= expected as usize
             || (block.more() && offset + payload_len >= expected as usize)
         {
@@ -2121,7 +2131,7 @@ pub(crate) fn block_offset(num: u32, size: usize) -> Result<usize, BlockTransfer
 /// (`knowledge/rfcs/rfc9177.txt`). Absent identity is not a unique key.
 #[must_use]
 pub(crate) fn same_body_identity<T: OwnedToken>(
-    transfer: BlockTransfer<T>,
+    transfer: &BlockTransfer<T>,
     key: BlockKey<T>,
     role: BlockRole,
 ) -> bool {
@@ -2187,6 +2197,7 @@ pub(crate) fn store_incoming(
 pub(crate) trait BodyOps<T: OwnedToken = Token> {
     fn payload(&self, id: SlotId) -> Option<&[u8]>;
     fn transfer(&self, id: SlotId) -> Option<BlockTransfer<T>>;
+    fn transfer_ref(&self, id: SlotId) -> Option<&BlockTransfer<T>>;
     fn set_transfer(&mut self, id: SlotId, transfer: BlockTransfer<T>) -> Result<(), SlotError>;
     fn lookup(&self, key: BlockKey<T>) -> Option<SlotId>;
     fn admit_incoming(
@@ -2396,6 +2407,36 @@ mod tests {
                 .unwrap_err(),
             BlockTransferError::SzxMismatch
         );
+    }
+
+    #[test]
+    fn refused_downshift_preserves_original_size_for_retry() {
+        let mut transfer = BlockTransfer::incoming_block1(
+            key(),
+            BlockValue::from_size(0, true, 64).unwrap(),
+            64,
+            128,
+            None,
+        )
+        .unwrap();
+        let original = transfer;
+        let smaller = BlockValue::from_size(4, true, 16).unwrap();
+        assert_eq!(
+            transfer.accept_incoming(smaller, 15, 128),
+            Err(BlockTransferError::PayloadLength)
+        );
+        assert_eq!(transfer, original);
+        assert_eq!(
+            transfer.accept_incoming(smaller, 16, 79),
+            Err(BlockTransferError::Overflow)
+        );
+        assert_eq!(transfer, original);
+        assert_eq!(
+            transfer.accept_incoming(BlockValue::from_size(1, false, 64).unwrap(), 64, 128),
+            Ok(64)
+        );
+        assert!(transfer.is_complete());
+        assert_eq!(transfer.filled(), 128);
     }
 
     #[test]

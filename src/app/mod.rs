@@ -84,6 +84,7 @@
 //! advanced reactor is needed for custom storage. [`AppBuilder::full_responses`]
 //! and [`App::take_response_into`] collect exact bytes into caller storage;
 //! insufficient capacity leaves the complete reply available for retry.
+//! [`App::take_response_with`] lends those same bytes directly to a callback.
 //!
 //! [`App::poll_with`] admits caller-owned asynchronous/durable work without
 //! blocking the reactor. Return [`Response::deferred`] with a supplied
@@ -312,7 +313,6 @@ type AppIngress<'a> = dyn FnMut(&[u8], Endpoint) -> bool + 'a;
 type AppDispatch<'a, K> =
     dyn FnMut(Request<'_, K>, Option<DeferredReply>) -> Response<'static, K> + 'a;
 
-#[derive(Clone, Copy)]
 struct DeferredRow<K: OwnedToken = crate::message::Token> {
     handle: DeferredReply,
     meta: SendResponse<'static, K>,
@@ -339,13 +339,12 @@ struct DeferredQSelectors {
     len: usize,
 }
 impl DeferredQSelectors {
-    fn from_request(parsed: &ParsedMessage<'_, impl OwnedToken>) -> Option<Self> {
+    fn from_request(request: Option<&QBlock2Request<'_>>) -> Option<Self> {
         let mut result = Self {
             values: [0; crate::storage::BlockTransfer::MAX_PAYLOADS as usize],
             len: 0,
         };
-        for value in parsed.q_block2() {
-            let value = value.ok()?;
+        for value in request.into_iter().flat_map(QBlock2Request::values) {
             if result.len == result.values.len() {
                 return None;
             }
@@ -419,7 +418,15 @@ impl DeferredSelection {
     }
 
     fn matches_parts(&self, parsed: &ParsedMessage<'_, impl OwnedToken>, payload: &[u8]) -> bool {
-        let Some(bytes) = self.bytes.get(..self.len) else {
+        Self::matches_encoded(self.bytes.get(..self.len), parsed, payload)
+    }
+
+    fn matches_encoded(
+        bytes: Option<&[u8]>,
+        parsed: &ParsedMessage<'_, impl OwnedToken>,
+        payload: &[u8],
+    ) -> bool {
+        let Some(bytes) = bytes else {
             return false;
         };
         let Ok(stored) = crate::message::extended::decode(bytes) else {
@@ -461,15 +468,7 @@ impl RequestSelection {
     ) -> Option<&DeferredSelection> {
         self.encoded
             .get_or_insert_with(|| {
-                DeferredSelection::from_parts(
-                    parsed,
-                    match assembled {
-                        InboundBody::Complete(id) => {
-                            engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                        }
-                        _ => parsed.payload(),
-                    },
-                )
+                DeferredSelection::from_parts(parsed, assembled.payload(engine, parsed.payload()))
             })
             .as_ref()
             .ok()
@@ -510,11 +509,7 @@ fn deferred_reply_metadata<K: OwnedToken>(
     let message = Message::new(Type::NonConfirmable, response.code(), meta.mid)
         .with_token(meta.token)
         .with_options(options.as_slice());
-    let mut bytes = [0; client::RESPONSE_OPTION_BYTES];
-    let n = encode(&message, &mut bytes).map_err(|_| ResponseError::DeferredMetadataBounds)?;
-    let parsed = crate::message::decode_with_token::<K>(&bytes[..n])
-        .map_err(|_| ResponseError::DeferredMetadataBounds)?;
-    client::ReplyMeta::from_parsed(&parsed, meta.dest, now_ms)
+    client::ReplyMeta::deferred(&message, meta.dest, now_ms)
         .map_err(|_| ResponseError::DeferredMetadataBounds)
 }
 
@@ -525,16 +520,19 @@ struct DeferredTable<const DEFERRED: usize, K: OwnedToken = crate::message::Toke
 impl<const DEFERRED: usize, K: OwnedToken> DeferredTable<DEFERRED, K> {
     const fn new() -> Self {
         Self {
-            rows: [None; DEFERRED],
+            rows: [const { None }; DEFERRED],
             generation: 0,
         }
     }
     fn expire<S: AppStorage<Token = K>>(&mut self, engine: &mut Engine<S>, now_ms: u64) {
         for row in &mut self.rows {
-            let Some(value) = *row else {
+            let Some(value) = row.as_ref() else {
                 continue;
             };
-            let body = value.snapshot.map(|(body, _)| body);
+            if !value.completed && now_ms < value.deadline_ms {
+                continue;
+            }
+            let body = value.snapshot.as_ref().map(|(body, _)| *body);
             let owns_observe = value
                 .observe
                 .is_none_or(|observe| observe.attempted.is_none())
@@ -574,7 +572,7 @@ impl<const DEFERRED: usize, K: OwnedToken> DeferredTable<DEFERRED, K> {
         key: ObserveKey<K>,
     ) -> Result<(), crate::storage::SlotError> {
         for row in &mut self.rows {
-            if let Some(value) = *row
+            if let Some(value) = row.as_ref()
                 && value.observe.is_some()
                 && ObserveKey::new(value.meta.token, value.meta.dest) == key
             {
@@ -592,7 +590,7 @@ impl<const DEFERRED: usize, K: OwnedToken> DeferredTable<DEFERRED, K> {
         now_ms: u64,
     ) -> Result<(), SlotError> {
         for row in &mut self.rows {
-            if let Some(value) = *row
+            if let Some(value) = row.as_ref()
                 && value.meta.dest == endpoint
                 && value.observe.is_some_and(|observe| {
                     observe
@@ -611,32 +609,28 @@ impl<const DEFERRED: usize, K: OwnedToken> DeferredTable<DEFERRED, K> {
         &mut self,
         ids: &mut AppIds,
         io: &mut T,
-    ) -> Result<Option<DeferredReply>, IdentityError> {
-        if self.rows.iter().all(Option::is_some) {
+    ) -> Result<Option<(usize, DeferredReply)>, IdentityError> {
+        let Some(index) = self.rows.iter().position(Option::is_none) else {
             return Ok(None);
-        }
+        };
         let Some(generation) = self.generation.checked_add(1) else {
             return Ok(None);
         };
         let nonce = ids.nonce(&mut |bytes| io.fill_random(bytes))?;
         self.generation = generation;
-        Ok(Some(DeferredReply { nonce, generation }))
+        Ok(Some((index, DeferredReply { nonce, generation })))
     }
     fn insert(
         &mut self,
-        handle: DeferredReply,
+        candidate: (usize, DeferredReply),
         meta: SendResponse<'static, K>,
         deadline_ms: u64,
         selection: DeferredSelection,
         q_selectors: DeferredQSelectors,
         observe: Option<DeferredObserve>,
     ) {
-        let row = self
-            .rows
-            .iter_mut()
-            .find(|row| row.is_none())
-            .expect("reserved capacity");
-        *row = Some(DeferredRow {
+        let (index, handle) = candidate;
+        self.rows[index] = Some(DeferredRow {
             handle,
             meta,
             deadline_ms,
@@ -653,7 +647,7 @@ impl<const DEFERRED: usize, K: OwnedToken> DeferredTable<DEFERRED, K> {
 // Raw Engine replacement remains the advanced caller's ownership boundary.
 fn deferred_observe_owner<S: AppStorage>(
     engine: &Engine<S>,
-    row: DeferredRow<S::Token>,
+    row: &DeferredRow<S::Token>,
 ) -> Option<ObserveInterest<S::Token>> {
     let observe = row.observe?;
     let (seq, format) = observe.attempted?;
@@ -674,7 +668,7 @@ fn deferred_observe_owner<S: AppStorage>(
 }
 fn retire_deferred_observe<S: AppStorage>(
     engine: &mut Engine<S>,
-    row: DeferredRow<S::Token>,
+    row: &DeferredRow<S::Token>,
 ) -> Result<(), crate::storage::SlotError> {
     let Some(interest) = deferred_observe_owner(engine, row) else {
         // A prepared large response can fail before a relation is installed,
@@ -717,13 +711,13 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     response: &Response<'_, S::Token>,
 ) -> Result<(), Error<T::Error>> {
     if row.meta.no_response.suppresses(response.code()) {
-        retire_deferred_observe(engine, *row)?;
+        retire_deferred_observe(engine, row)?;
         row.completed = true;
         return Ok(());
     }
     let observe = row.observe.expect("Observe completion");
     let attempted_format = if observe.attempted.is_some() {
-        let owner = deferred_observe_owner(engine, *row).ok_or(Error::DeferredUnknown)?;
+        let owner = deferred_observe_owner(engine, row).ok_or(Error::DeferredUnknown)?;
         if response.code().is_success()
             && !owner.content_format_matches(response.code(), response.format())
         {
@@ -737,7 +731,7 @@ fn complete_deferred_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usize
     {
         return complete_deferred_q_observe(engine, io, ids, oscore, now_ms, row, response);
     }
-    if observe_endpoint_held(engine, row.meta.dest, now_ms) >= usize::from(Transmission::NSTART) {
+    if observe_endpoint_held(engine, row.meta.dest, now_ms) {
         return Err(Error::Saturated);
     }
     let key = ObserveKey::new(row.meta.token, row.meta.dest);
@@ -875,7 +869,7 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
     response: &Response<'_, S::Token>,
 ) -> Result<(), Error<T::Error>> {
     let observed = row.observe.expect("Observe completion");
-    if observed.attempted.is_some() && deferred_observe_owner(engine, *row).is_none() {
+    if observed.attempted.is_some() && deferred_observe_owner(engine, row).is_none() {
         return Err(Error::DeferredUnknown);
     }
     let key = ObserveKey::new(row.meta.token, row.meta.dest);
@@ -884,7 +878,7 @@ fn complete_deferred_q_observe<S: AppStorage, T: DatagramIo, const REQUESTS: usi
     if previous_body.is_some_and(|id| engine.tx_body_is_pinned(id)) {
         return Err(Error::Slot(crate::storage::SlotError::Pinned));
     }
-    if observe_endpoint_held(engine, row.meta.dest, now_ms) >= usize::from(Transmission::NSTART) {
+    if observe_endpoint_held(engine, row.meta.dest, now_ms) {
         return Err(Error::Saturated);
     }
     let room = previous.is_some()
@@ -1396,13 +1390,14 @@ impl<
     /// policy are caller-owned; discard old identities before slot reuse.
     pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, RouteRemovalError> {
         let path = request::path_from_into(path).map_err(RouteRemovalError::Path)?;
-        if !self.site.contains_path(path) {
+        let Some(index) = self.site.route_index(path.segments()) else {
             return Ok(false);
-        }
+        };
         if self.has_protocol_state() {
             return Err(RouteRemovalError::Busy);
         }
-        Ok(self.site.remove_path(path))
+        self.site.remove_at(index);
+        Ok(true)
     }
 
     fn has_protocol_state(&mut self) -> bool {
@@ -1502,19 +1497,20 @@ impl<
             }
         }
         for index in 0..capacities.observe_entries {
+            let Some((hold, life)) = self
+                .engine
+                .with_observe_interest(SlotId::from_index(index), |row| {
+                    (row.notify_hold(), row.lifetime())
+                })
+            else {
+                continue;
+            };
             if after.is_some()
-                && let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) = self
-                    .engine
-                    .observe_interest(SlotId::from_index(index))
-                    .and_then(|row| row.notify_hold())
+                && let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) = hold
             {
                 consider(until_ms);
             }
-            if let Some(lifetime) = self
-                .engine
-                .observe_interest(SlotId::from_index(index))
-                .and_then(|interest| interest.lifetime())
-            {
+            if let Some(lifetime) = life {
                 consider(lifetime.due_ms());
             }
         }
@@ -1573,20 +1569,21 @@ impl<
     /// borrow is required by the storage occupancy interface. In addition to
     /// [`Self::next_timeout`], scans RX slots and pending Observe interests.
     /// Each interest scans deferred and congestion state; congestion checks may
-    /// scan Observe capacity once per TX slot. All scans are capacity-bounded
+    /// scan the Observe and pending-CON tables. All scans are capacity-bounded
     /// and use constant scratch space.
     #[must_use]
     pub fn next_poll_at(&mut self, now_ms: u64) -> Option<u64> {
-        let mut next = self.next_timeout().map(|due| due.max(now_ms));
-        let capacities = self.engine.capacities();
-        for index in 0..capacities.rx_datagram_slots {
-            let id = SlotId::from_index(index);
-            let pool = self.engine.storage_mut().rx_datagram();
-            if pool.is_occupied(id) && !pool.is_pinned(id) && !self.inbox.holds_datagram(id) {
-                return Some(now_ms);
-            }
+        let pool = self.engine.storage_mut().rx_datagram();
+        if !pool.is_empty()
+            && (0..pool.slot_count()).any(|index| {
+                let id = SlotId::from_index(index);
+                pool.is_occupied(id) && !pool.is_pinned(id) && !self.inbox.holds_datagram(id)
+            })
+        {
+            return Some(now_ms);
         }
-        for index in 0..capacities.tx_body_slots.unwrap_or(0) {
+        let mut next = None;
+        for index in tx_body_slots_to_scan(&mut self.engine) {
             let id = SlotId::from_index(index);
             if let Some(transfer) = self.engine.tx_body_transfer(id)
                 && transfer.q_observe_confirmable()
@@ -1594,42 +1591,43 @@ impl<
                 && !transfer.is_complete()
                 && !self.engine.tx_body_is_pinned(id)
                 && oscore::route_allowed(&self.oscore, transfer.endpoint())
-                && observe_endpoint_held(&self.engine, transfer.endpoint(), now_ms)
-                    < usize::from(Transmission::NSTART)
+                && let Some(due) = notification_wakeup(&self.engine, transfer.endpoint(), now_ms)
             {
-                return Some(now_ms);
-            }
-        }
-        for index in 0..capacities.observe_entries {
-            let Some(interest) = self.engine.observe_interest(SlotId::from_index(index)) else {
-                continue;
-            };
-            if interest.key().is_client()
-                || !interest.is_pending()
-                || self.deferred.blocks_observe(interest.key())
-                || (!interest.is_deleted()
-                    && self.site.observe_source(interest.resource()).is_none())
-            {
-                continue;
-            }
-            if observe_endpoint_held(&self.engine, interest.endpoint(), now_ms)
-                < usize::from(Transmission::NSTART)
-            {
-                return Some(now_ms);
-            }
-            for held_index in 0..capacities.observe_entries {
-                if let Some(held) = self.engine.observe_interest(SlotId::from_index(held_index))
-                    && !held.key().is_client()
-                    && held.endpoint().physical() == interest.endpoint().physical()
-                    && let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) =
-                        held.notify_hold()
-                    && until_ms > now_ms
-                {
-                    next = Some(next.map_or(until_ms, |old| old.min(until_ms)));
+                if due == now_ms {
+                    return Some(now_ms);
                 }
+                next = Some(next.map_or(due, |old: u64| old.min(due)));
             }
         }
-        next
+        let observe = self.engine.storage_mut().observe();
+        let n = if observe.is_empty() {
+            0
+        } else {
+            observe.slot_count()
+        };
+        for index in 0..n {
+            let endpoint = self
+                .engine
+                .with_observe_interest(SlotId::from_index(index), |row| {
+                    (!row.key().is_client()
+                        && row.is_pending()
+                        && !self.deferred.blocks_observe(row.key())
+                        && (row.is_deleted() || self.site.observe_source(row.resource()).is_some()))
+                    .then(|| row.endpoint())
+                })
+                .flatten();
+            if let Some(endpoint) = endpoint
+                && let Some(due) = notification_wakeup(&self.engine, endpoint, now_ms)
+            {
+                if due == now_ms {
+                    return Some(now_ms);
+                }
+                next = Some(next.map_or(due, |old: u64| old.min(due)));
+            }
+        }
+        next.into_iter()
+            .chain(self.next_timeout().map(|due| due.max(now_ms)))
+            .min()
     }
 
     /// Mutably borrow the Engine (advanced path).
@@ -2590,11 +2588,11 @@ fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const RE
     now_ms: u64,
 ) -> Result<(), Error<T::Error>> {
     deferred.expire(engine, now_ms);
-    let index = deferred
+    let slot = deferred
         .rows
-        .iter()
-        .position(|row| {
-            row.is_some_and(|row| {
+        .iter_mut()
+        .find(|row| {
+            row.as_ref().is_some_and(|row| {
                 row.handle == handle && !row.completed && now_ms < row.deadline_ms
             })
         })
@@ -2604,24 +2602,13 @@ fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const RE
         return Err(Error::DeferredUnknown);
     }
     let response = response.with_fresh_piv();
-    let row = deferred.rows[index].expect("matched row");
+    let row = slot.as_mut().expect("matched row");
     if row.observe.is_some() {
-        complete_deferred_observe(
-            engine,
-            io,
-            ids,
-            oscore,
-            now_ms,
-            deferred.rows[index].as_mut().expect("matched row"),
-            &response,
-        )?;
-        if deferred.rows[index].is_some_and(|row| row.snapshot.is_some()) {
-            deferred.rows[index]
-                .as_mut()
-                .expect("completed Observe snapshot")
-                .completed = true;
+        complete_deferred_observe(engine, io, ids, oscore, now_ms, row, &response)?;
+        if row.snapshot.is_some() {
+            row.completed = true;
         } else {
-            deferred.rows[index] = None;
+            *slot = None;
         }
         return Ok(());
     }
@@ -2654,7 +2641,7 @@ fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const RE
             row.meta,
             &response,
             &row.q_selectors,
-            &mut deferred.rows[index].as_mut().expect("matched row").snapshot,
+            &mut row.snapshot,
             metadata,
             oscore,
             dedup_closed,
@@ -2683,16 +2670,13 @@ fn complete_engine<S: AppStorage, T: DatagramIo, const DEFERRED: usize, const RE
         } else {
             metadata
         };
-        deferred.rows[index].as_mut().expect("matched row").snapshot = Some((body, retained));
+        row.snapshot = Some((body, retained));
     }
     outcome?;
     if body.is_some() {
-        deferred.rows[index]
-            .as_mut()
-            .expect("matched row")
-            .completed = true;
+        row.completed = true;
     } else {
-        deferred.rows[index] = None;
+        *slot = None;
     }
     Ok(())
 }
@@ -2847,39 +2831,33 @@ where
 
     // Claim after ingress. Replacement registrations start with no pending
     // signal, so a reused slot cannot inherit the old relation's opportunity.
-    if let Some(id) = progress
-        .observe_notify()
-        .filter(|id| {
-            engine
-                .observe_interest(*id)
-                .is_some_and(|interest| !deferred.blocks_observe(interest.key()))
+    if let Some(id) = progress.observe_notify()
+        && let Some(Some(endpoint)) = engine.with_observe_interest(id, |row| {
+            (!row.key().is_client() && row.is_pending() && !deferred.blocks_observe(row.key()))
+                .then(|| row.endpoint())
         })
-        .and_then(|id| engine.claim_observe_notification(id, now_ms))
-        && let Some(interest) = engine.observe_interest(id)
+        && !observe_endpoint_held(engine, endpoint, now_ms)
+        && let Some(Some(interest)) = engine
+            .storage_mut()
+            .update_observe_interest(id, |row| row.take_due().map(|_| *row))
     {
         let seq = interest.seq();
-        if observe_endpoint_held(engine, interest.endpoint(), now_ms)
-            >= usize::from(Transmission::NSTART)
-        {
-            let _ = engine.restore_observe_due(id, seq);
+        let response = if interest.is_deleted() {
+            Some(Response::not_found())
         } else {
-            let response = if interest.is_deleted() {
-                Some(Response::not_found())
-            } else {
-                site.observe_source(interest.resource()).and_then(|source| {
-                    source.snapshot(&interest, oscore.association(interest.endpoint()))
-                })
-            };
-            if let Some(response) = response {
-                if let Err(e) =
-                    send_notification(engine, io, ids, oscore, now_ms, interest, &response, seq)
-                {
-                    let _ = engine.restore_observe_due(id, seq);
-                    return Err(e);
-                }
-            } else {
+            site.observe_source(interest.resource()).and_then(|source| {
+                source.snapshot(&interest, oscore.association(interest.endpoint()))
+            })
+        };
+        if let Some(response) = response {
+            if let Err(e) =
+                send_notification(engine, io, ids, oscore, now_ms, interest, &response, seq)
+            {
                 let _ = engine.restore_observe_due(id, seq);
+                return Err(e);
             }
+        } else {
+            let _ = engine.restore_observe_due(id, seq);
         }
     }
 
@@ -2961,7 +2939,7 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots + ObserveSlots,
     T: DatagramIo,
 {
-    for index in 0..engine.capacities().tx_body_slots.unwrap_or(0) {
+    for index in tx_body_slots_to_scan(engine) {
         let id = SlotId::from_index(index);
         let Some(transfer) = engine.tx_body_transfer(id) else {
             continue;
@@ -2971,7 +2949,6 @@ where
             || transfer.is_complete()
             || !oscore::route_allowed(oscore, transfer.endpoint())
             || observe_endpoint_held(engine, transfer.endpoint(), now_ms)
-                >= usize::from(Transmission::NSTART)
         {
             continue;
         }
@@ -3038,24 +3015,37 @@ enum InboundBody {
     Complete(SlotId),
 }
 
+impl InboundBody {
+    fn payload<'a, S: Storage + BodySlots>(
+        self,
+        engine: &'a Engine<S>,
+        packet: &'a [u8],
+    ) -> &'a [u8] {
+        match self {
+            Self::Complete(id) => engine.rx_body_payload(id).unwrap_or(packet),
+            _ => packet,
+        }
+    }
+}
+
 fn assemble_inbound_body<Mem>(
     engine: &mut Engine<Mem>,
-    rx: SlotId,
+    peer: Endpoint,
     now_ms: u64,
     parsed: &ParsedMessage<'_, Mem::Token>,
     oscore_request: oscore::Request,
-    has_block1: bool,
-    has_q_block1: bool,
+    options: &RequestOptions<'_>,
 ) -> InboundBody
 where
     Mem: Storage + DatagramSlots + BodySlots,
 {
     #[cfg(not(feature = "oscore"))]
     let _ = oscore_request;
-    // Classify from the first decode. Plain GET must not enter apply_*
-    // (each stacks profile-sized Block IO scratch, then MissingBlock).
-    if has_block1 {
-        return match engine.apply_block1_rx(rx) {
+    if let Some(block) = options.block1 {
+        let progress = crate::storage::RxBlockOpt::Block1
+            .incoming_with_options(parsed, peer, block, options.size1, options.request_tag)
+            .and_then(|incoming| engine.apply_incoming(incoming, parsed.payload()));
+        return match progress {
             Ok(progress) if progress.complete() => InboundBody::Complete(progress.id()),
             Ok(_) => InboundBody::Continue,
             // Retransmit of an already-acked NUM (RFC 7959): replay 2.31, not 4.08.
@@ -3070,8 +3060,15 @@ where
             Err(_) => InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
         };
     }
-    if has_q_block1 {
-        return match engine.apply_q_block1_rx(rx) {
+    if let Some(block) = options.q_block1 {
+        let block = match block {
+            Ok(block) => block,
+            Err(_) => return InboundBody::Refused(Code::REQUEST_ENTITY_INCOMPLETE),
+        };
+        let progress = crate::storage::RxBlockOpt::QBlock1
+            .incoming_with_options(parsed, peer, block, options.size1, options.request_tag)
+            .and_then(|incoming| engine.apply_incoming(incoming, parsed.payload()));
+        return match progress {
             Ok(progress) if progress.complete() => {
                 let _ = engine.note_q_receive(progress.id(), now_ms);
                 InboundBody::Complete(progress.id())
@@ -3081,28 +3078,36 @@ where
                 if let Some(request) = oscore_request {
                     engine.remember_qblock1_request(progress.id(), parsed.token(), request);
                 }
-                let _ = engine.note_q_receive(progress.id(), now_ms);
-                qblock1_wait(engine, rx, parsed, false)
+                let transfer = engine
+                    .note_q_receive(progress.id(), now_ms)
+                    .or_else(|| engine.rx_body_transfer(progress.id()));
+                qblock1_wait(transfer.as_ref(), parsed.ty(), block, false)
             }
             Err(BlockTransferError::Duplicate) => {
+                let tag = options.request_tag;
+                let found = (0..engine.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
+                    let id = SlotId::from_index(index);
+                    let transfer = engine.rx_body_transfer(id)?;
+                    (transfer.role() == BlockRole::IncomingQBlock1
+                        && transfer.endpoint() == peer
+                        && transfer.identity().as_slice() == tag)
+                        .then_some((id, transfer))
+                });
                 #[cfg(feature = "oscore")]
-                if let Some(request) = oscore_request {
-                    for index in 0..engine.capacities().rx_body_slots.unwrap_or(0) {
-                        let id = SlotId::from_index(index);
-                        if engine.rx_body_transfer(id).is_some_and(|transfer| {
-                            transfer.role() == BlockRole::IncomingQBlock1
-                                && Some(transfer.endpoint()) == engine.rx_endpoint(rx)
-                                && transfer.identity().as_slice() == parsed.request_tag().next()
-                        }) {
-                            engine.remember_qblock1_request(id, parsed.token(), request);
-                            break;
-                        }
-                    }
+                if let Some(request) = oscore_request
+                    && let Some((id, _)) = &found
+                {
+                    engine.remember_qblock1_request(*id, parsed.token(), request);
                 }
-                qblock1_wait(engine, rx, parsed, true)
+                qblock1_wait(
+                    found.as_ref().map(|(_, transfer)| transfer),
+                    parsed.ty(),
+                    block,
+                    true,
+                )
             }
             Err(BlockTransferError::OutsideWindow) if parsed.ty() == Type::NonConfirmable => {
-                match engine.validated_q1_future_rx(rx) {
+                match engine.validated_q1_future(parsed, peer, block) {
                     Ok(id) => {
                         #[cfg(feature = "oscore")]
                         if let Some(request) = oscore_request {
@@ -3138,52 +3143,38 @@ where
 // An empty ACK acknowledges a CON payload without promising a complete
 // body. NON Continue is only due after a whole MAX_PAYLOADS_SET is present.
 // A duplicate repeats that Continue only for the block that completed the set.
-fn qblock1_wait<Mem: Storage + DatagramSlots + BodySlots>(
-    engine: &Engine<Mem>,
-    rx: SlotId,
-    parsed: &ParsedMessage<'_, Mem::Token>,
+fn qblock1_wait<K: OwnedToken>(
+    transfer: Option<&crate::storage::BlockTransfer<K>>,
+    ty: Type,
+    block: BlockValue,
     duplicate: bool,
 ) -> InboundBody {
-    let next = if parsed.ty() == Type::NonConfirmable {
-        let peer = engine.rx_endpoint(rx);
-        let tag = parsed.request_tag().next();
-        let request_num = parsed
-            .q_block1()
-            .and_then(Result::ok)
-            .map(|block| block.num());
-        (0..engine.capacities().rx_body_slots.unwrap_or(0)).find_map(|index| {
-            let transfer = engine.rx_body_transfer(SlotId::from_index(index))?;
-            if transfer.role() != BlockRole::IncomingQBlock1
-                || Some(transfer.endpoint()) != peer
-                || transfer.identity().as_slice() != tag
-            {
-                return None;
-            }
-            if duplicate {
-                let ack = request_num.and_then(|num| transfer.q_continue_for(num))?;
-                return BlockValue::new(ack, true, transfer.szx()).ok();
-            }
-            if transfer.window_base() == 0 || transfer.window_mask() != 0 {
-                return None;
-            }
-            BlockValue::new(transfer.window_base() - 1, true, transfer.szx()).ok()
-        })
-    } else {
-        None
-    };
+    let next = transfer
+        .filter(|_| ty == Type::NonConfirmable)
+        .and_then(|transfer| {
+            let num = if duplicate {
+                transfer.q_continue_for(block.num())?
+            } else {
+                if transfer.window_mask() != 0 {
+                    return None;
+                }
+                transfer.window_base().checked_sub(1)?
+            };
+            BlockValue::new(num, true, transfer.szx()).ok()
+        });
     InboundBody::QWait(next)
 }
 
-/// Write a successfully unprotected Inner over the RX slot.
-///
-/// Block-wise assembly reads that slot (RFC 8613 §4.1.3.4.1). Preserve the
-/// profile-sized encoding ceiling before checking the runtime slot capacity.
-#[cfg(feature = "oscore")]
-pub(crate) fn write_unprotected_rx<Mem, E>(
+/// Admit the authenticated inner packet under both profile and runtime limits.
+/// Only a client retaining full datagrams needs plaintext in the RX slot.
+/// `received_len` is the occupied outer wire length validated at this slot.
+pub(crate) fn admit_plaintext_rx<Mem, E>(
     engine: &mut Engine<Mem>,
     rx: SlotId,
     wire: &[u8],
     peer: Endpoint,
+    received_len: usize,
+    retain: bool,
 ) -> Result<(), Error<E>>
 where
     Mem: Storage + DatagramSlots,
@@ -3194,9 +3185,21 @@ where
             EncodeError::BufferTooSmall,
         )));
     }
-    if let Err(e) = engine.write_rx(rx, wire, peer) {
+    let result = if retain {
+        engine.write_rx(rx, wire, peer).map(|_| ())
+    } else if wire.len() > received_len {
+        // A shorter inner packet already fits wherever its outer packet fit.
+        match engine.storage_mut().rx_payload_mut(rx) {
+            Some(slot) if wire.len() <= slot.len() => Ok(()),
+            Some(_) => Err(SlotError::LengthExceedsSlot),
+            None => Err(SlotError::NotOccupied),
+        }
+    } else {
+        Ok(())
+    };
+    if let Err(error) = result {
         let _ = engine.release_rx(rx);
-        return Err(Error::Slot(e));
+        return Err(Error::Slot(error));
     }
     Ok(())
 }
@@ -3277,93 +3280,104 @@ where
     }
 }
 
-/// Results already decoded during critical-option validation. Keep the first
-/// singleton value and the original later 4.00 decisions distinct from 4.02.
+/// Facts from the authenticated inner request (or the unprotected datagram).
+/// Keep wire presence separate from the method's Observe semantics.
 #[derive(Default)]
-struct RequestOptions {
+struct RequestOptions<'a> {
+    size1: Option<Result<u32, crate::error::ValueError>>,
+    request_tag: Option<&'a [u8]>,
     block1: Option<BlockValue>,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
-    q_block1: bool,
-    observe: bool,
+    additional_q: crate::message::OptionTail<'a>,
+    q_block1: Option<Result<BlockValue, crate::error::ValueError>>,
+    observe: Option<Result<u32, crate::error::ValueError>>,
+    no_response: Option<NoResponse>,
+    proxy: bool,
+    bad_option: bool,
+    unknown_critical: Option<crate::message::OptionNumber>,
     missing_q1_metadata: bool,
     missing_fetch_format: bool,
     valid_q_selections: bool,
 }
 
-/// None means 4.02 before dispatch: unknown critical, OSCORE without a context,
-/// malformed Block/Q-Block2, or an unsupported option combination.
-fn request_options<K: OwnedToken, const REQUESTS: usize>(
-    parsed: &ParsedMessage<'_, K>,
+fn request_options<'a, K: OwnedToken, const REQUESTS: usize>(
+    parsed: &ParsedMessage<'a, K>,
     oscore: &oscore::Field<REQUESTS, K>,
-) -> Option<RequestOptions> {
+) -> (RequestOptions<'a>, request::RequestUri<'a>) {
     use crate::message::OptionNumber;
     let fetch = parsed.code() == Code::FETCH;
+    let mut uri = request::RequestUri::default();
     let mut result = RequestOptions {
         valid_q_selections: true,
-        ..RequestOptions::default()
+        ..Default::default()
     };
-    let mut tag = false;
     let mut format = false;
-    let mut size1 = None;
     let mut previous_q: Option<BlockValue> = None;
-    let mut repeated_q = false;
     let mut q_start = false;
-    for option in parsed.options() {
+    for (tail, option) in parsed.options().positioned() {
         match option.number() {
+            OptionNumber::URI_PATH | OptionNumber::URI_QUERY => uri.record(tail, option),
+            OptionNumber::PROXY_URI | OptionNumber::PROXY_SCHEME => result.proxy = true,
+            OptionNumber::NO_RESPONSE if result.no_response.is_none() => {
+                result.no_response =
+                    Some(NoResponse::decode(option.value()).unwrap_or(NoResponse::DEFAULT));
+            }
             OptionNumber::REQUEST_TAG => {
-                if tag || option.value().len() > 8 {
-                    return None;
-                }
-                tag = true;
+                result.bad_option |= result.request_tag.is_some() || option.value().len() > 8;
+                result.request_tag.get_or_insert(option.value());
             }
             OptionNumber::CONTENT_FORMAT => {
-                if fetch && (format || option.as_uint16().is_err()) {
-                    return None;
-                }
+                result.bad_option |= fetch && (format || option.as_uint16().is_err());
                 format = true;
             }
-            OptionNumber::SIZE1 if size1.is_none() => size1 = Some(option.as_uint().is_ok()),
-            OptionNumber::OBSERVE => result.observe = true,
-            OptionNumber::OSCORE if !oscore::is_active(oscore) => return None,
+            OptionNumber::SIZE1 if result.size1.is_none() => result.size1 = Some(option.as_uint()),
+            OptionNumber::OBSERVE if result.observe.is_none() => {
+                result.observe = Some(crate::message::decode_observe(option.value()));
+            }
+            OptionNumber::OSCORE => result.bad_option |= !oscore::is_active(oscore),
             OptionNumber::BLOCK1 if result.block1.is_none() => {
-                result.block1 = Some(option.as_block().ok()?)
+                result.block1 = option.as_block().ok();
+                result.bad_option |= result.block1.is_none();
             }
             OptionNumber::BLOCK2 if result.block2.is_none() => {
-                result.block2 = Some(option.as_block().ok()?)
+                result.block2 = option.as_block().ok();
+                result.bad_option |= result.block2.is_none();
             }
             OptionNumber::Q_BLOCK1 => {
-                if result.q_block1 {
-                    return None;
-                }
-                result.q_block1 = true;
+                result.bad_option |= result.q_block1.is_some();
+                result.q_block1.get_or_insert_with(|| option.as_block());
             }
             OptionNumber::Q_BLOCK2 => {
-                let value = option.as_block().ok()?;
-                if value.is_bert() {
-                    return None;
-                }
+                let Ok(value) = option.as_block() else {
+                    result.bad_option = true;
+                    continue;
+                };
+                result.bad_option |= value.is_bert();
                 result.valid_q_selections &= previous_q
                     .is_none_or(|last| value.num() > last.num() && value.szx() == last.szx());
                 previous_q = Some(value);
-                repeated_q |= result.q_block2.is_some();
+                if result.q_block2.is_some() && result.additional_q.is_empty() {
+                    result.additional_q = tail;
+                }
                 result.q_block2.get_or_insert(value);
                 q_start |= value.more()
                     && value.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0;
             }
-            number if number.is_critical() && !number.is_known() => return None,
+            number if number.is_critical() && !number.is_known() => {
+                result.unknown_critical.get_or_insert(number);
+                result.bad_option = true;
+            }
             _ => {}
         }
     }
-    if ((result.block1.is_some() || result.block2.is_some())
-        && (result.q_block1 || result.q_block2.is_some()))
-        || (repeated_q && (result.observe || q_start))
-    {
-        return None;
-    }
-    result.missing_q1_metadata = result.q_block1 && (!tag || size1 != Some(true));
+    result.bad_option |= ((result.block1.is_some() || result.block2.is_some())
+        && (result.q_block1.is_some() || result.q_block2.is_some()))
+        || (!result.additional_q.is_empty() && (result.observe.is_some() || q_start));
+    result.missing_q1_metadata = result.q_block1.is_some()
+        && (result.request_tag.is_none() || !result.size1.is_some_and(|value| value.is_ok()));
     result.missing_fetch_format = fetch && !format;
-    Some(result)
+    (result, uri)
 }
 
 #[cfg(test)]
@@ -3371,14 +3385,25 @@ fn bad_option_request<K: OwnedToken, const REQUESTS: usize>(
     parsed: &ParsedMessage<'_, K>,
     oscore: &oscore::Field<REQUESTS, K>,
 ) -> bool {
-    request_options(parsed, oscore).is_none()
+    request_options(parsed, oscore).0.bad_option
 }
 
-fn mixes_block_and_qblock(parsed: &ParsedMessage<'_, impl OwnedToken>) -> bool {
-    // RFC 9177 §4.1. Same-side Block and Q-Block are 4.02. A mix across
-    // Inner and Outer is not visible on one of these messages.
-    (parsed.block1().is_some() || parsed.block2().is_some())
-        && (parsed.q_block1().is_some() || parsed.q_block2().next().is_some())
+// All Block and Q-Block option numbers follow OSCORE in wire order.
+fn mixes_block_and_qblock(options: crate::message::Options<'_>) -> bool {
+    use crate::message::OptionNumber as N;
+    let (mut classic, mut q) = (false, false);
+    for option in options {
+        match option.number() {
+            N::BLOCK1 | N::BLOCK2 => classic = true,
+            N::Q_BLOCK1 | N::Q_BLOCK2 => q = true,
+            number if number > N::Q_BLOCK2 => break,
+            _ => {}
+        }
+        if classic && q {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -3443,14 +3468,18 @@ where
         }
     };
 
-    let parsed = match crate::message::decode_with_token::<Mem::Token>(&scratch.as_ref()[..n]) {
+    let request = match crate::message::extended::decode(&scratch.as_ref()[..n]) {
+        Ok(packet) => packet,
+        Err(_) => {
+            Metrics::inc(&mut engine.metrics_mut().rx_error);
+            let _ = engine.release_rx(rx);
+            return Ok(());
+        }
+    };
+    let parsed = match request.retain_token::<Mem::Token>() {
         Ok(parsed) => parsed,
-        Err(crate::message::TokenDecodeError::Capacity(_)) => {
-            // The shared decoder validated the complete wire syntax before the
-            // owned token copy failed. Refuse while its original bytes remain
-            // borrowed from this RX scratch; never truncate the identity.
-            let request = crate::message::extended::decode(&scratch.as_ref()[..n])
-                .expect("validated extended token datagram");
+        Err(_) => {
+            // The validated view still borrows the entire original token.
             let protected = request
                 .options()
                 .any(|option| option.number() == crate::message::OptionNumber::OSCORE);
@@ -3463,7 +3492,7 @@ where
                         ids,
                         now_ms,
                         peer,
-                        &scratch.as_ref()[..n],
+                        request,
                         oscore,
                         oscore_checkpoint,
                         checkpoint_commit,
@@ -3483,11 +3512,6 @@ where
             };
             let _ = engine.release_rx(rx);
             return outcome;
-        }
-        Err(crate::message::TokenDecodeError::Malformed(_)) => {
-            Metrics::inc(&mut engine.metrics_mut().rx_error);
-            let _ = engine.release_rx(rx);
-            return Ok(());
         }
     };
 
@@ -3625,7 +3649,11 @@ where
     // Match the Outer routing identity before OSCORE consumes a binding or
     // advances recipient replay/notification state. Inner authentication cannot
     // replace the Call's endpoint and piggybacked-ACK matching rules.
-    let has_oscore = parsed.oscore().is_some();
+    let mut outer_options = parsed.options();
+    let has_oscore = outer_options
+        .by_ref()
+        .take_while(|option| option.number() <= crate::message::OptionNumber::OSCORE)
+        .any(|option| option.number() == crate::message::OptionNumber::OSCORE);
     if oscore::is_active(oscore)
         && has_oscore
         && !parsed.code().is_request()
@@ -3645,7 +3673,7 @@ where
 
     // RFC 9177 §4.1: Block and Q-Block on the Outer side are 4.02 before
     // the ciphertext is treated as a body. Inner options are still sealed.
-    if has_oscore && mixes_block_and_qblock(&parsed) {
+    if has_oscore && mixes_block_and_qblock(outer_options) {
         // Plaintext 4.02: the ciphertext is not a request this response can
         // protect, and the outer options are already not one body.
         let outcome = send_empty(
@@ -3662,7 +3690,7 @@ where
     // The retained RX packet supplies ciphertext while dispatch scratch is
     // reused for plaintext. No second profile-sized buffer spans a send.
     #[cfg(feature = "oscore")]
-    let (parsed, oscore_req, response_state) = if has_oscore {
+    let (parsed, oscore_req, response_state, plaintext) = if has_oscore {
         let layout = parsed.layout(n);
         let before = oscore
             .context(peer.association())
@@ -3686,8 +3714,13 @@ where
         }
         match opened {
             Ok(Some((inner, wire, request, state))) => {
-                write_unprotected_rx(engine, rx, wire, peer)?;
-                (inner, Some(request), state)
+                let plaintext = if inner.code().is_request() {
+                    admit_plaintext_rx(engine, rx, wire, peer, n, false)?;
+                    None
+                } else {
+                    Some((wire, n))
+                };
+                (inner, Some(request), state, plaintext)
             }
             Ok(None) => (
                 layout
@@ -3695,6 +3728,7 @@ where
                     .expect("unchanged RX length"),
                 oscore::no_request(),
                 oscore::ResponseState::None,
+                None,
             ),
             Err(_) => {
                 // Protected processing failures are silent, including response
@@ -3717,27 +3751,29 @@ where
             let _ = engine.release_rx(rx);
             return outcome;
         }
-        (parsed, oscore::no_request(), oscore::ResponseState::None)
+        (
+            parsed,
+            oscore::no_request(),
+            oscore::ResponseState::None,
+            None,
+        )
     };
     #[cfg(not(feature = "oscore"))]
-    let (parsed, oscore_req, response_state) = {
+    let (parsed, oscore_req, response_state, plaintext) = {
         if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
             let _ = engine.release_rx(rx);
             return Err(error);
         }
-        (parsed, oscore::no_request(), oscore::ResponseState::None)
+        (
+            parsed,
+            oscore::no_request(),
+            oscore::ResponseState::None,
+            None,
+        )
     };
 
     if !parsed.code().is_request() {
-        let cache_ack = parsed.ty() == Type::Confirmable
-            && parsed.unknown_critical().is_none()
-            && lives.observe_format_admissible(
-                Call::new(parsed.token(), peer),
-                &parsed,
-                now_ms,
-                oscore::is_active(oscore),
-            )
-            && client::has_response_target(engine, &parsed, peer);
+        let mut cache_ack = false;
         #[cfg(feature = "oscore")]
         let before = oscore
             .context(peer.association())
@@ -3754,7 +3790,9 @@ where
             now_ms,
             peer,
             &parsed,
+            plaintext,
             rx,
+            &mut cache_ack,
         );
         #[cfg(feature = "oscore")]
         if before
@@ -3779,10 +3817,11 @@ where
         return outcome;
     }
 
-    let no_response = NoResponse::from_message(&parsed).unwrap_or(NoResponse::DEFAULT);
+    let (options, uri) = request_options(&parsed, oscore);
+    let no_response = options.no_response.unwrap_or(NoResponse::DEFAULT);
     // Origin: Proxy-Uri / Proxy-Scheme MUST 5.05 (RFC 7252 §5.10.2).
     // Before the site so a missing Uri-Path is not 4.04.
-    if parsed.proxy_uri().is_some() || parsed.proxy_scheme().is_some() {
+    if options.proxy {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
@@ -3812,7 +3851,7 @@ where
     // Known-stack critical check and OSCORE-without-context run here,
     // before Site::dispatch. `knowledge/rfcs/rfc7252.txt` §5.4.1;
     // `knowledge/rfcs/rfc8613.txt` §8.2 (option 9 with no context).
-    let Some(options) = request_options(&parsed, oscore) else {
+    if options.bad_option {
         let meta = SendResponse {
             dest: peer,
             ty: parsed.ty(),
@@ -3827,7 +3866,7 @@ where
             request: parsed.code(),
         };
         let mut response = Response::problem(Code::BAD_OPTION).title("Bad Option");
-        if let Some(number) = parsed.unknown_critical() {
+        if let Some(number) = options.unknown_critical {
             // A single u16 option fits the fixed problem payload. Preserve a
             // valid 4.02 fallback if the compact encoder's limits ever change.
             response = response
@@ -3846,7 +3885,11 @@ where
         );
         let _ = engine.release_rx(rx);
         return outcome;
-    };
+    }
+    let q_request = options.q_block2.map(|first| QBlock2Request {
+        first,
+        additional: options.additional_q,
+    });
     let block2 = options.block2;
     let q_block2 = options.q_block2;
     let block1 = options.block1.map(|value| BlockOpt {
@@ -3862,7 +3905,7 @@ where
         no_response,
         block2,
         q_block2,
-        q_request: q_block2.map(|_| QBlock2Request(parsed.options_bytes())),
+        q_request: q_request.as_ref(),
         block1,
         oscore: oscore_req,
         request: parsed.code(),
@@ -3892,7 +3935,8 @@ where
         return outcome;
     }
 
-    if admission::refuse_new_request(engine, &parsed, peer) {
+    let admission = admission::admit_request(engine, &parsed, peer, &options);
+    if matches!(admission, admission::RequestAdmission::Refused) {
         let outcome = admission::send_refusal(
             engine,
             io,
@@ -3938,15 +3982,7 @@ where
         }
     }
 
-    let assembled = assemble_inbound_body(
-        engine,
-        rx,
-        now_ms,
-        &parsed,
-        oscore_req,
-        options.block1.is_some(),
-        options.q_block1,
-    );
+    let assembled = assemble_inbound_body(engine, peer, now_ms, &parsed, oscore_req, &options);
     let body_owner = async_server::BodyOwner::incoming(
         engine,
         match assembled {
@@ -4042,25 +4078,20 @@ where
     }
 
     // Follow-up blocks belong to the retained selection, not merely its Token.
-    if (block2.is_some() || q_block2.is_some()) && !options.observe {
-        let selection = engine
+    if (block2.is_some() || q_block2.is_some()) && options.observe.is_none() {
+        let mismatch = engine
             .lookup_observe(ObserveKey::new(parsed.token(), peer))
             .and_then(|id| engine.observe_interest(id))
-            .and_then(|row| row.selection().copied());
-        if selection.is_some_and(|expected| {
-            DeferredSelection::from_parts(
-                &parsed,
-                match assembled {
-                    InboundBody::Complete(id) => {
-                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                    }
-                    _ => parsed.payload(),
-                },
-            )
-            .ok()
-            .map(DeferredSelection::stored)
-                != Some(expected)
-        }) {
+            .is_some_and(|row| {
+                row.selection().is_some_and(|expected| {
+                    !DeferredSelection::matches_encoded(
+                        expected.bytes.get(..usize::from(expected.len)),
+                        &parsed,
+                        assembled.payload(engine, parsed.payload()),
+                    )
+                })
+            });
+        if mismatch {
             let outcome = send_response(
                 engine,
                 io,
@@ -4087,101 +4118,94 @@ where
     // A terminal notification has no observer row, but its body still owns the
     // exact selection and response metadata until the last requested block.
     if (meta.block2.is_some() || meta.q_block2.is_some())
-        && !options.observe
-        && let Some(body) = response_body_for(engine, BlockKey::new(meta.token, peer))
-    {
-        let transfer = engine.tx_body_transfer(body).expect("located body");
-        if let (Some(expected), Some((code, format, age))) = (
+        && options.observe.is_none()
+        && let Some((body, transfer)) =
+            response_transfer_for(engine, BlockKey::new(meta.token, peer))
+        && let (Some(expected), Some((code, format, age))) = (
             transfer.observe_selection(),
             transfer.notification_metadata(),
-        ) {
-            let actual = DeferredSelection::from_parts(
-                &parsed,
-                match assembled {
-                    InboundBody::Complete(id) => {
-                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                    }
-                    _ => parsed.payload(),
+        )
+    {
+        let matches = DeferredSelection::matches_encoded(
+            expected.bytes.get(..usize::from(expected.len)),
+            &parsed,
+            assembled.payload(engine, parsed.payload()),
+        );
+        let outcome = if !matches {
+            send_response(
+                engine,
+                io,
+                ids,
+                SendResponse {
+                    block2: None,
+                    q_block2: None,
+                    q_request: None,
+                    ..meta
                 },
+                &Response::bad_request(),
+                now_ms,
+                oscore,
+                dedup_closed,
             )
-            .ok()
-            .map(DeferredSelection::stored);
-            let outcome = if actual != Some(expected) {
-                send_response(
+        } else {
+            let response = Response::new(code)
+                .retain_format(format)
+                .retain_max_age(age);
+            let response = match transfer.identity().as_slice() {
+                Some(tag) => response.etag(tag),
+                None => response,
+            };
+            let ty = if meta.ty == Type::Confirmable {
+                Type::Acknowledgement
+            } else {
+                Type::NonConfirmable
+            };
+            let mid = if ty == Type::Acknowledgement {
+                meta.mid
+            } else {
+                ids.next_for(engine, io, now_ms)?
+            };
+            if meta.q_block2.is_some() && transfer.q_observe_sequence().is_some() {
+                issue_q_observe_followup(
                     engine,
                     io,
                     ids,
-                    SendResponse {
-                        block2: None,
-                        q_block2: None,
-                        q_request: None,
-                        ..meta
-                    },
-                    &Response::bad_request(),
                     now_ms,
+                    SendResponse { mid, ..meta },
+                    &response,
+                    ty,
+                    body,
                     oscore,
                     dedup_closed,
                 )
             } else {
-                let response = Response::new(code)
-                    .retain_format(format)
-                    .retain_max_age(age);
-                let response = match transfer.identity().as_slice() {
-                    Some(tag) => response.etag(tag),
-                    None => response,
-                };
-                let ty = if meta.ty == Type::Confirmable {
-                    Type::Acknowledgement
-                } else {
-                    Type::NonConfirmable
-                };
-                let mid = if ty == Type::Acknowledgement {
-                    meta.mid
-                } else {
-                    ids.next_for(engine, io, now_ms)?
-                };
-                if meta.q_block2.is_some() && transfer.q_observe_sequence().is_some() {
-                    issue_q_observe_followup(
-                        engine,
-                        io,
-                        ids,
-                        now_ms,
-                        SendResponse { mid, ..meta },
-                        &response,
-                        ty,
-                        body,
-                        oscore,
-                        dedup_closed,
-                    )
-                } else {
-                    issue_classic(
-                        engine,
-                        io,
-                        &meta,
-                        &response,
-                        ty,
-                        mid,
-                        body,
-                        None,
-                        true,
-                        Some((now_ms, dedup_closed)),
-                        oscore,
-                    )
-                }
-            };
-            if outcome.is_ok()
-                && engine.tx_body_transfer(body).is_some_and(|current| {
-                    current.q_observe_last_mid() != transfer.q_observe_last_mid()
-                })
-            {
-                record_q_observe_sent(engine, BlockKey::new(meta.token, peer), now_ms);
+                issue_classic(
+                    engine,
+                    io,
+                    &meta,
+                    &response,
+                    ty,
+                    mid,
+                    body,
+                    None,
+                    true,
+                    Some((now_ms, dedup_closed)),
+                    oscore,
+                )
             }
-            if let InboundBody::Complete(id) = assembled {
-                let _ = engine.release_rx_body(id);
-            }
-            let _ = engine.release_rx(rx);
-            return outcome;
+        };
+        if outcome.is_ok()
+            && engine.tx_body_transfer(body).is_some_and(|current| {
+                current.q_observe_last_mid() != transfer.q_observe_last_mid()
+            })
+        {
+            record_q_observe_sent(engine, BlockKey::new(meta.token, peer), now_ms);
         }
+        if let InboundBody::Complete(id) = assembled {
+            let _ = engine.release_rx_body(id);
+        }
+        let _ = engine.release_rx(rx);
+        return outcome;
     }
 
     // Deferred responses own a stable bounded TX snapshot. Authenticated
@@ -4192,7 +4216,7 @@ where
                 row.completed
                     && row.meta.token == meta.token
                     && row.meta.dest == peer
-                    && (row.observe.is_none() || !options.observe)
+                    && (row.observe.is_none() || options.observe.is_none())
             })
         })
     {
@@ -4202,15 +4226,10 @@ where
         let (body, retained, admissible) = {
             let row = deferred.rows[index].as_ref().expect("matched snapshot");
             let (body, retained) = row.snapshot.as_ref().expect("completed snapshot");
-            let admissible = row.selection.matches_parts(
-                &parsed,
-                match assembled {
-                    InboundBody::Complete(id) => {
-                        engine.rx_body_payload(id).unwrap_or(parsed.payload())
-                    }
-                    _ => parsed.payload(),
-                },
-            ) && (parsed.code() == Code::FETCH || parsed.payload().is_empty())
+            let admissible = row
+                .selection
+                .matches_parts(&parsed, assembled.payload(engine, parsed.payload()))
+                && (parsed.code() == Code::FETCH || parsed.payload().is_empty())
                 && row.meta.q_block2.is_some() == meta.q_block2.is_some()
                 && (row.observe.is_none()
                     || meta
@@ -4312,12 +4331,21 @@ where
     }
 
     // Validate the path once, without borrowing body storage across mutations.
-    let request = Request::from_decoded(parsed, peer, None);
-    // Continuations may use control headroom; their handler still needs capacity.
-    if admission::refuse_dispatch(engine) {
+    let observe_action = matches!(parsed.code(), Code::GET | Code::FETCH)
+        .then_some(options.observe)
+        .flatten()
+        .and_then(Result::ok);
+    let has_query = uri.has_query();
+    let request = Request::from_uri(parsed, peer, None, uri);
+    // Body assembly changes body slots only. Packet headroom proven on entry
+    // still holds here. A continuation admitted under pressure needs a fresh
+    // representation only if it reaches the handler.
+    if matches!(admission, admission::RequestAdmission::Continuation)
+        && admission::refuse_dispatch(engine)
+    {
         // Authenticated cancellation can release its relation under pressure,
         // even when the accompanying fresh representation cannot be admitted.
-        let cancel = request.as_ref().is_ok_and(Request::is_observe_deregister);
+        let cancel = request.is_ok() && observe_action == Some(1);
         if cancel {
             let key = ObserveKey::new(parsed.token(), peer);
             let cleanup = (|| -> Result<(), crate::storage::SlotError> {
@@ -4363,11 +4391,18 @@ where
 
     let mut selection = RequestSelection::default();
     let request_plan = request.as_ref().ok().map(|request| {
-        let selection_supported = request.is_observe_register()
+        let selection_supported = observe_action == Some(0)
             && selection
                 .get_or_encode(engine, &parsed, assembled)
                 .is_some();
-        ObservePlan::from_request(site, request, selection_supported)
+        ObservePlan::from_request(
+            site,
+            request,
+            &options,
+            observe_action,
+            has_query,
+            selection_supported,
+        )
     });
     // RFC 7959 section 2.6 observes the entire resource and starts every
     // notification at its first block. NUM is not an observed subresource.
@@ -4417,20 +4452,15 @@ where
     let can_defer = DEFERRED != 0
         && dispatch.is_some()
         && deferred_lifetime_ms != 0
-        && (!options.observe || deferred_observe.is_some());
+        && (options.observe.is_none() || deferred_observe.is_some());
     let selection_supported = can_defer
         && selection
             .get_or_encode(engine, &parsed, assembled)
             .is_some();
-    let q_selectors = can_defer
-        .then(|| DeferredQSelectors::from_request(&parsed))
+    let q_selectors = selection_supported
+        .then(|| DeferredQSelectors::from_request(meta.q_request))
         .flatten();
-    let deferred_handle = if selection_supported
-        && dispatch.is_some()
-        && deferred_lifetime_ms != 0
-        && (!options.observe || deferred_observe.is_some())
-        && q_selectors.is_some()
-    {
+    let deferred_candidate = if selection_supported && q_selectors.is_some() {
         match deferred.candidate(ids, io) {
             Ok(handle) => handle,
             Err(error) => {
@@ -4467,7 +4497,9 @@ where
                     .with_association(oscore.association(peer))
                     .with_retained_if_none_match(retained);
                 match dispatch {
-                    Some(dispatch) => dispatch(request, deferred_handle),
+                    Some(dispatch) => {
+                        dispatch(request, deferred_candidate.map(|(_, handle)| handle))
+                    }
                     None => site.dispatch_with_catalog(request, || {
                         catalog
                             .get_or_insert_with(site::LinkFormatScratch::<N>::new)
@@ -4486,11 +4518,11 @@ where
         }
     };
     if response.is_deferred() {
-        let outcome = if let Some(handle) = deferred_handle {
+        let outcome = if let Some(candidate) = deferred_candidate {
             // Record before sending ACK: a failed send cannot cause durable work
             // to be dispatched twice when the request is retransmitted.
             deferred.insert(
-                handle,
+                candidate,
                 SendResponse {
                     dest: meta.dest,
                     ty: meta.ty,
@@ -4644,9 +4676,12 @@ impl<K: OwnedToken> ObservePlan<K> {
     fn from_request<const N: usize>(
         site: &Site<N, K>,
         request: &Request<'_, K>,
+        options: &RequestOptions<'_>,
+        observe_action: Option<u32>,
+        has_query: bool,
         selection_supported: bool,
     ) -> Self {
-        if request.message().observe().is_none() && request.method() != Some(Method::Delete) {
+        if options.observe.is_none() && request.method() != Some(Method::Delete) {
             return Self {
                 token: request.token(),
                 ..Self::idle()
@@ -4656,38 +4691,19 @@ impl<K: OwnedToken> ObservePlan<K> {
         let source = site.observe_source(resource);
         let selected = matches!(source, Some(routing::SnapshotSource::Selected(_)));
         Self {
-            register: request.is_observe_register(),
-            no_response: NoResponse::from_message(&request.message())
-                .unwrap_or(NoResponse::DEFAULT),
+            register: observe_action == Some(0),
+            no_response: options.no_response.unwrap_or(NoResponse::DEFAULT),
+            // Classic notifications start at NUM0. Q registration can select an initial range.
             registration_supported: selection_supported
-                // RFC 7641 section 4.1 permits ordinary-response fallback.
-                // Classic notifications begin at NUM0. Q registration may
-                // select an initial range; later epochs still represent the
-                // complete resource, not a separately observed block.
-                && request.message().block2().is_none_or(|block| {
-                    block.is_ok_and(|b| !b.is_bert())
-                })
-                && request.message().q_block2().next().is_none_or(|block| {
-                    block.is_ok_and(|b| !b.is_bert())
-                })
-                && (selected
-                    || (request.method() == Some(Method::Get)
-                        && request.uri_query().next().is_none())),
-            block2_max_szx: request
-                .get_option(crate::message::OptionNumber::BLOCK2)
-                .and_then(|o| o.as_block().ok())
+                && options.block2.is_none_or(|b| !b.is_bert())
+                && (selected || (request.method() == Some(Method::Get) && !has_query)),
+            block2_max_szx: options
+                .block2
+                .or(options.q_block2)
                 .filter(|b| !b.is_bert())
-                .map(|b| b.szx())
-                .or_else(|| {
-                    request
-                        .message()
-                        .q_block2()
-                        .next()
-                        .and_then(Result::ok)
-                        .map(|b| b.szx())
-                }),
-            q_block2: request.message().q_block2().next().is_some(),
-            deregister: request.is_observe_deregister(),
+                .map(|b| b.szx()),
+            q_block2: options.q_block2.is_some(),
+            deregister: observe_action == Some(1),
             delete: request.method() == Some(Method::Delete),
             has_source: source.is_some(),
             token: request.token(),
@@ -5115,27 +5131,28 @@ where
     let mut sent = 0usize;
     for i in 0..n {
         let id = SlotId::from_index(i);
-        let Some(interest) = engine.observe_interest(id) else {
+        let Some(endpoint) = engine
+            .with_observe_interest(id, |row| {
+                (!row.key().is_client()
+                    && row.resource() == resource
+                    && !deferred.blocks_observe(row.key()))
+                .then(|| row.endpoint())
+            })
+            .flatten()
+        else {
             continue;
         };
-        if interest.key().is_client()
-            || interest.resource() != resource
-            || deferred.blocks_observe(interest.key())
-        {
-            continue;
-        }
-        if held.count(engine, interest.endpoint(), now_ms)
-            >= usize::from(crate::message::Transmission::NSTART)
-        {
+        if held.contains(engine, endpoint, now_ms) {
             Metrics::inc(&mut engine.metrics_mut().nstart_reject);
             continue;
         }
-        let Some(seq) = engine.next_observe_seq_with_confirmation(id, confirmable) else {
+        let Some(Some(interest)) = engine
+            .storage_mut()
+            .update_observe_interest(id, |row| row.assign_sequence(confirmable).map(|_| *row))
+        else {
             continue;
         };
-        let Some(interest) = engine.observe_interest(id) else {
-            continue;
-        };
+        let seq = interest.seq();
         let dest = interest.endpoint();
         match send_notification(engine, io, ids, oscore, now_ms, interest, response, seq) {
             Ok(true) => {
@@ -5152,17 +5169,11 @@ where
     Ok(sent)
 }
 
-/// Per-endpoint notification NSTART counts for one [`notify_engine`] pass.
-///
-/// Bounded scans of Observe and pending-CON tables, including terminal
-/// delivery whose observer row is already removed, without double-counting.
-/// Shipped profiles have ≤4 observe entries; the table covers 8 unique
-/// endpoints and falls back to a full scan if that overflows (alloc backend).
+/// Physical endpoints using their single NSTART credit during a notification pass.
 const NOTIFY_HELD_CACHE: usize = 8;
 
 struct NotifyHeldCache {
     endpoints: [Option<Endpoint>; NOTIFY_HELD_CACHE],
-    held: [u8; NOTIFY_HELD_CACHE],
     overflow: bool,
 }
 
@@ -5173,22 +5184,19 @@ impl NotifyHeldCache {
     ) -> Self {
         let mut cache = Self {
             endpoints: [None; NOTIFY_HELD_CACHE],
-            held: [0; NOTIFY_HELD_CACHE],
             overflow: false,
         };
-        let n = engine.capacities().observe_entries;
-        for i in 0..n {
-            let Some(row) = engine.observe_interest(SlotId::from_index(i)) else {
-                continue;
-            };
-            if !row.key().is_client() && row.is_notify_held(now_ms) {
-                cache.add(row.endpoint());
+        for index in 0..engine.capacities().observe_entries {
+            if let Some(Some(endpoint)) =
+                engine.with_observe_interest(SlotId::from_index(index), |row| {
+                    (!row.key().is_client() && row.is_notify_held(now_ms)).then(|| row.endpoint())
+                })
+            {
+                cache.add(endpoint);
             }
         }
-        for i in 0..engine.capacities().tx_datagram_slots {
-            if let Some(pending) = engine.pending_con(SlotId::from_index(i))
-                && !pending_has_observe_hold(engine, pending, now_ms)
-            {
+        for index in 0..engine.capacities().tx_datagram_slots {
+            if let Some(pending) = engine.pending_con(SlotId::from_index(index)) {
                 cache.add(pending.endpoint());
             }
         }
@@ -5196,88 +5204,77 @@ impl NotifyHeldCache {
     }
 
     fn add(&mut self, endpoint: Endpoint) {
-        let endpoint = endpoint.physical();
-        if let Some(i) = self.index(endpoint) {
-            self.held[i] = self.held[i].saturating_add(1);
-            return;
-        }
-        if let Some(i) = self.endpoints.iter().position(Option::is_none) {
-            self.endpoints[i] = Some(endpoint);
-            self.held[i] = 1;
-            return;
+        let physical = Some(endpoint.physical());
+        for slot in &mut self.endpoints {
+            if *slot == physical {
+                return;
+            }
+            if slot.is_none() {
+                *slot = physical;
+                return;
+            }
         }
         self.overflow = true;
     }
 
-    fn index(&self, endpoint: Endpoint) -> Option<usize> {
-        let endpoint = endpoint.physical();
-        self.endpoints.iter().position(|row| *row == Some(endpoint))
-    }
-
-    fn count<S: Storage + ObserveSlots + PendingCons>(
+    fn contains<S: Storage + ObserveSlots + PendingCons>(
         &self,
         engine: &Engine<S>,
         endpoint: Endpoint,
         now_ms: u64,
-    ) -> usize {
-        if let Some(i) = self.index(endpoint) {
-            return usize::from(self.held[i]);
-        }
-        if self.overflow {
-            return observe_endpoint_held(engine, endpoint, now_ms);
-        }
-        0
+    ) -> bool {
+        self.endpoints.contains(&Some(endpoint.physical()))
+            || (self.overflow && observe_endpoint_held(engine, endpoint, now_ms))
     }
+}
+
+// A held CON wakes through its own protocol timer or ACK. Keep only future
+// NON deadlines; a stale NON hold may coexist with a live unacked lifetime.
+fn notification_wakeup<S: Storage + ObserveSlots + PendingCons>(
+    engine: &Engine<S>,
+    endpoint: Endpoint,
+    now_ms: u64,
+) -> Option<u64> {
+    let physical = endpoint.physical();
+    let mut held = false;
+    let mut next = None;
+    for index in 0..engine.capacities().observe_entries {
+        if let Some(Some(hold)) = engine.with_observe_interest(SlotId::from_index(index), |row| {
+            (!row.key().is_client()
+                && row.endpoint().physical() == physical
+                && row.is_notify_held(now_ms))
+            .then(|| row.notify_hold())
+        }) {
+            held = true;
+            if let Some(crate::storage::ObserveNotifyHold::Non { until_ms, .. }) = hold
+                && until_ms > now_ms
+            {
+                next = Some(next.map_or(until_ms, |old: u64| old.min(until_ms)));
+            }
+        }
+    }
+    if held || pending_endpoint_held(engine, physical) {
+        next
+    } else {
+        Some(now_ms)
+    }
+}
+
+fn pending_endpoint_held<S: Storage + PendingCons>(engine: &Engine<S>, physical: Endpoint) -> bool {
+    (0..engine.capacities().tx_datagram_slots).any(|i| {
+        engine
+            .pending_con(SlotId::from_index(i))
+            .is_some_and(|pending| pending.endpoint().physical() == physical)
+    })
 }
 
 fn observe_endpoint_held<S: Storage + ObserveSlots + PendingCons>(
     engine: &Engine<S>,
     endpoint: Endpoint,
     now_ms: u64,
-) -> usize {
-    let n = engine.capacities().observe_entries;
-    let interests = (0..n)
-        .filter(|&i| {
-            engine
-                .observe_interest(SlotId::from_index(i))
-                .is_some_and(|row| {
-                    !row.key().is_client()
-                        && row.endpoint().physical() == endpoint.physical()
-                        && row.is_notify_held(now_ms)
-                })
-        })
-        .count();
-    interests
-        + (0..engine.capacities().tx_datagram_slots)
-            .filter(|&i| {
-                engine
-                    .pending_con(SlotId::from_index(i))
-                    .is_some_and(|pending| {
-                        pending.endpoint().physical() == endpoint.physical()
-                            && !pending_has_observe_hold(engine, pending, now_ms)
-                    })
-            })
-            .count()
-}
-
-fn pending_has_observe_hold<S: Storage + ObserveSlots>(
-    engine: &Engine<S>,
-    pending: crate::storage::PendingCon,
-    now_ms: u64,
 ) -> bool {
-    (0..engine.capacities().observe_entries).any(|i| {
-        engine
-            .observe_interest(SlotId::from_index(i))
-            .is_some_and(|row| {
-                !row.key().is_client()
-                    && row.endpoint() == pending.endpoint()
-                    && row.is_notify_held(now_ms)
-                    && (row.notify_hold().and_then(|hold| hold.con_mid())
-                        == Some(pending.message_id())
-                        || row.lifetime().and_then(|life| life.con_mid())
-                            == Some(pending.message_id()))
-            })
-    })
+    engine.observe_endpoint_held(endpoint, now_ms)
+        || pending_endpoint_held(engine, endpoint.physical())
 }
 
 // Empty control messages carry no protected recipient ID or Token. Resolve
@@ -5640,14 +5637,7 @@ where
         );
     }
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = response_body_for(engine, key)
-        && engine.tx_body_transfer(id).is_some_and(|t| {
-            matches!(
-                t.role(),
-                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
-            )
-        })
-    {
+    if let Some(body) = ResponseContinuation::find(engine, key) {
         let ty = match meta.ty {
             Type::Confirmable if acknowledged => Type::Confirmable,
             Type::Confirmable => Type::Acknowledgement,
@@ -5666,7 +5656,7 @@ where
             meta,
             response,
             ty,
-            id,
+            body,
             oscore_ctx,
             dedup_closed,
         );
@@ -5824,14 +5814,8 @@ where
     }
 
     let key = BlockKey::new(meta.token, meta.dest);
-    if let Some(id) = response_body_for(engine, key)
-        .filter(|_| response.code().is_success() && response.code() != Code::CONTINUE)
-        && engine.tx_body_transfer(id).is_some_and(|t| {
-            matches!(
-                t.role(),
-                BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
-            )
-        })
+    if response.code().is_success()
+        && let Some(body) = ResponseContinuation::find(engine, key)
     {
         return continue_outgoing(
             engine,
@@ -5841,7 +5825,7 @@ where
             meta,
             response,
             ty,
-            id,
+            body,
             oscore_ctx,
             dedup_closed,
         );
@@ -6017,10 +6001,26 @@ fn release_observe_response_body<S: Storage + BodySlots>(
 }
 
 fn response_body_for<S: Storage + BodySlots>(
-    engine: &Engine<S>,
+    engine: &mut Engine<S>,
     key: BlockKey<S::Token>,
 ) -> Option<SlotId> {
-    (0..engine.capacities().tx_body_slots.unwrap_or(0)).find_map(|index| {
+    response_transfer_for(engine, key).map(|(id, _)| id)
+}
+
+fn tx_body_slots_to_scan<S: Storage>(engine: &mut Engine<S>) -> core::ops::Range<usize> {
+    let count = engine
+        .storage_mut()
+        .tx_body()
+        .filter(|pool| !pool.is_empty())
+        .map_or(0, |pool| pool.slot_count());
+    0..count
+}
+
+fn response_transfer_for<S: Storage + BodySlots>(
+    engine: &mut Engine<S>,
+    key: BlockKey<S::Token>,
+) -> Option<(SlotId, crate::storage::BlockTransfer<S::Token>)> {
+    tx_body_slots_to_scan(engine).find_map(|index| {
         let id = SlotId::from_index(index);
         let transfer = engine.tx_body_transfer(id)?;
         (transfer.token() == key.token()
@@ -6029,7 +6029,7 @@ fn response_body_for<S: Storage + BodySlots>(
                 transfer.role(),
                 BlockRole::OutgoingBlock2 | BlockRole::OutgoingQBlock2
             ))
-        .then_some(id)
+        .then_some((id, transfer))
     })
 }
 
@@ -6038,8 +6038,7 @@ fn retain_q_observe_selection<S: Storage + BodySlots>(
     key: BlockKey<S::Token>,
     selection: impl FnOnce(&Engine<S>) -> Option<crate::storage::ObserveSelection>,
 ) -> Result<(), crate::storage::SlotError> {
-    if let Some(id) = response_body_for(engine, key)
-        && let Some(mut transfer) = engine.tx_body_transfer(id)
+    if let Some((id, mut transfer)) = response_transfer_for(engine, key)
         && transfer.q_observe_sequence().is_some()
     {
         transfer.retain_observe_selection(selection(engine));
@@ -6053,8 +6052,7 @@ fn record_q_observe_sent<S: Storage + BodySlots + ObserveSlots>(
     key: BlockKey<S::Token>,
     now_ms: u64,
 ) {
-    if let Some(body) = response_body_for(engine, key)
-        && let Some(transfer) = engine.tx_body_transfer(body)
+    if let Some((_, transfer)) = response_transfer_for(engine, key)
         && let Some(mid) = transfer.q_observe_last_mid()
     {
         let _ = engine.record_observe_notify(
@@ -6094,9 +6092,7 @@ where
                 // NUM is expressed in the requested SZX. A selective offset
                 // cannot be silently reinterpreted after size negotiation.
                 if meta.q_block2.is_some_and(|q| q.num() != 0)
-                    || meta.q_request.is_some_and(|request| {
-                        request.q_block2().any(|q| q.is_ok_and(|q| q.num() != 0))
-                    })
+                    || meta.q_request.is_some_and(|request| request.repeated())
                 {
                     return Err(Error::Message(SlotMessageError::Encode(
                         EncodeError::BufferTooSmall,
@@ -6151,9 +6147,7 @@ where
         && q.more()
         && q.num() != 0
         && q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS) == 0
-        && meta
-            .q_request
-            .is_none_or(|request| request.q_block2().nth(1).is_none());
+        && meta.q_request.is_none_or(|request| !request.repeated());
     let response = if continuation && response.code().is_success() {
         response
             .without_observe()
@@ -6190,9 +6184,7 @@ where
         }
         let mut retained = transfer;
         let selection = if let Some(request) = meta.q_request {
-            retained.select_q_observe_recovery(
-                request.q_block2().map(|q| q.expect("validated ingress")),
-            )
+            retained.select_q_observe_recovery(request.values())
         } else {
             retained.select_q_observe_recovery(core::iter::once(q))
         };
@@ -6349,9 +6341,7 @@ where
         engine.release_tx(tx)?;
     }
     let selective = meta.q_block2.is_some_and(|q| !q.more() || q.num() != 0)
-        || meta
-            .q_request
-            .is_some_and(|p| p.q_block2().nth(1).is_some());
+        || meta.q_request.is_some_and(QBlock2Request::repeated);
     let outcome = if selective {
         issue_q_selection(
             engine,
@@ -6564,6 +6554,8 @@ fn retained_body_matches<S: Storage + BodySlots>(
 ) -> bool {
     let body = engine.tx_body_payload(id);
     let same_storage = body.is_some_and(|body| core::ptr::eq(body, payload));
+    // Equal slice addresses include length. Other storage requires exact bytes.
+    let matches = same_storage || body == Some(payload);
     #[cfg(feature = "diagnostics")]
     {
         let candidates = body
@@ -6573,9 +6565,33 @@ fn retained_body_matches<S: Storage + BodySlots>(
         crate::storage::WorkMetrics::add(&mut work.body_compare_calls, 1);
         crate::storage::WorkMetrics::add(&mut work.body_compare_candidate_bytes, candidates);
     }
-    // Equal slice addresses include length. Different storage still requires
-    // exact bytes: an ETag alone cannot establish immutable body identity.
-    same_storage || engine.tx_body_payload(id) == Some(payload)
+    matches
+}
+
+/// Keep only these fields from the selected body slot across a transport await.
+struct ResponseContinuation {
+    id: SlotId,
+    identity: crate::storage::BodyTag,
+    q_window: Option<(u32, u8)>,
+    notification: Option<(Option<ContentFormat>, Option<u32>)>,
+}
+
+impl ResponseContinuation {
+    fn find<S: Storage + BodySlots>(
+        engine: &mut Engine<S>,
+        key: BlockKey<S::Token>,
+    ) -> Option<Self> {
+        let (id, transfer) = response_transfer_for(engine, key)?;
+        Some(Self {
+            id,
+            identity: transfer.identity(),
+            q_window: (transfer.role() == BlockRole::OutgoingQBlock2)
+                .then(|| (transfer.window_base(), transfer.szx())),
+            notification: transfer
+                .notification_metadata()
+                .map(|(_, format, age)| (format, age)),
+        })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6588,7 +6604,7 @@ fn continue_outgoing<S, T, const REQUESTS: usize>(
     meta: SendResponse<'_, S::Token>,
     response: &Response<'_, S::Token>,
     ty: Type,
-    id: SlotId,
+    body: ResponseContinuation,
     oscore_ctx: &mut oscore::Field<REQUESTS, S::Token>,
     dedup_closed: &mut Option<DedupClosed>,
 ) -> Result<(), Error<T::Error>>
@@ -6596,21 +6612,15 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let role = engine
-        .tx_body_transfer(id)
-        .map(|t| t.role())
-        .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
-    match role {
-        BlockRole::OutgoingQBlock2 => {
-            let transfer = engine
-                .tx_body_transfer(id)
-                .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
-            if transfer.identity().as_slice() != response.etag_bytes()
-                || !retained_body_matches(engine, id, response.payload())
-            {
-                return Err(Error::Block(BlockTransferError::IdentityMismatch));
-            }
-            if meta.q_block2.is_some_and(|q| q.szx() != transfer.szx()) {
+    let id = body.id;
+    if body.identity.as_slice() != response.etag_bytes()
+        || !retained_body_matches(engine, id, response.payload())
+    {
+        return Err(Error::Block(BlockTransferError::IdentityMismatch));
+    }
+    match body.q_window {
+        Some((window_base, szx)) => {
+            if meta.q_block2.is_some_and(|q| q.szx() != szx) {
                 return Err(Error::Block(BlockTransferError::SzxMismatch));
             }
             match meta.q_block2 {
@@ -6619,10 +6629,10 @@ where
                         // NUM=0 requests the body, never acknowledges a set.
                         // Repeated Continue requests reselect an already issued
                         // set without acknowledging or advancing it again.
-                        || q.num() <= transfer.window_base()
+                        || q.num() <= window_base
                         || meta
                             .q_request
-                            .is_some_and(|p| p.q_block2().nth(1).is_some())
+                            .is_some_and(QBlock2Request::repeated)
                         || q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
                             != 0 =>
                 {
@@ -6668,19 +6678,9 @@ where
                 ),
             }
         }
-        BlockRole::OutgoingBlock2 => {
-            let transfer = engine
-                .tx_body_transfer(id)
-                .ok_or(Error::Block(BlockTransferError::NoTransfer))?;
-            if transfer.identity().as_slice() != response.etag_bytes()
-                || !retained_body_matches(engine, id, response.payload())
-            {
-                return Err(Error::Block(BlockTransferError::IdentityMismatch));
-            }
-            let retained = match transfer.notification_metadata() {
-                Some((_, format, max_age)) => {
-                    response.retain_format(format).retain_max_age(max_age)
-                }
+        None => {
+            let retained = match body.notification {
+                Some((format, max_age)) => response.retain_format(format).retain_max_age(max_age),
                 None => *response,
             };
             issue_classic(
@@ -6697,7 +6697,6 @@ where
                 oscore_ctx,
             )
         }
-        _ => Ok(()),
     }
 }
 
@@ -7035,12 +7034,7 @@ where
     let plan = match plan {
         Some(plan) => plan,
         None => if let Some(request) = meta.q_request {
-            plan_deferred_q(
-                request
-                    .q_block2()
-                    .map(|value| value.expect("validated ingress")),
-                length,
-            )
+            plan_deferred_q(request.values(), length)
         } else {
             plan_deferred_q(core::iter::once(q), length)
         }
@@ -7122,20 +7116,14 @@ where
     S: Storage + DatagramSlots + PendingCons + BodySlots + DedupSlots,
     T: DatagramIo,
 {
-    let selections = || {
-        meta.q_request
-            .into_iter()
-            .flat_map(QBlock2Request::q_block2)
-    };
+    let selections = || meta.q_request.into_iter().flat_map(QBlock2Request::values);
     // Validate every requested starting range before the first send, so a
     // bad later option cannot turn a rejected request into partial output.
     for q in selections() {
-        let q = q.map_err(|e| Error::Block(e.into()))?;
         engine.reissue_q_block2(id, q.num()).map_err(Error::Block)?;
     }
     let mut last_sent = None;
     for q in selections() {
-        let q = q.map_err(|e| Error::Block(e.into()))?;
         let count = if q.more() {
             u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
                 - q.num() % u32::from(crate::storage::BlockTransfer::MAX_PAYLOADS)
@@ -7972,22 +7960,13 @@ fn expire_request_dedup<S: Storage + DedupSlots>(
     }
 }
 
-fn acquire_tx_or_evict<S: Storage + DatagramSlots + DedupSlots>(
-    engine: &mut Engine<S>,
-) -> Option<SlotId> {
-    for _ in 0..=admission::TX_HEADROOM {
-        if admission::free_tx(engine) > admission::TX_HEADROOM || !evict_one_dedup_pin(engine) {
-            break;
-        }
-    }
-    admission::ordinary_tx(engine)
-}
+use admission::acquire_tx_or_evict;
 
 fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
     let n = engine.capacities().dedup_entries;
-    let mut best: Option<DedupEntry> = None;
+    let mut best: Option<&DedupEntry> = None;
     for i in 0..n {
-        let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+        let Some(entry) = engine.dedup_entry_ref(SlotId::from_index(i)) else {
             continue;
         };
         if entry.tx_pin().is_none() || entry.due_ms() == 0 {
@@ -7998,7 +7977,7 @@ fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool 
             _ => best = Some(entry),
         }
     }
-    let Some(entry) = best else {
+    let Some(&entry) = best else {
         return false;
     };
     if let Some(pin) = entry.tx_pin() {
@@ -8017,9 +7996,9 @@ fn evict_one_dedup_pin<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool 
 
 fn evict_oldest_app_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bool {
     let n = engine.capacities().dedup_entries;
-    let mut best: Option<DedupEntry> = None;
+    let mut best: Option<&DedupEntry> = None;
     for i in 0..n {
-        let Some(entry) = engine.dedup_entry(SlotId::from_index(i)) else {
+        let Some(entry) = engine.dedup_entry_ref(SlotId::from_index(i)) else {
             continue;
         };
         if entry.due_ms() == 0 {
@@ -8030,7 +8009,7 @@ fn evict_oldest_app_dedup<S: Storage + DedupSlots>(engine: &mut Engine<S>) -> bo
             _ => best = Some(entry),
         }
     }
-    let Some(entry) = best else {
+    let Some(&entry) = best else {
         return false;
     };
     release_dedup_row(engine, entry);
@@ -8145,14 +8124,22 @@ struct BlockOpt {
     size2: Option<usize>,
 }
 
-// Borrow the parsed request's existing options descriptor without retaining
-// another slice or imposing the Token's auto traits on the shared reference.
-#[derive(Clone, Copy)]
-struct QBlock2Request<'a>(&'a &'a [u8]);
+/// The first selector is already decoded. Only repeated selectors need a cursor.
+struct QBlock2Request<'a> {
+    first: BlockValue,
+    additional: crate::message::OptionTail<'a>,
+}
 
-impl<'a> QBlock2Request<'a> {
-    fn q_block2(self) -> crate::message::BlockOptions<'a> {
-        crate::message::BlockOptions::q_block2(self.0)
+impl QBlock2Request<'_> {
+    fn repeated(&self) -> bool {
+        !self.additional.is_empty()
+    }
+
+    fn values(&self) -> impl Iterator<Item = BlockValue> + '_ {
+        core::iter::once(self.first).chain(
+            crate::message::BlockOptions::q_block2_from(self.additional)
+                .map(|value| value.expect("validated Q-Block2 selection")),
+        )
     }
 }
 
@@ -8165,7 +8152,7 @@ struct SendResponse<'a, K: OwnedToken = crate::message::Token> {
     no_response: NoResponse,
     block2: Option<BlockValue>,
     q_block2: Option<BlockValue>,
-    q_request: Option<QBlock2Request<'a>>,
+    q_request: Option<&'a QBlock2Request<'a>>,
     /// Echo of the request Block1 (RFC 7959 §2.5 Continue / final).
     block1: Option<BlockOpt>,
     /// Request Partial IV when the inbound request was OSCORE-protected.
@@ -8560,18 +8547,19 @@ where
     /// Caller owns accepted application work and must decide whether it can be
     /// cancelled. A previously sent empty ACK remains only proof of reception.
     pub fn cancel_deferred(&mut self, handle: DeferredReply) -> bool {
-        let Some(row) = self
-            .deferred
-            .rows
-            .iter_mut()
-            .find(|row| row.is_some_and(|row| row.handle == handle && !row.completed))
-        else {
+        let Some(row) = self.deferred.rows.iter_mut().find(|row| {
+            row.as_ref()
+                .is_some_and(|row| row.handle == handle && !row.completed)
+        }) else {
             return false;
         };
-        if retire_deferred_observe(&mut self.engine, row.expect("matched row")).is_err() {
+        if retire_deferred_observe(&mut self.engine, row.as_ref().expect("matched row")).is_err() {
             return false;
         }
-        if let Some(body) = row.and_then(|row| row.snapshot.map(|(body, _)| body)) {
+        if let Some(body) = row
+            .as_ref()
+            .and_then(|row| row.snapshot.as_ref().map(|(body, _)| *body))
+        {
             let _ = self.engine.release_tx_body(body);
         }
         *row = None;

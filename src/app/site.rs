@@ -297,27 +297,25 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
     /// that App-owned work has drained before an identity can be reused.
     pub fn remove_route(&mut self, path: impl IntoPath) -> Result<bool, PathError> {
         let path = path_from_into(path)?;
-        Ok(self.remove_path(path))
+        let Some(index) = self.route_index(path.segments()) else {
+            return Ok(false);
+        };
+        self.remove_at(index);
+        Ok(true)
     }
 
-    pub(crate) fn contains_path(&self, path: Path<'static>) -> bool {
-        self.entries
-            .iter()
-            .flatten()
-            .any(|entry| entry.path.matches(path.segments()))
-    }
-
-    pub(crate) fn remove_path(&mut self, path: Path<'static>) -> bool {
-        let Some(index) = self.entries.iter().position(|entry| {
+    pub(crate) fn route_index(&self, segments: &[&str]) -> Option<usize> {
+        self.entries.iter().position(|entry| {
             entry
                 .as_ref()
-                .is_some_and(|entry| entry.path.matches(path.segments()))
-        }) else {
-            return false;
-        };
+                .is_some_and(|entry| entry.path.matches(segments))
+        })
+    }
+
+    pub(crate) fn remove_at(&mut self, index: usize) {
+        debug_assert!(self.entries[index].is_some());
         self.entries[index] = None;
         self.len -= 1;
-        true
     }
 
     /// Bind `methods` on a `'static` URI-Path (`"/leds/0"`).
@@ -374,26 +372,17 @@ impl<const N: usize, T: OwnedToken> Site<N, T> {
 
     /// Stable local identity, selected by exact segment comparison.
     pub(crate) fn observe_resource(&self, segments: &[&str]) -> ObserveResource {
-        self.entries
-            .iter()
-            .enumerate()
-            .find_map(|(index, entry)| {
-                entry
-                    .as_ref()
-                    .filter(|entry| entry.path.matches(segments))
-                    .map(|_| ObserveResource::app_route(index))
-            })
-            .unwrap_or(ObserveResource::NONE)
+        self.route_index(segments)
+            .map_or(ObserveResource::NONE, ObserveResource::app_route)
     }
 
     /// Snapshot fn for an opaque App route identity.
     pub(crate) fn observe_source(&self, resource: ObserveResource) -> Option<SnapshotSource<T>> {
-        self.entries.iter().enumerate().find_map(|(index, entry)| {
-            entry
-                .as_ref()
-                .filter(|_| ObserveResource::app_route(index) == resource)
-                .and_then(|entry| entry.methods.observe_source())
-        })
+        self.entries
+            .get(resource.app_route_index()?)?
+            .as_ref()?
+            .methods
+            .observe_source()
     }
 }
 

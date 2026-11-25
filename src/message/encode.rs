@@ -176,8 +176,8 @@ pub(super) fn encode_token_iter<'a>(
     payload: &[u8],
 ) -> Result<usize, EncodeError> {
     let (tkl, extension, extension_len) = super::extended::encode_length(token.len())?;
-    let mut options = options.into_iter().peekable();
-    if code.is_empty() && (!token.is_empty() || !payload.is_empty() || options.peek().is_some()) {
+    let mut options = options.into_iter();
+    if code.is_empty() && (!token.is_empty() || !payload.is_empty() || options.next().is_some()) {
         return Err(EncodeError::EmptyMessageNotEmpty);
     }
     let token_start = 4 + extension_len;
@@ -231,6 +231,16 @@ pub(crate) fn write_option(
     delta: u32,
     value: &[u8],
 ) -> Result<usize, EncodeError> {
+    if delta < 13 && value.len() < 13 {
+        // Both fields fit in the first byte. No extension bytes to generate.
+        let end = i
+            .checked_add(1 + value.len())
+            .ok_or(EncodeError::BufferTooSmall)?;
+        let field = buf.get_mut(i..end).ok_or(EncodeError::BufferTooSmall)?;
+        field[0] = ((delta as u8) << 4) | value.len() as u8;
+        field[1..].copy_from_slice(value);
+        return Ok(end);
+    }
     let len = u32::try_from(value.len()).map_err(|_| EncodeError::OptionValueTooLong)?;
     let (dn, de, dn_n) = ext_nibble(delta)?;
     let (ln, le, ln_n) = ext_nibble(len)?;

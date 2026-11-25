@@ -59,15 +59,28 @@ fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
         "{code:?}, {extra:?}, security active={}",
         oscore::is_active(oscore)
     );
-    if let Some(cached) = super::request_options(&parsed, oscore) {
+    let (cached, uri) = super::request_options(&parsed, oscore);
+    assert_eq!(
+        cached.proxy,
+        parsed.proxy_uri().is_some() || parsed.proxy_scheme().is_some()
+    );
+    assert_eq!(cached.unknown_critical, parsed.unknown_critical());
+    assert_eq!(
+        cached.no_response,
+        parsed
+            .no_response()
+            .map(|v| v.unwrap_or(crate::message::NoResponse::DEFAULT))
+    );
+    assert_eq!(uri.has_query(), parsed.uri_query().next().is_some());
+    if !cached.bad_option {
         assert_eq!(cached.block1, parsed.block1().and_then(Result::ok));
         assert_eq!(cached.block2, parsed.block2().and_then(Result::ok));
         assert_eq!(
             cached.q_block2,
             parsed.q_block2().next().and_then(Result::ok)
         );
-        assert_eq!(cached.q_block1, parsed.q_block1().is_some());
-        assert_eq!(cached.observe, parsed.observe().is_some());
+        assert_eq!(cached.q_block1, parsed.q_block1());
+        assert_eq!(cached.observe, parsed.observe());
         assert_eq!(
             cached.valid_q_selections,
             super::valid_q_selections(&parsed)
@@ -86,6 +99,34 @@ fn compare_case(code: Code, extra: &[Opt<'_>], oscore: &oscore::Field<4>) {
 }
 
 fn compare_cases(oscore: &oscore::Field<4>) {
+    for first in [&[][..], &[1; 4], &[1]] {
+        compare_case(
+            Code::FETCH,
+            &[
+                Opt::new(OptionNumber::OBSERVE, first),
+                Opt::observe_deregister(),
+            ],
+            oscore,
+        );
+        compare_case(
+            Code::GET,
+            &[
+                Opt::new(OptionNumber::NO_RESPONSE, first),
+                Opt::new(OptionNumber::NO_RESPONSE, &[8]),
+                Opt::proxy_uri("coap://peer"),
+            ],
+            oscore,
+        );
+    }
+    compare_case(
+        Code::GET,
+        &[
+            Opt::new(OptionNumber::BLOCK2, &[1; 4]),
+            Opt::new(OptionNumber::new(211), &[]),
+            Opt::proxy_scheme("coap"),
+        ],
+        oscore,
+    );
     // Exercise the complete Q-Block1 metadata combination, including the first
     // Size1 value controlling validity when a second occurrence disagrees.
     for first in [&[][..], &[1; 5][..]] {

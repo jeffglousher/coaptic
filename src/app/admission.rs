@@ -31,44 +31,86 @@ pub(super) fn control_tx<S: Storage>(engine: &mut Engine<S>) -> Option<SlotId> {
     engine.acquire_tx()
 }
 
-pub(super) fn refuse_new_request<S: AppStorage>(
+pub(super) enum RequestAdmission {
+    Ready,
+    Continuation,
+    Refused,
+}
+
+pub(super) fn admit_request<S: AppStorage>(
     engine: &mut Engine<S>,
     parsed: &ParsedMessage<'_, S::Token>,
     peer: Endpoint,
-) -> bool {
+    options: &RequestOptions<'_>,
+) -> RequestAdmission {
     // Existing body continuations and cancellation release or advance already
     // admitted work. Their individual send paths still enforce TX ownership.
-    let existing = ((parsed.block2().is_some() || parsed.q_block2().next().is_some())
+    let rx_free = free_rx(engine);
+    let tx_free = free_tx(engine);
+    if rx_free >= RX_HEADROOM && tx_free > TX_HEADROOM {
+        return RequestAdmission::Ready;
+    }
+    let existing = ((options.block2.is_some() || options.q_block2.is_some())
         && response_body_for(engine, BlockKey::new(parsed.token(), peer)).is_some())
-        || (parsed.observe() == Some(Ok(1))
+        || (options.observe == Some(Ok(1))
             && engine
                 .lookup_observe(ObserveKey::new(parsed.token(), peer))
                 .is_some())
-        || engine.admitted_upload(parsed, peer);
+        || ((options.block1.is_some() || options.q_block1.is_some())
+            && engine.admitted_upload(parsed, peer));
     if existing {
-        return false;
+        RequestAdmission::Continuation
+    } else if refuse_at_headroom(engine, rx_free, tx_free) {
+        RequestAdmission::Refused
+    } else {
+        RequestAdmission::Ready
     }
-    refuse_dispatch(engine)
 }
 
 pub(super) fn refuse_dispatch<S: AppStorage>(engine: &mut Engine<S>) -> bool {
-    if free_rx(engine) < RX_HEADROOM {
+    let rx_free = free_rx(engine);
+    let tx_free = free_tx(engine);
+    refuse_at_headroom(engine, rx_free, tx_free)
+}
+
+fn refuse_at_headroom<S: AppStorage>(
+    engine: &mut Engine<S>,
+    rx_free: usize,
+    tx_free: usize,
+) -> bool {
+    if rx_free < RX_HEADROOM {
         Metrics::inc(&mut engine.metrics_mut().admission_rx_refused);
         return true;
     }
-    if free_tx(engine) <= TX_HEADROOM {
-        // Reclaim only ordinary evictable cached replies before refusing work.
-        for _ in 0..=TX_HEADROOM {
-            if free_tx(engine) > TX_HEADROOM || !evict_one_dedup_pin(engine) {
-                break;
-            }
-        }
-        if free_tx(engine) <= TX_HEADROOM {
-            Metrics::inc(&mut engine.metrics_mut().admission_tx_refused);
+    !ensure_tx_headroom(engine, tx_free)
+}
+
+fn ensure_tx_headroom<S: Storage + DedupSlots>(engine: &mut Engine<S>, mut tx_free: usize) -> bool {
+    for _ in 0..=TX_HEADROOM {
+        if tx_free > TX_HEADROOM {
             return true;
         }
+        if !evict_one_dedup_pin(engine) {
+            break;
+        }
+        tx_free = free_tx(engine);
     }
-    false
+    if tx_free <= TX_HEADROOM {
+        Metrics::inc(&mut engine.metrics_mut().admission_tx_refused);
+        return false;
+    }
+    true
+}
+
+// Admission and eviction share one free-slot check. A failed eviction cannot
+// create packet headroom. Check again only after actually releasing a pin.
+pub(super) fn acquire_tx_or_evict<S: Storage + DatagramSlots + DedupSlots>(
+    engine: &mut Engine<S>,
+) -> Option<SlotId> {
+    let free = free_tx(engine);
+    ensure_tx_headroom(engine, free)
+        .then(|| engine.acquire_tx())
+        .flatten()
 }
 
 #[allow(clippy::too_many_arguments)]

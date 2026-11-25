@@ -143,6 +143,7 @@ pub(crate) fn path_from_into(path: impl IntoPath) -> Result<Path<'static>, PathE
 pub struct Request<'a, T: OwnedToken = Token> {
     message: ParsedMessage<'a, T>,
     path: Path<'a>,
+    queries: crate::message::OptionTail<'a>,
     peer: Endpoint,
     association: Option<super::Association>,
     method: Option<Method>,
@@ -156,11 +157,27 @@ impl<'a, T: OwnedToken> Request<'a, T> {
         peer: Endpoint,
         body: Option<&'a [u8]>,
     ) -> Result<Self, PathError> {
-        let path = Path::from_message(&message)?;
+        let mut uri = RequestUri::default();
+        for (tail, option) in message.options().positioned() {
+            uri.record(tail, option);
+            if option.number() >= OptionNumber::URI_QUERY {
+                break;
+            }
+        }
+        Self::from_uri(message, peer, body, uri)
+    }
+
+    pub(crate) fn from_uri(
+        message: ParsedMessage<'a, T>,
+        peer: Endpoint,
+        body: Option<&'a [u8]>,
+        uri: RequestUri<'a>,
+    ) -> Result<Self, PathError> {
         let method = Method::from_code(message.code());
         Ok(Self {
             message,
-            path,
+            path: uri.path?,
+            queries: uri.queries,
             peer,
             association: None,
             method,
@@ -282,7 +299,7 @@ impl<'a, T: OwnedToken> Request<'a, T> {
     /// Uri-Query values in wire order.
     #[must_use]
     pub fn uri_query(&self) -> StringOptions<'a> {
-        self.message.uri_query()
+        StringOptions::queries_from(self.queries)
     }
 
     /// Content-Format, if present.
@@ -397,6 +414,42 @@ impl<'a, T: OwnedToken> Request<'a, T> {
     }
 }
 
+/// Route segments and the start of the ordered query options in the same packet.
+#[derive(Clone, Copy)]
+pub(crate) struct RequestUri<'a> {
+    path: Result<Path<'a>, PathError>,
+    queries: crate::message::OptionTail<'a>,
+}
+
+impl Default for RequestUri<'_> {
+    fn default() -> Self {
+        Self {
+            path: Ok(Path::empty()),
+            queries: Default::default(),
+        }
+    }
+}
+
+impl<'a> RequestUri<'a> {
+    pub(crate) fn record(&mut self, tail: crate::message::OptionTail<'a>, option: Opt<'a>) {
+        match option.number() {
+            OptionNumber::URI_PATH => {
+                if let Ok(path) = &mut self.path
+                    && let Err(error) = path.push_wire_segment(option)
+                {
+                    self.path = Err(error);
+                }
+            }
+            OptionNumber::URI_QUERY if self.queries.is_empty() => self.queries = tail,
+            _ => {}
+        }
+    }
+
+    pub(crate) fn has_query(&self) -> bool {
+        !self.queries.is_empty()
+    }
+}
+
 /// Uri-Path segments, capped at [`MAX_PATH_SEGMENTS`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Path<'a> {
@@ -428,28 +481,23 @@ impl<'a> Path<'a> {
         Ok(path)
     }
 
-    pub(crate) fn from_message(
-        parsed: &ParsedMessage<'a, impl OwnedToken>,
-    ) -> Result<Self, PathError> {
-        let mut path = Self::empty();
-        for segment in parsed.uri_path() {
-            let segment = segment.map_err(|_| PathError::BadUtf8)?;
-            reject_dot_segment(segment)?;
-            let i = usize::from(path.len);
-            if i >= MAX_PATH_SEGMENTS {
-                return Err(PathError::TooLong);
-            }
-            path.segs[i] = segment;
-            path.len += 1;
-        }
-        Ok(path)
+    fn push_wire_segment(&mut self, option: Opt<'a>) -> Result<(), PathError> {
+        let segment = option.as_str().map_err(|_| PathError::BadUtf8)?;
+        reject_dot_segment(segment)?;
+        let slot = self
+            .segs
+            .get_mut(usize::from(self.len))
+            .ok_or(PathError::TooLong)?;
+        *slot = segment;
+        self.len += 1;
+        Ok(())
     }
 
     pub(crate) fn segments(&self) -> &[&'a str] {
         &self.segs[..usize::from(self.len)]
     }
 
-    pub(crate) fn matches(self, other: &[&str]) -> bool {
+    pub(crate) fn matches(&self, other: &[&str]) -> bool {
         self.segments() == other
     }
 }

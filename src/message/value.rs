@@ -472,6 +472,17 @@ pub struct StringOptions<'a> {
     inner: OptionsByNumber<'a>,
 }
 
+impl<'a> StringOptions<'a> {
+    pub(crate) fn queries_from(tail: super::OptionTail<'a>) -> Self {
+        Self {
+            inner: OptionsByNumber {
+                inner: tail.options(),
+                number: OptionNumber::URI_QUERY,
+            },
+        }
+    }
+}
+
 impl<'a> Iterator for StringOptions<'a> {
     type Item = Result<&'a str, ValueError>;
 
@@ -501,6 +512,15 @@ pub struct BlockOptions<'a> {
 }
 
 impl<'a> BlockOptions<'a> {
+    pub(crate) fn q_block2_from(tail: super::OptionTail<'a>) -> Self {
+        Self {
+            inner: OptionsByNumber {
+                inner: tail.options(),
+                number: OptionNumber::Q_BLOCK2,
+            },
+        }
+    }
+
     pub(crate) const fn q_block2(bytes: &'a [u8]) -> Self {
         Self {
             inner: OptionsByNumber {

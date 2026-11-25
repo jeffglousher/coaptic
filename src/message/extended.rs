@@ -113,7 +113,7 @@ impl<const N: usize> super::OwnedToken for Token<N> {
 pub struct Datagram<'a> {
     header: Header,
     token: &'a [u8],
-    options: &'a [u8],
+    pub(super) options: &'a [u8],
     payload: &'a [u8],
 }
 
