@@ -67,20 +67,20 @@ The same three executables ran another 410,400 unprotected 64-byte reads. Six ba
 | Server | Other I/O per read at capacity | Other I/O per read at 800/s | Context switches per read at capacity | Context switches per read at 800/s |
 |---|---:|---:|---:|---:|
 | Shipped Coaptic | 2.09 | 3.76 | 0.03 | 1.03 |
-| Timer trial | 2.13 | 3.70 | 0.03 | 1.03 |
+| Timer trial | 2.13 | 3.70 | 0.03 | 1.02 |
 | Stock libcoap | 2.00 | 2.00 | 1.54 | 1.93 |
 
 The C server switched context more often in all six paced runs. Coaptic nevertheless used more server cycles and issued more operations in the Windows “other I/O” category. Its paced count ranged from 3.71 to 3.86 operations per read. Removing the send-path timer wakeup left most of that increase in place. The I/O category includes all process handles and cannot name the originating syscall.
 
 Reading all three process counters together took a median 6.73 ms per query in the controller. Adding these gate queries changed paired server cycles by +4.13% on paced Coaptic and −0.68% on paced C, across three on/off pairs. All timing headlines above use separate windows with these queries disabled.
 
-### Which operations Windows counted
+### Socket readiness work inside Mio
 
 A separate release build counted Mio 1.2.4 socket and readiness calls directly. It used the shipped Coaptic sources, the same dependency versions and relaxed process-local counters. Across four alternating on/off pairs per load, the client verified 76,800 small reads. Both loads executed exactly two successful UDP sends and two successful receives per read. No socket send returned WouldBlock. Unsuccessful UDP receives increased from 1.04 per read at capacity to 2.00 at 800/s.
 
-When a Windows UDP read returned WouldBlock, Mio’s `IoSourceState::do_io` re-registered the socket’s stored interests. `SockState::update` submitted an asynchronous readiness poll to the Windows socket driver (AFD). Those submissions rose from **2.00 to 3.64 per read**. Cancellations stayed at 0.0625. In each of the eight counter-enabled windows, the sum of these submissions and cancellations exactly matched the process “other I/O” count. Each submission had a corresponding completion. The client still saw four wire packets in either case.
+When a Windows UDP read returned WouldBlock, Mio’s `IoSourceState::do_io` re-registered the socket’s stored interests. `SockState::update` submitted an asynchronous readiness poll to the Windows socket driver (AFD). Those submissions rose from **2.00 to 3.64 per read**. Cancellations stayed at 0.0625. In each of the eight counter-enabled windows, the sum of these submissions and cancellations exactly matched the process “other I/O” count. Submission and completion totals were equal in every window. The number of Mio completion-port polling calls also matched the Windows total. The aggregate Windows counter alone cannot assign each operation to a unique syscall. The client still saw four wire packets in either case.
 
-This explains which operations grow when reads are spaced apart. CPU duration per kernel call remains unresolved. A promising next test would narrow which socket interests are re-registered after a receive would block, while preserving error and writable wakeups if a send blocks. Removing the send-path timer wakeup left most of this work in place.
+The direct counts show that Mio submits more socket-readiness requests when reads are spaced apart. CPU duration per kernel call remains unresolved. A promising next test would narrow which socket interests are re-registered after a receive would block, while preserving error and writable wakeups if a send blocks. The timer trial retained most of the process-wide other-I/O excess. Only the shipped implementation was instrumented inside Mio.
 
 Enabling the Mio counters changed median paired server cycles by −1.8% at capacity and −0.9% paced in this diagnostic. An earlier 16-window diagnostic pass completed but its summary failed on a zero CPU charge. It lacked the two raw counter snapshots needed for independent reconstruction, so it was excluded and repeated. The receipt includes the source patch, all per-window results, zero-denominator handling and the excluded-window hashes.
 
