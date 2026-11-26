@@ -38,8 +38,10 @@ different acknowledgement strategies.
 
 **Next focus.** On the board, use the staged worker-clock probes at receive
 return, async poll entry, handler and send to locate the common cost across
-the small GET and both block positions. On Windows, the matched trace points
-to repeated empty-ACK preparation and socket sends. Check the
+the small GET and both block positions. On Windows, isolate socket readiness
+and receive submission costs. At capacity, Coaptic used more kernel CPU in
+all ten small unprotected pairs. Small piggyback reads counted 2.01 other I/O
+operations per read for Coaptic and 1.00 for the matched C handler. Check the
 whole-read worker time in reversed boot pairs and retain refusal, duplicate,
 retry and cancellation coverage. Both historical Windows 50% targets are open.
 
