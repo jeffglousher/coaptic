@@ -109,4 +109,4 @@ required-features = ["std", "edhoc"]
 getrandom = "=0.3.4"
 
 [target.'cfg(any(unix, windows))'.dev-dependencies]
-rustix = { version = "=1.1.4", features = ["event"] }
+rustix = { version = "=1.1.6", features = ["event"] }
