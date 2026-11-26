@@ -181,6 +181,14 @@ struct RecordIo {
     sent_n: usize,
 }
 
+impl RecordIo {
+    fn inject(&mut self, peer: Endpoint, message: &Message<'_>) {
+        let mut bytes = [0; 256];
+        let len = encode(message, &mut bytes).unwrap();
+        self.inbox = Some((peer, bytes, len));
+    }
+}
+
 impl crate::storage::DatagramTransport for RecordIo {
     type Error = &'static str;
 }
@@ -5079,9 +5087,128 @@ fn client_exchange_live(app: &App<profiles::Default, RecordIo>, call: crate::Cal
 }
 
 fn inject_empty(app: &mut App<profiles::Default, RecordIo>, peer: Endpoint, msg: Message<'_>) {
-    let mut buf = [0u8; 256];
-    let n = encode(&msg, &mut buf).expect("empty");
-    app.transport_mut().inbox = Some((peer, buf, n));
+    app.transport_mut().inject(peer, &msg);
+}
+
+#[test]
+fn rst_for_separate_response_in_reused_tx_preserves_call_awaiting_response() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    for same_token in [false, true] {
+        let mut app = App::profile::<profiles::Constrained>()
+            .block_wise::<false>()
+            .route("separate", get(get_separate))
+            .allow_unprotected()
+            .deterministic_for_tests()
+            .bind(RecordIo::default())
+            .unwrap();
+        let first = app.get("remote").to(peer).send(0).unwrap();
+        let (_, bytes, len) = app.transport().sent[0].unwrap();
+        let first_mid = decode(&bytes[..len]).unwrap().message_id();
+        app.transport_mut()
+            .inject(peer, &Message::empty_ack(first_mid));
+        app.poll(1).unwrap();
+
+        let token = if same_token {
+            first.token()
+        } else {
+            Token::new(b"other").unwrap()
+        };
+        let path = [Opt::uri_path("separate")];
+        let get = Message::new(Type::Confirmable, Code::GET, MessageId::new(0x701))
+            .with_options(&path)
+            .with_token(token);
+        app.transport_mut().inject(peer, &get);
+        app.poll(2).unwrap();
+        let (_, bytes, len) = app.transport().sent[2].unwrap();
+        let sent = decode(&bytes[..len]).unwrap();
+        assert_eq!(
+            (sent.ty(), sent.code(), sent.token()),
+            (Type::Confirmable, Code::CONTENT, token)
+        );
+        assert_ne!(sent.message_id(), first_mid);
+        app.transport_mut()
+            .inject(peer, &Message::empty_rst(sent.message_id()));
+        app.poll(3).unwrap();
+        assert_eq!(app.engine_mut().tx_occupied(), 0);
+        assert!(app.take_response(first).is_none());
+
+        let reply = Message::new(Type::NonConfirmable, Code::CONTENT, MessageId::new(0x702))
+            .with_token(first.token())
+            .with_payload(b"original reply");
+        app.transport_mut().inject(peer, &reply);
+        app.poll(4).unwrap();
+        assert_eq!(
+            app.take_response(first).unwrap().unwrap().payload(),
+            b"original reply"
+        );
+    }
+}
+
+// Leave a Call awaiting its separate reply, then position the bounded pool so
+// the next send reuses the datagram that held the original request.
+fn awaiting_separate_on_next_tx(
+    app: &mut App<profiles::Default, RecordIo>,
+    peer: Endpoint,
+) -> crate::Call {
+    let call = app.get("first").to(peer).send(0).unwrap();
+    let id = app
+        .engine
+        .lookup_exchange(ExchangeKey::new(call.token(), peer))
+        .unwrap();
+    let entry = app.engine.exchange_entry(id).unwrap();
+    inject_empty(app, peer, Message::empty_ack(entry.message_id()));
+    app.poll(1).unwrap();
+    assert_eq!(app.engine.tx_occupied(), 0);
+    for _ in 0..app.engine.capacities().tx_datagram_slots {
+        if app.engine.tx_cursor() == entry.tx_slot().index() {
+            break;
+        }
+        app.engine.rotate_tx();
+    }
+    assert_eq!(app.engine.tx_cursor(), entry.tx_slot().index());
+    call
+}
+
+#[test]
+fn failed_send_on_reused_tx_keeps_acknowledged_call() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let first = awaiting_separate_on_next_tx(&mut app, peer);
+    app.transport_mut().sent_n = app.transport().sent.len();
+    assert!(matches!(
+        app.get("second").to(peer).send(2),
+        Err(Error::Io(_))
+    ));
+    assert!(client_exchange_live(&app, first));
+    assert_eq!(app.engine.tx_occupied(), 0);
+    app.transport_mut().sent_n = 0;
+    let retry = app.get("second").to(peer).send(3).unwrap();
+    assert!(app.cancel(retry));
+    inject_separate_con(&mut app, peer, MessageId::new(501), first.token(), b"first");
+    app.poll(4).unwrap();
+    assert_eq!(
+        app.take_response(first).unwrap().unwrap().payload(),
+        b"first"
+    );
+}
+
+#[test]
+fn retransmit_give_up_on_reused_tx_completes_only_its_call() {
+    let peer = Endpoint::v4([192, 0, 2, 2], 5683);
+    let mut app = record_client();
+    let first = awaiting_separate_on_next_tx(&mut app, peer);
+    let second = app.get("second").to(peer).send(2).unwrap();
+    for _ in 0..=Transmission::MAX_RETRANSMIT {
+        app.poll(app.next_timeout().unwrap()).unwrap();
+    }
+    assert_eq!(
+        app.take_response(second).unwrap().unwrap_err(),
+        crate::CallFailure::TimedOut
+    );
+    assert!(client_exchange_live(&app, first));
+    assert!(app.take_response(first).is_none());
+    assert!(app.cancel(first));
+    assert_eq!(app.engine.tx_occupied(), 0);
 }
 
 #[test]

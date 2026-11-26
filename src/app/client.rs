@@ -78,7 +78,7 @@ use crate::message::{
 use crate::storage::{
     BlockKey, BlockRole, BodySlots, BodyTag, DatagramIo, DatagramSlots, Endpoint, Engine,
     ExchangeEntry, ExchangeKey, Exchanges, MemoryLayout, Missing, ObserveInterest, ObserveKey,
-    ObserveSlots, OutgoingBlock, PendingCons, Present, SlotId, Storage,
+    ObserveSlots, OutgoingBlock, PendingCon, PendingCons, Present, SlotId, Storage,
 };
 
 use super::identity::AppIds;
@@ -5588,8 +5588,8 @@ where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges,
     T: DatagramIo,
 {
-    match engine.record_request(tx, dest) {
-        Ok(Some(_)) => {}
+    let exchange = match engine.record_request(tx, dest) {
+        Ok(Some(entry)) => entry.key(),
         Ok(None) => {
             let _ = engine.release_tx(tx);
             return Err(Error::Saturated);
@@ -5598,12 +5598,12 @@ where
             let _ = engine.release_tx(tx);
             return Err(e.into());
         }
-    }
+    };
     let pending = (ty == Type::Confirmable).then_some((now_ms, mid, jitter));
     match super::finish_send(engine, io, tx, dest, pending) {
         Ok(()) => Ok(()),
         Err(e) => {
-            drop_exchange_for_tx(engine, tx);
+            let _ = engine.take_exchange(exchange);
             Err(e)
         }
     }
@@ -5649,21 +5649,6 @@ fn abandon_send<Mem, const REQUESTS: usize>(
         }
     }
     super::oscore::cancel(oscore, peer, token);
-}
-
-fn drop_exchange_for_tx<Mem: Storage + Exchanges>(engine: &mut Engine<Mem>, tx: SlotId) {
-    let n = engine.capacities().tx_datagram_slots;
-    for i in 0..n {
-        let id = SlotId::from_index(i);
-        let Some(entry) = engine.exchange_entry(id) else {
-            continue;
-        };
-        if entry.tx_slot() != tx {
-            continue;
-        }
-        let _ = engine.take_exchange(entry.key());
-        return;
-    }
 }
 
 fn copy_tx_range<Mem: Storage + BodySlots>(
@@ -5765,31 +5750,18 @@ fn accept_client_observe<Mem, const CALLS: usize>(
     let _ = engine.take_observe(key);
 }
 
-/// Retransmission give-up completes the call rather than silently losing it.
-pub(crate) fn give_up_client<Mem, const CALLS: usize, const REQUESTS: usize>(
-    engine: &mut Engine<Mem>,
-    inbox: &mut ClientInbox<CALLS, Mem::Token>,
-    lives: &mut ClientLives<CALLS, Mem::Token>,
-    oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
-    tx: SlotId,
-) where
-    Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
-{
-    fail_pending_client(engine, inbox, lives, oscore, tx, CallFailure::TimedOut);
-}
-
 /// Retire a pending request with its actual completion failure classification.
 pub(crate) fn fail_pending_client<Mem, const CALLS: usize, const REQUESTS: usize>(
     engine: &mut Engine<Mem>,
     inbox: &mut ClientInbox<CALLS, Mem::Token>,
     lives: &mut ClientLives<CALLS, Mem::Token>,
     oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
-    tx: SlotId,
+    pending: PendingCon,
     failure: CallFailure,
 ) where
     Mem: Storage + DatagramSlots + Exchanges + BodySlots + ObserveSlots + PendingCons,
 {
-    if let Some(entry) = exchange_for_tx(engine, tx) {
+    if let Some(entry) = exchange_for_mid(engine, pending.message_id(), pending.endpoint()) {
         fail_call(
             engine,
             inbox,
@@ -5800,17 +5772,6 @@ pub(crate) fn fail_pending_client<Mem, const CALLS: usize, const REQUESTS: usize
             false,
         );
     }
-}
-
-fn exchange_for_tx<Mem: Storage + Exchanges>(
-    engine: &Engine<Mem>,
-    tx: SlotId,
-) -> Option<ExchangeEntry<Mem::Token>> {
-    let n = engine.capacities().tx_datagram_slots;
-    (0..n).find_map(|i| {
-        let entry = engine.exchange_entry(SlotId::from_index(i))?;
-        (entry.tx_slot() == tx).then_some(entry)
-    })
 }
 
 fn exchange_for_mid<Mem: Storage + Exchanges>(
@@ -5955,13 +5916,9 @@ pub(crate) fn complete_client_rst<Mem, const CALLS: usize, const REQUESTS: usize
 ) where
     Mem: Storage + DatagramSlots + PendingCons + Exchanges + BodySlots + ObserveSlots,
 {
-    let entry = engine
-        .lookup_pending_con(message_id, peer)
-        .and_then(|tx| exchange_for_tx(engine, tx))
-        .or_else(|| {
-            exchange_for_mid(engine, message_id, peer)
-                .filter(|entry| !exchange_is_unsent(engine, *entry))
-        });
+    // The original TX slot can already hold an unrelated separate response.
+    let entry = exchange_for_mid(engine, message_id, peer)
+        .filter(|entry| !exchange_is_unsent(engine, *entry));
     if let Some(entry) = entry {
         fail_call(
             engine,
@@ -5995,6 +5952,61 @@ mod reservation_tests {
         let entry = engine.record_request(tx, peer).unwrap().unwrap();
         let reserved = engine.reserve_pending_con(tx, peer, mid).unwrap();
         (engine, reserved, entry)
+    }
+
+    #[test]
+    fn refused_block_send_on_reused_tx_removes_only_its_inserted_exchange() {
+        struct Refuse;
+        impl crate::storage::DatagramTransport for Refuse {
+            type Error = ();
+        }
+        impl DatagramIo for Refuse {
+            fn recv(&mut self, _: &mut [u8]) -> Result<Option<(usize, Endpoint)>, ()> {
+                Ok(None)
+            }
+            fn send(&mut self, _: Endpoint, _: &[u8]) -> Result<usize, ()> {
+                Err(())
+            }
+        }
+
+        let (mut engine, reserved, first) = reserved_request();
+        engine.commit_pending_con(reserved, 0, 0).unwrap();
+        let peer = first.endpoint();
+        let tx = engine.take_pending_con(first.message_id(), peer).unwrap();
+        engine.release_tx(tx).unwrap();
+        for _ in 0..engine.capacities().tx_datagram_slots {
+            if engine.tx_cursor() == tx.index() {
+                break;
+            }
+            engine.rotate_tx();
+        }
+        assert_eq!(engine.acquire_tx(), Some(tx));
+        let mid = MessageId::new(802);
+        let token = Token::new(b"blk").unwrap();
+        engine
+            .encode_tx(
+                tx,
+                &Message::new(Type::Confirmable, Code::PUT, mid).with_token(token),
+            )
+            .unwrap();
+        let sent = finish_client_send(
+            &mut engine,
+            &mut Refuse,
+            tx,
+            peer,
+            Type::Confirmable,
+            1,
+            mid,
+            0,
+        );
+        assert!(matches!(sent, Err(Error::Io(_))));
+        assert!(engine.lookup_exchange(first.key()).is_some());
+        assert!(
+            engine
+                .lookup_exchange(ExchangeKey::new(token, peer))
+                .is_none()
+        );
+        assert_eq!(engine.tx_occupied(), 0);
     }
 
     #[test]

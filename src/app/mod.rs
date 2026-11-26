@@ -2760,7 +2760,14 @@ where
                 replacement_error = replacement.err();
             }
             Retransmit::GiveUp(pending) => {
-                client::give_up_client(engine, inbox, lives, oscore, pending.tx_slot());
+                client::fail_pending_client(
+                    engine,
+                    inbox,
+                    lives,
+                    oscore,
+                    pending,
+                    CallFailure::TimedOut,
+                );
                 if let Some(interest) =
                     engine.reject_observe_notify(pending.message_id(), pending.endpoint())
                 {

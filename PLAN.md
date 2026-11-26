@@ -28,6 +28,11 @@ and were rejected. Both original-project 50% targets remain open.
 The ESP32-S3 separate-response fixtures are built and wire-verified on Windows.
 Physical qualification awaits a connection to the board.
 
+The complete ACK/RST dispatch check also exposed a Call ownership bug. An empty
+ACK frees the outgoing packet while the Call still awaits its separate reply.
+Reset and retransmit cleanup now select the exchange by Message ID and routed
+peer, and failed continuation sends retire the exchange they inserted.
+
 The packet-path improvements landed in [#799](https://github.com/jeffglousher/coaptic/pull/799)
 at `32fdf57`. The [Windows and Waveshare peer comparison](architecture/requirements/LANDED-LIBCOAP-20261125.md)
 covers 1,534,080 native Windows reads and regrades both blocks of each ESP read.
