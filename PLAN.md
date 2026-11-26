@@ -57,8 +57,10 @@ different acknowledgement strategies.
 
 **Next focus.** On the board, use the staged worker-clock probes at receive
 return, async poll entry, handler and send to locate the common cost across
-the small GET and both block positions. On Windows, locate the extra paced small-read cycles in socket submissions,
-readiness management and waking the worker after each inter-read gap. At capacity, Coaptic used more kernel CPU in
+the small GET and both block positions. On Windows, investigate re-registering socket interests after a receive
+returns WouldBlock. Direct Mio counters measured 2.00 Windows socket-driver
+readiness submissions per read at capacity and 3.64 at 800/s with the same
+four datagrams. Preserve error, cancellation and writable-backpressure wakeups. At capacity, Coaptic used more kernel CPU in
 all ten small unprotected pairs. Small piggyback reads counted 2.01 other I/O
 operations per read for Coaptic and 1.00 for the matched C handler. Check the
 whole-read worker time in reversed boot pairs and retain refusal, duplicate,
