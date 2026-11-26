@@ -32,6 +32,10 @@ The complete ACK/RST dispatch check also exposed a Call ownership bug. An empty
 ACK frees the outgoing packet while the Call still awaits its separate reply.
 Reset and retransmit cleanup now select the exchange by Message ID and routed
 peer, and failed continuation sends retire the exchange they inserted.
+A separate empty-table optimization improved unprotected 4 KiB reads, but
+made small protected reads slower in every scaled-capacity latency pair.
+The complete-profile study above records the rejected trial and traces
+deadline timer registration through the Windows completion port.
 
 The packet-path improvements landed in [#799](https://github.com/jeffglousher/coaptic/pull/799)
 at `32fdf57`. The [Windows and Waveshare peer comparison](architecture/requirements/LANDED-LIBCOAP-20261125.md)
