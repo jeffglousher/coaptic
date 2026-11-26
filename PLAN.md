@@ -1,11 +1,25 @@
 # Project plan
 
-Updated 2026-11-25 after comparing the merged packet path with libcoap.
+Updated 2026-11-25 after matching libcoap’s acknowledgement exchanges.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
+
+The [matched acknowledgement study](architecture/requirements/MATCHED-ACK-20261125.md)
+covers stock Coaptic and libcoap, small and blockwise reads, two security
+modes and both process roles. The [comparison harness](https://github.com/jeffglousher/coaptic-validation/pull/278)
+verifies every block and both empty ACKs when separate responses are selected.
+At Windows capacity, matched protected server CPU was 28.32 versus 50.78 µs
+for 64 bytes and 122.07 versus 229.71 µs for 4 KiB. A controlled C experiment
+showed that libcoap’s temporary encryption-buffer allocation explains much
+of that difference. In a direct three-way test the adjusted C server consumed
+29.79 and 117.63 µs per read. Coaptic completed more reads/s in all six pairs.
+Two Rust borrowing trials eliminated full-body staging but slowed other reads
+and were rejected. Both original-project 50% targets remain open.
+The ESP32-S3 separate-response fixtures are built and wire-verified on Windows.
+Physical qualification awaits a connection to the board.
 
 The packet-path improvements landed in [#799](https://github.com/jeffglousher/coaptic/pull/799)
 at `32fdf57`. The [Windows and Waveshare peer comparison](architecture/requirements/LANDED-LIBCOAP-20261125.md)
@@ -15,9 +29,10 @@ reply, 1.28 ms more on block zero and 1.38 ms more on the follow-up. Windows
 unprotected reads also used more server CPU. The protected Windows peers used
 different acknowledgement strategies.
 
-**Next focus.** Split the ESP async work between receive, route/handler,
-response encoding and send entry. Rank the common cost across a small GET and
-both block positions, then reduce the largest repeatable interval. Check the
+**Next focus.** On the board, use the staged worker-clock probes at receive
+return, async poll entry, handler and send to locate the common cost across
+the small GET and both block positions. On Windows, the matched trace points
+to repeated empty-ACK preparation and socket sends. Check the
 whole-read worker time in reversed boot pairs and retain refusal, duplicate,
 retry and cancellation coverage. Both historical Windows 50% targets are open.
 
