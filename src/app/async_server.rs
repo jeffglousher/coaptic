@@ -390,7 +390,7 @@ pub(super) async fn send_retransmit_packet_async<
         inbox,
         lives,
         oscore,
-        tx,
+        expected,
         CallFailure::ContinuationFailed,
     );
     if let Some(interest) = engine.reject_observe_notify(expected.message_id(), expected.endpoint())
