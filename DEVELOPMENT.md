@@ -114,6 +114,8 @@ For routine performance work, batch coherent changes and use a short matched
 baseline/candidate check of the integrated App. Reuse unchanged passing checks;
 repeat or broaden only to answer a specific unresolved question. Preserve failed
 comparisons, but keep development checks separate from release qualification.
+Start profiler-off runs in a fresh controller. Record which processes are active
+at the measurement gate so a leftover sampler cannot silently change the result.
 
 Performance comparisons must include actual synchronous and asynchronous App
 execution with matched capacities and security settings. Label runtime policy
