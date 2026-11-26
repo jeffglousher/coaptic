@@ -1,11 +1,18 @@
 # Project plan
 
-Updated 2026-11-25 after matching libcoap’s acknowledgement exchanges.
+Updated 2026-11-26 after matching empty ACKs against libcoap and the original project.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
+
+The [direct unprotected and historical controls](architecture/requirements/EMPTY-ACK-CONTROLS-20261126.md)
+measure both empty ACKs on both peers. At capacity, separate 4 KiB reads used
+99.88 µs of Coaptic server CPU and 95.44 µs for libcoap. Verified throughput
+was 9,955 and 8,926 reads/s respectively. Against the original Coaptic release,
+paired capacity server CPU fell 9.4% and 8.2% for unprotected small and blockwise
+reads, and 1.7% and 6.1% for established OSCORE. Neither mode meets the 50% target.
 
 The [matched acknowledgement study](architecture/requirements/MATCHED-ACK-20261125.md)
 covers stock Coaptic and libcoap, small and blockwise reads, two security
