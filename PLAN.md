@@ -7,6 +7,16 @@ This is the current status and work order. Detailed results live in linked
 
 ## Current position
 
+The [shipped Tokio adapter comparison](architecture/requirements/TOKIO-DEADLINE-WAKE-20261126.md)
+verified 1,497,600 Windows reads with both empty ACKs. At capacity, 4 KiB reads
+used 103.08 versus 106.34 µs of unprotected server CPU for Coaptic and libcoap,
+and 122.61 versus 238.72 µs under established OSCORE. At 800/s the small
+unprotected Coaptic server used 34.3% more cycles in the median pair, with
+higher cycles in all six. Skipping a timer poll on immediately writable sends
+improved capacity in two independent cohorts. At 800/s the trial raised paired
+unprotected blockwise server CPU by 16.1% and 11.6% and grew the loop future
+by 24 bytes. The trial was rejected.
+
 The [direct unprotected and historical controls](architecture/requirements/EMPTY-ACK-CONTROLS-20261126.md)
 measure both empty ACKs on both peers. At capacity, separate 4 KiB reads used
 99.88 µs of Coaptic server CPU and 95.44 µs for libcoap. Verified throughput
@@ -47,8 +57,8 @@ different acknowledgement strategies.
 
 **Next focus.** On the board, use the staged worker-clock probes at receive
 return, async poll entry, handler and send to locate the common cost across
-the small GET and both block positions. On Windows, isolate socket readiness
-and receive submission costs. At capacity, Coaptic used more kernel CPU in
+the small GET and both block positions. On Windows, locate the extra paced small-read cycles in socket submissions,
+readiness management and waking the worker after each inter-read gap. At capacity, Coaptic used more kernel CPU in
 all ten small unprotected pairs. Small piggyback reads counted 2.01 other I/O
 operations per read for Coaptic and 1.00 for the matched C handler. Check the
 whole-read worker time in reversed boot pairs and retain refusal, duplicate,
