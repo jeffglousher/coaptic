@@ -6,6 +6,8 @@ Windows used the same release client, loopback socket workload, warmup, credenti
 
 The default unprotected peers both piggyback. Stock libcoap separates each protected response. Opting Coaptic into separate CON delivery makes both protected peers send the request, the empty ACK for that request, the authenticated response and the empty ACK for that response. That is four UDP datagrams per block and sixteen per 4 KiB read. Each control ACK is four bytes. Both protected fixtures used AES-CCM-16-64-128 and a 32-entry replay window. A fresh libcoap context required one authenticated Echo challenge before warmup. The same client verified both peers’ fixture ETag and contents. Libcoap also sent optional Size2=4096, three encoded bytes per large block.
 
+The [unprotected ACK and original-project controls](EMPTY-ACK-CONTROLS-20261126.md) extend the comparison to four datagrams per block on unprotected libcoap and compare both security modes against the original library.
+
 ## Windows at capacity
 
 Each entry is the median of six per-process windows. Latencies include complete body verification. Server and client CPU are charged microseconds per complete read. Capacity is closed loop. Working set and private bytes are sampled at the end of the same process window. The JSON includes every repeat, cycles, peak working set and distribution tails.
