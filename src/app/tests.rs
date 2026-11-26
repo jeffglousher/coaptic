@@ -838,6 +838,72 @@ fn duplicate_con_separate_replays_empty_ack() {
 }
 
 #[test]
+fn separate_classic_block_refuses_a_full_body_pool_then_retries_held_wire_bytes() {
+    fn handler(_: Request<'_>) -> Response<'static> {
+        Response::content(&LARGE).etag(b"body").separate()
+    }
+    let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .route("large", get(handler))
+        .allow_unprotected()
+        .bind(WideLoopback::default())
+        .unwrap();
+    let held = [(); profiles::Default::TX_BODY_SLOTS]
+        .map(|()| app.engine_mut().acquire_tx_body().unwrap());
+    let block = BlockValue::from_size(1, false, 1024).unwrap().encode();
+    let (wire, n) = encode_wide(Code::GET, &["large"], &[Opt::block2(&block)], 10);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    assert_eq!(
+        app.poll(0),
+        Err(Error::Block(crate::error::BlockTransferError::Saturated))
+    );
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+    for body in held {
+        app.engine_mut().release_tx_body(body).unwrap();
+    }
+
+    app.transport_mut().send_n = 0;
+    let (wire, n) = encode_wide(Code::GET, &["large"], &[Opt::block2(&block)], 11);
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(1).unwrap();
+    assert_eq!(app.transport().send_n, 2);
+    let io = app.transport();
+    let first_ack = &io.sends[0][..io.send_lens[0]];
+    assert_eq!(first_ack, &[0x60, 0, 0, 11]);
+    let response = decode(&io.sends[1][..io.send_lens[1]]).unwrap();
+    assert_eq!(response.ty(), Type::Confirmable);
+    let returned_block = response.block2().unwrap().unwrap();
+    assert_eq!(returned_block.num(), 1);
+    assert!(!returned_block.more());
+    assert_eq!(response.payload(), &LARGE[1024..]);
+    assert_eq!(response.etag().next(), Some(&b"body"[..]));
+    let mid = response.message_id();
+    assert_ne!(mid, MessageId::new(11));
+
+    app.transport_mut().inbox = Some((peer, wire, n));
+    app.poll(2).unwrap();
+    assert_eq!(app.transport().send_n, 3);
+    assert_eq!(
+        &app.transport().sends[2][..app.transport().send_lens[2]],
+        &[0x60, 0, 0, 11]
+    );
+    app.poll(3500).unwrap();
+    let io = app.transport();
+    assert_eq!(io.send_n, 4);
+    assert_eq!(
+        &io.sends[3][..io.send_lens[3]],
+        &io.sends[1][..io.send_lens[1]]
+    );
+    let mut ack = [0; WIRE];
+    let n = encode(&Message::empty_ack(mid), &mut ack).unwrap();
+    app.transport_mut().inbox = Some((peer, ack, n));
+    app.poll(3501).unwrap();
+    assert_eq!(app.engine_mut().tx_occupied(), 0);
+}
+
+#[test]
 fn duplicate_con_get_after_exchange_lifetime_reruns_handler() {
     static HITS: AtomicUsize = AtomicUsize::new(0);
     fn counting_get(_: Request<'_>) -> Response<'static> {
