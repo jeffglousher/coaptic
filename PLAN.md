@@ -1,11 +1,19 @@
 # Project plan
 
-Updated 2026-11-28 after comparing complete Windows reads with stock libcoap.
+Updated 2026-11-28 after bringing up the native Linux comparison target.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
+
+The manual Home Assistant app adds native amd64 Linux to Windows and ESP32-S3.
+Across 262,144 verified Linux reads, Coaptic led all four capacity pairs for
+64-byte unprotected reads and both OSCORE sizes. For 4 KiB unprotected reads,
+the second peer won in either order. At 800/s, the 64-byte unprotected Coaptic
+server used 62.26 µs/read versus 42.72 for libcoap. Profile the paced receive
+and ACK wake path before changing the core for this gap. Both original-baseline
+CPU targets remain open. [Linux results and raw receipts](https://github.com/jeffglousher/coaptic-validation/tree/eb9532ce642235f6076b156417563e3860933646/tools/benchmark/evidence/ha-linux-20261128).
 
 The [authenticated association installation comparison](architecture/requirements/MANAGED-INSTALL-20261128.md)
 found repeated preflight work and a 32-byte owner copy in a single-pass trial.
