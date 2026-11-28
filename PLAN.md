@@ -1,11 +1,21 @@
 # Project plan
 
-Updated 2026-11-26 after matching empty ACKs against libcoap and the original project.
+Updated 2026-11-28 after tracing complete Windows reads and their empty ACKs.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
+
+The [Windows read and ACK walkthrough](architecture/requirements/WINDOWS-READ-WALK-20261128.md)
+follows both received datagrams per block. The rotating RX scan already excludes
+inbox-held replies. Protected ingress can track replay on its selected context,
+and an admitted client replay must mark its durable checkpoint before an awaited
+continuation can be cancelled. In the integrated comparison, unprotected 4 KiB
+capacity reads used 97.66 µs of server CPU and 97.66 µs of client CPU, versus
+99.88 µs each before. The protected 4 KiB medians held at 119.85 and 120.96 µs.
+A private Mio trial suppressed all 20 redundant writable edges but cut capacity
+throughput in every pair at both sizes and security modes. It was rejected.
 
 The [shipped Tokio adapter comparison](architecture/requirements/TOKIO-DEADLINE-WAKE-20261126.md)
 verified 1,497,600 Windows reads with both empty ACKs. At capacity, 4 KiB reads
@@ -57,10 +67,10 @@ different acknowledgement strategies.
 
 **Next focus.** On the board, use the staged worker-clock probes at receive
 return, async poll entry, handler and send to locate the common cost across
-the small GET and both block positions. On Windows, investigate re-registering socket interests after a receive
-returns WouldBlock. Direct Mio counters measured 2.00 Windows socket-driver
-readiness submissions per read at capacity and 3.64 at 800/s with the same
-four datagrams. Preserve error, cancellation and writable-backpressure wakeups. At capacity, Coaptic used more kernel CPU in
+the small GET and both block positions. On Windows, follow the send and receive calls accounting for charged kernel
+CPU in small unprotected reads. Narrowing receive re-registration reduced
+paced other-I/O counts from 3.81 to 2.12 per read but slowed saturated
+reads. Keep the stock readiness behavior while attributing the remaining gap. At capacity, Coaptic used more kernel CPU in
 all ten small unprotected pairs. Small piggyback reads counted 2.01 other I/O
 operations per read for Coaptic and 1.00 for the matched C handler. Check the
 whole-read worker time in reversed boot pairs and retain refusal, duplicate,
