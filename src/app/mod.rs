@@ -2788,14 +2788,9 @@ where
         release_observe_response_body(engine, interest);
     }
 
-    // A fresh receive must not bypass queued work left by an earlier failure.
-    // Held replies were excluded inside the rotating scan, not just here:
-    // otherwise one held row can repeatedly hide the next eligible owner.
-    if let Some(rx) = progress
-        .rx_ready()
-        .filter(|rx| !inbox.holds_datagram(*rx))
-        .or(received)
-    {
+    // The rotating scan excluded held replies. Retry and expiry can relinquish
+    // an inbox slot here, but only dispatch can give it a new datagram.
+    if let Some(rx) = progress.rx_ready().or(received) {
         let consumed = if let Some(intercept) = ingress.as_mut() {
             let peer = engine
                 .rx_endpoint(rx)
@@ -3699,22 +3694,12 @@ where
     #[cfg(feature = "oscore")]
     let (parsed, oscore_req, response_state, plaintext) = if has_oscore {
         let layout = parsed.layout(n);
-        let before = oscore
-            .context(peer.association())
-            .map(|ctx| ctx.replay_checkpoint());
         let opened = {
             let access = engine.access_rx(rx)?;
             // RX bytes have not changed since copy_rx and full validation.
             let outer = layout.bind(access.as_bytes()).expect("retained RX length");
-            oscore::inbound(oscore, peer, &outer, || scratch.as_mut())
+            oscore::inbound(oscore, oscore_checkpoint, peer, &outer, || scratch.as_mut())
         };
-        if before
-            != oscore
-                .context(peer.association())
-                .map(|ctx| ctx.replay_checkpoint())
-        {
-            oscore_checkpoint.invalidate();
-        }
         if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
             let _ = engine.release_rx(rx);
             return Err(error);
@@ -3747,7 +3732,7 @@ where
     } else {
         // Without an OSCORE option inbound only checks the security policy;
         // its lazy output owner is never initialized.
-        let opened = oscore::inbound(oscore, peer, &parsed, || &mut []);
+        let opened = oscore::inbound(oscore, oscore_checkpoint, peer, &parsed, || &mut []);
         if let Err(error) = oscore_checkpoint.flush(oscore, checkpoint_commit) {
             let _ = engine.release_rx(rx);
             return Err(error);
@@ -3781,10 +3766,6 @@ where
 
     if !parsed.code().is_request() {
         let mut cache_ack = false;
-        #[cfg(feature = "oscore")]
-        let before = oscore
-            .context(peer.association())
-            .map(|ctx| ctx.replay_checkpoint());
         let outcome = client::complete_client(
             engine,
             io,
@@ -3792,6 +3773,7 @@ where
             lives,
             ids,
             oscore,
+            oscore_checkpoint,
             response_state,
             full_responses,
             now_ms,
@@ -3801,14 +3783,6 @@ where
             rx,
             &mut cache_ack,
         );
-        #[cfg(feature = "oscore")]
-        if before
-            != oscore
-                .context(peer.association())
-                .map(|ctx| ctx.replay_checkpoint())
-        {
-            oscore_checkpoint.invalidate();
-        }
         // Only a successfully admitted response has earned an ACK replay.
         // A failed initial ACK must retry admission, not skip delivery.
         if outcome.is_ok() && cache_ack {

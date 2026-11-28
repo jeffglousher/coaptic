@@ -751,6 +751,147 @@ fn deadline_refusal_preserves_exact_retry_snapshot() {
 
 #[cfg(feature = "oscore")]
 #[test]
+fn cancelled_protected_qblock1_reissue_flushes_consumed_report_before_next_ingress() {
+    use crate::oscore::{DeriveParams, SecurityContext};
+    use crate::storage::BodyTag;
+
+    let context = |sender: &[u8], recipient: &[u8]| {
+        SecurityContext::derive(DeriveParams {
+            master_secret: &[7; 16],
+            master_salt: &[],
+            sender_id: sender,
+            recipient_id: recipient,
+            id_context: &[],
+        })
+        .unwrap()
+    };
+    let ready = Cell::new(true);
+    let accepted = Cell::new(0);
+    let mut app = App::profile::<profiles::Default>()
+        .deterministic_for_tests()
+        .block_wise::<true>()
+        .oscore(context(&[1], &[2]))
+        .bind(Io {
+            ready: &ready,
+            accepted: &accepted,
+        })
+        .unwrap();
+    let mut timer = Timer;
+    let mut cx = Context::from_waker(Waker::noop());
+    let other = {
+        let mut send = pin!(
+            app.get("other")
+                .non()
+                .to(Endpoint::v4([192, 0, 2, 9], 5683))
+                .send_async(0, || Ok::<_, ()>(0), &mut timer)
+        );
+        match send.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(call)) => call,
+            result => panic!("unrelated Call: {result:?}"),
+        }
+    };
+    let tag = BodyTag::new(b"report").unwrap();
+    let call = {
+        let mut send = pin!(
+            app.put("upload")
+                .non()
+                .q_block1()
+                .request_tag(tag)
+                .payload(&[7; 1500])
+                .to(PEER)
+                .send_async(0, || Ok::<_, ()>(0), &mut timer)
+        );
+        match send.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(call)) => call,
+            result => panic!("initial Q-Block1 upload: {result:?}"),
+        }
+    };
+    let key = BlockKey::new(call.token(), PEER).with_identity(tag);
+    assert!(app.engine.lookup_tx_body(key).is_some());
+    let request = app.oscore().unwrap().lookup(call.token()).unwrap();
+    let format = ContentFormat::MISSING_BLOCKS.encode();
+    let opts = [Opt::content_format(&format)];
+    let report = Message::new(
+        Type::NonConfirmable,
+        Code::REQUEST_ENTITY_INCOMPLETE,
+        MessageId::new(500),
+    )
+    .with_token(call.token())
+    .with_options(&opts)
+    .with_payload(&[0]);
+    let mut wire = [0; 128];
+    let len = context(&[2], &[1])
+        .protect_response_with_piv(&report, request, &mut wire)
+        .unwrap();
+    let rx = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(rx, &wire[..len], PEER).unwrap();
+
+    ready.set(false);
+    let sent = accepted.get();
+    let next_piv = app.oscore().unwrap().sender_seq();
+    let mut clock = || Ok::<_, ()>(1);
+    {
+        let mut progress = pin!(app.progress_with_oscore_checkpoint_async(
+            1,
+            &mut clock,
+            &mut timer,
+            100,
+            |checkpoint| {
+                assert_eq!(checkpoint.parts(), (0, 0));
+                true
+            }
+        ));
+        assert!(progress.as_mut().poll(&mut cx).is_pending());
+    }
+    // The reissue consumed a sender sequence before blocking on the transport.
+    assert_eq!(app.oscore().unwrap().sender_seq(), next_piv + 1);
+    assert_eq!(accepted.get(), sent);
+    assert_eq!(app.oscore().unwrap().replay_checkpoint().parts(), (0, 1));
+    assert!(matches!(
+        app.take_response(call),
+        Some(Err(CallFailure::ContinuationFailed))
+    ));
+    assert!(app.engine.lookup_tx_body(key).is_none());
+    assert_eq!(app.engine.rx_occupied(), 0);
+    assert_eq!(app.engine.tx_occupied(), 0);
+
+    // A refused replay checkpoint must leave the next datagram queued.
+    let ping = app.engine.acquire_rx().unwrap();
+    app.engine.write_rx(ping, &[0x40, 0, 0, 9], PEER).unwrap();
+    ready.set(true);
+    for persist in [false, true] {
+        let mut commits = 0;
+        {
+            let mut progress = pin!(app.progress_with_oscore_checkpoint_async(
+                1,
+                &mut clock,
+                &mut timer,
+                100,
+                |checkpoint| {
+                    assert_eq!(checkpoint.parts(), (0, 1));
+                    commits += 1;
+                    persist
+                }
+            ));
+            let result = progress.as_mut().poll(&mut cx);
+            if persist {
+                assert!(matches!(result, Poll::Ready(Ok(()))));
+            } else {
+                assert!(matches!(
+                    result,
+                    Poll::Ready(Err(Error::OscoreCheckpointFailed))
+                ));
+            }
+        }
+        assert_eq!(commits, 1);
+        assert_eq!(accepted.get(), sent + usize::from(persist));
+        assert_eq!(app.engine.access_rx(ping).is_err(), persist);
+    }
+    assert!(app.cancel(other));
+}
+
+#[cfg(feature = "oscore")]
+#[test]
 fn shared_association_barrier_precedes_effects_and_rejects_restored_replay() {
     use crate::oscore::{DeriveParams, SecurityContext};
     let make = |sender: &[u8], recipient: &[u8]| {

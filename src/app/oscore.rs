@@ -148,6 +148,22 @@ impl CheckpointState {
         }
     }
 
+    // Authenticated requests can advance replay before inner decoding fails.
+    // Check the borrowed context even on error when persistence is required.
+    #[cfg(feature = "oscore")]
+    fn track_request<const R: usize, K: OwnedToken, T>(
+        &mut self,
+        ctx: &mut crate::oscore::BoundedSecurityContext<R, K>,
+        open: impl FnOnce(&mut crate::oscore::BoundedSecurityContext<R, K>) -> T,
+    ) -> T {
+        let before = self.required().then(|| ctx.replay_checkpoint());
+        let result = open(ctx);
+        if before.is_some_and(|before| before != ctx.replay_checkpoint()) {
+            self.invalidate();
+        }
+        result
+    }
+
     pub(crate) fn flush<E, const REQUESTS: usize, K: OwnedToken>(
         &mut self,
         ctx: &Field<REQUESTS, K>,
@@ -195,6 +211,7 @@ pub(crate) enum ResponseState<K: OwnedToken = Token> {
 
 pub(crate) fn commit_response<E, const REQUESTS: usize, K: OwnedToken>(
     ctx: &mut Field<REQUESTS, K>,
+    checkpoint: &mut CheckpointState,
     peer: Endpoint,
     state: ResponseState<K>,
 ) -> Result<(), super::Error<E>> {
@@ -213,11 +230,12 @@ pub(crate) fn commit_response<E, const REQUESTS: usize, K: OwnedToken>(
                     return Err(super::Error::Oscore(OscoreError::Replay));
                 }
                 ctx.replay_accept(sequence);
+                checkpoint.invalidate();
             }
         }
     }
     #[cfg(not(feature = "oscore"))]
-    let _ = (ctx, state, peer);
+    let _ = (ctx, checkpoint, state, peer);
     Ok(())
 }
 
@@ -283,6 +301,7 @@ pub(crate) fn is_active<const REQUESTS: usize, K: OwnedToken>(_ctx: &Field<REQUE
 #[cfg(feature = "oscore")]
 pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
     ctx: &mut Field<REQUESTS, K>,
+    checkpoint: &mut CheckpointState,
     peer: Endpoint,
     parsed: &ParsedMessage<'_, K>,
     scratch: impl FnOnce() -> &'a mut [u8],
@@ -296,7 +315,7 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
         let scratch = scratch();
         let mut response_state = ResponseState::None;
         let (wire, request) = if parsed.code().is_request() {
-            ctx.unprotect_request_wire(parsed, scratch)?
+            checkpoint.track_request(ctx, |ctx| ctx.unprotect_request_wire(parsed, scratch))?
         } else {
             ctx.unprotect_bound_response_wire(parsed, scratch)?
         };
@@ -365,6 +384,7 @@ pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
 #[cfg(all(not(feature = "oscore"), test))]
 pub(crate) fn inbound<'a, const REQUESTS: usize, K: OwnedToken>(
     _ctx: &mut Field<REQUESTS, K>,
+    _checkpoint: &mut CheckpointState,
     peer: Endpoint,
     _parsed: &ParsedMessage<'_, K>,
     _scratch: impl FnOnce() -> &'a mut [u8],
@@ -659,12 +679,10 @@ where
     let Some(selected) = ctx.context_mut(peer.association()) else {
         return Ok(());
     };
-    let before = selected.replay_checkpoint();
     let mut inner = S::RxScratch::default();
-    let opened = selected.unprotect_request(&projected, inner.as_mut());
-    if before != selected.replay_checkpoint() {
-        checkpoint.invalidate();
-    }
+    let opened = checkpoint.track_request(selected, |ctx| {
+        ctx.unprotect_request(&projected, inner.as_mut())
+    });
     checkpoint.flush(ctx, commit)?;
     let Ok((plain, request)) = opened else {
         return Ok(());
@@ -757,7 +775,7 @@ mod inbound_scratch_tests {
         parsed: &ParsedMessage<'_, K>,
         scratch: &'a mut Option<S>,
     ) -> Result<Option<Opened<'a, K>>, InboundError> {
-        super::inbound(ctx, peer, parsed, || {
+        super::inbound(ctx, &mut CheckpointState::new(), peer, parsed, || {
             scratch.get_or_insert_with(S::default).as_mut()
         })
     }
@@ -777,6 +795,34 @@ mod inbound_scratch_tests {
         fn as_mut(&mut self) -> &mut [u8] {
             &mut self.0
         }
+    }
+
+    #[cfg(feature = "oscore")]
+    #[test]
+    fn accepted_response_replay_marks_durable_state_before_continuation() {
+        use crate::oscore::{DeriveParams, SecurityContext};
+        let mut ctx = Some(
+            SecurityContext::derive(DeriveParams {
+                master_secret: &[0x31; 16],
+                master_salt: &[],
+                sender_id: &[1],
+                recipient_id: &[2],
+                id_context: &[],
+            })
+            .unwrap(),
+        );
+        let peer = Endpoint::v4([192, 0, 2, 1], 5683);
+        let mut checkpoint = CheckpointState::Clean;
+        commit_response::<(), _, _>(&mut ctx, &mut checkpoint, peer, ResponseState::Replay(5))
+            .unwrap();
+        assert!(matches!(checkpoint, CheckpointState::Dirty));
+
+        checkpoint = CheckpointState::Clean;
+        assert!(matches!(
+            commit_response::<(), _, _>(&mut ctx, &mut checkpoint, peer, ResponseState::Replay(5)),
+            Err(super::super::Error::Oscore(OscoreError::Replay))
+        ));
+        assert!(matches!(checkpoint, CheckpointState::Clean));
     }
 
     #[cfg(feature = "oscore")]

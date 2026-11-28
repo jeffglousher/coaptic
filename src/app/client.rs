@@ -2885,6 +2885,7 @@ mod async_request_tests {
                     &mut app.lives,
                     &mut app.ids,
                     &mut app.oscore,
+                    &mut app.oscore_checkpoint,
                     super::super::oscore::ResponseState::None,
                     false,
                     90,
@@ -3015,6 +3016,7 @@ mod async_request_tests {
                 &mut app.lives,
                 &mut app.ids,
                 &mut app.oscore,
+                &mut app.oscore_checkpoint,
                 super::super::oscore::ResponseState::None,
                 false,
                 90,
@@ -3884,6 +3886,7 @@ pub(crate) fn complete_client<Mem, T, const CALLS: usize, const REQUESTS: usize>
     lives: &mut ClientLives<CALLS, Mem::Token>,
     ids: &mut AppIds,
     oscore: &mut super::oscore::Field<REQUESTS, Mem::Token>,
+    checkpoint: &mut super::oscore::CheckpointState,
     response_state: super::oscore::ResponseState<Mem::Token>,
     full_responses: bool,
     now_ms: u64,
@@ -3973,7 +3976,7 @@ where
         }
         *acknowledged = true;
     }
-    if let Err(error) = super::oscore::commit_response(oscore, peer, response_state) {
+    if let Err(error) = super::oscore::commit_response(oscore, checkpoint, peer, response_state) {
         let _ = engine.release_rx(rx);
         return Err(error);
     }
