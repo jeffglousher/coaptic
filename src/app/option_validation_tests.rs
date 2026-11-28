@@ -220,24 +220,24 @@ fn one_pass_matches_legacy_with_context_and_retained_security_policy() {
     use crate::storage::Endpoint;
 
     let mut store = oscore::Store::<4, 1>::new();
-    let mut candidate = Some(
-        BoundedSecurityContext::derive(DeriveParams {
-            master_secret: &[0x11; 16],
-            master_salt: &[],
-            sender_id: &[1],
-            recipient_id: &[2],
-            id_context: &[],
-        })
-        .unwrap(),
-    );
+    let candidate = BoundedSecurityContext::derive(DeriveParams {
+        master_secret: &[0x11; 16],
+        master_salt: &[],
+        sender_id: &[1],
+        recipient_id: &[2],
+        id_context: &[],
+    })
+    .unwrap();
     store
-        .install(
+        .vacant(
             Endpoint::v4([192, 0, 2, 1], 5683),
             [0x22; 32],
             1,
-            &mut candidate,
+            &candidate,
+            &mut oscore::CheckpointState::new(),
         )
-        .unwrap();
+        .unwrap()
+        .insert(candidate);
     assert!(oscore::is_active(&store));
     compare_cases(&store);
 
