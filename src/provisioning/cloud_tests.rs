@@ -1140,6 +1140,46 @@ fn admitted_sessions_install_into_shared_app_and_revoke_independently() {
 }
 
 #[test]
+fn staged_install_refusal_preserves_session_for_reuse() {
+    let server = identity(254, 254);
+    let first = identity(1, 1);
+    let second = identity(2, 2);
+    let registry = Registry::new(&server, &[&first, &second]);
+    let mut cloud =
+        CloudAdmission::<2, 2, 2, 4>::new(&server, 0, AdmissionLimits::default(), entropy(9))
+            .unwrap();
+    let mut one = Some(finish(&mut cloud, &registry, &first, FIRST, 0).server);
+    let mut two = Some(finish(&mut cloud, &registry, &second, SECOND, 1_000).server);
+    let mut app = crate::App::with_resources(crate::resources::SmallDevice::new())
+        .deterministic_for_tests()
+        .require_associations()
+        .bind(Io::default())
+        .unwrap();
+    let original = AdmittedSession::install(&mut one, &mut app, &registry, 10).unwrap();
+    let untrusted = Registry::new(&server, &[&first]);
+    assert_eq!(
+        AdmittedSession::install(&mut two, &mut app, &untrusted, 11),
+        Err(AppInstallError::Unauthorized)
+    );
+    assert!(two.is_some());
+    assert_eq!(
+        AdmittedSession::install(&mut two, &mut app, &registry, 11),
+        Err(AppInstallError::App(
+            crate::app::OscoreInstallError::Capacity
+        ))
+    );
+    assert!(two.is_some());
+    assert!(app.association_is_active(original));
+
+    app.remove_association(original).unwrap();
+    let replacement = AdmittedSession::install(&mut two, &mut app, &registry, 11).unwrap();
+    assert_eq!(replacement.owner(), second.peer().principal().fingerprint());
+    assert!(two.is_none());
+    assert!(!app.association_is_active(original));
+    assert!(app.association_is_active(replacement));
+}
+
+#[test]
 fn shared_listener_polls_edhoc_then_protected_application_in_the_same_rx_pool() {
     #[derive(Default)]
     struct SharedIo {

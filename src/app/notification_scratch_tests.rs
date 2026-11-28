@@ -182,24 +182,24 @@ fn notification_four_metadata_options_match_legacy_protected() {
 #[cfg(feature = "oscore")]
 fn protected_response_context() -> (oscore::Store<4, 1>, oscore::Request) {
     let mut store = oscore::Store::<4, 1>::new();
-    let mut context = Some(
-        crate::oscore::BoundedSecurityContext::derive(crate::oscore::DeriveParams {
-            master_secret: &[0x11; 16],
-            master_salt: &[],
-            sender_id: &[1],
-            recipient_id: &[2],
-            id_context: &[],
-        })
-        .unwrap(),
-    );
+    let context = crate::oscore::BoundedSecurityContext::derive(crate::oscore::DeriveParams {
+        master_secret: &[0x11; 16],
+        master_salt: &[],
+        sender_id: &[1],
+        recipient_id: &[2],
+        id_context: &[],
+    })
+    .unwrap();
     store
-        .install(
+        .vacant(
             Endpoint::v4([192, 0, 2, 1], 5683),
             [0x22; 32],
             1,
-            &mut context,
+            &context,
+            &mut oscore::CheckpointState::new(),
         )
-        .unwrap();
+        .unwrap()
+        .insert(context);
     let request =
         crate::oscore::RequestRef::from_kid(&[2], crate::oscore::PartialIv::from_seq(0).unwrap())
             .unwrap();

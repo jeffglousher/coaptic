@@ -211,37 +211,31 @@ impl AdmittedSession {
         S: crate::app::AppStorage<Token = P::Token>,
     {
         let staged = candidate.as_ref().ok_or(AppInstallError::Missing)?;
-        let metadata = staged.association;
+        let metadata = &staged.association;
+        let principal = staged.session.principal();
         let trust = registry
             .resolve(metadata.reference)
             .ok_or(AppInstallError::Unauthorized)?;
-        if !trust.permits(&metadata.grant, staged.session.principal())
+        if !trust.permits(&metadata.grant, principal)
             || staged.session.local_principal().fingerprint()
                 != trust.checkpoint().local_principal()
         {
             return Err(AppInstallError::Unauthorized);
         }
-        app.check_association_install(
-            metadata.endpoint,
-            *staged.session.principal().fingerprint(),
-            epoch,
-            &staged.session.context,
-        )
-        .map_err(AppInstallError::App)?;
-        let staged = candidate.take().expect("checked staged session");
-        let (context, principal) = staged.session.into_parts();
-        let context = context
-            .into_token_storage::<P::Token>()
-            .expect("fresh EDHOC context has no request bindings");
-        let installed = app
-            .install_association(
+        let slot = app
+            .vacant_association(
                 metadata.endpoint,
                 *principal.fingerprint(),
                 epoch,
-                &mut Some(context),
+                &staged.session.context,
             )
-            .expect("exclusive preflight established capacity and identity");
-        Ok(installed)
+            .map_err(AppInstallError::App)?;
+        let staged = candidate.take().expect("checked staged session");
+        let (context, _) = staged.session.into_parts();
+        let context = context
+            .into_token_storage::<P::Token>()
+            .expect("fresh EDHOC context has no request bindings");
+        Ok(slot.insert(context))
     }
 }
 

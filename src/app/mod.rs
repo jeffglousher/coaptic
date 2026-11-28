@@ -1736,17 +1736,16 @@ impl<
         Ok(self)
     }
 
-    #[cfg(feature = "edhoc")]
-    pub(crate) fn check_association_install<U: OwnedToken>(
-        &self,
+    #[cfg(feature = "oscore")]
+    pub(crate) fn vacant_association<U: OwnedToken>(
+        &mut self,
         endpoint: Endpoint,
         owner: [u8; 32],
         epoch: u64,
         context: &crate::oscore::BoundedSecurityContext<REQUESTS, U>,
-    ) -> Result<(), OscoreInstallError> {
+    ) -> Result<associations::VacantAssociation<'_, REQUESTS, S::Token>, OscoreInstallError> {
         self.oscore
-            .check_install(endpoint, owner, epoch, context)
-            .map(|_| ())
+            .vacant(endpoint, owner, epoch, context, &mut self.oscore_checkpoint)
     }
 
     /// Install an independently owned context without reallocating shared pools.
@@ -1760,9 +1759,11 @@ impl<
         epoch: u64,
         candidate: &mut Option<crate::oscore::BoundedSecurityContext<REQUESTS, S::Token>>,
     ) -> Result<Association, OscoreInstallError> {
-        let association = self.oscore.install(endpoint, owner, epoch, candidate)?;
-        self.oscore_checkpoint.invalidate();
-        Ok(association)
+        let context = candidate
+            .as_ref()
+            .ok_or(OscoreInstallError::MissingCandidate)?;
+        let slot = self.vacant_association(endpoint, owner, epoch, context)?;
+        Ok(slot.insert(candidate.take().expect("checked candidate")))
     }
 
     /// Revoke all local work for this association and reclaim its context.

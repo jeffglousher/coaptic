@@ -42,6 +42,16 @@ pub(super) struct Entry<const REQUESTS: usize, K: OwnedToken = Token> {
     pub revoked: bool,
 }
 
+// Holds the selected slot exclusively while the caller moves the already
+// checked context. Dropping it leaves the slot, generation and checkpoint alone.
+#[cfg(feature = "oscore")]
+pub(crate) struct VacantAssociation<'a, const R: usize, K: OwnedToken> {
+    row: &'a mut Option<Entry<R, K>>,
+    generation: &'a mut u32,
+    checkpoint: &'a mut super::oscore::CheckpointState,
+    association: Association,
+}
+
 pub(crate) struct Store<const REQUESTS: usize, const ASSOCIATIONS: usize, K: OwnedToken = Token> {
     #[cfg(feature = "oscore")]
     pub(super) rows: [Option<Entry<REQUESTS, K>>; ASSOCIATIONS],
@@ -55,8 +65,8 @@ impl<const R: usize, const A: usize, K: OwnedToken> Store<R, A, K> {
     pub fn is_some(&self) -> bool {
         self.generation != 0 || self.rows.first().is_some_and(Option::is_some)
     }
-    // Generation zero permits only the primary in slot zero. Requiring or
-    // installing managed associations sets a generation that survives removal.
+    // Until a managed association is installed, the only possible entry is
+    // the primary in slot zero. A nonzero generation survives removal.
     #[cfg(feature = "oscore")]
     fn lookup_len(&self) -> usize {
         if self.generation == 0 { A.min(1) } else { A }
@@ -78,68 +88,47 @@ impl<const R: usize, const A: usize, K: OwnedToken> Store<R, A, K> {
     }
 
     #[cfg(feature = "oscore")]
-    pub fn install(
-        &mut self,
-        endpoint: Endpoint,
-        owner: [u8; 32],
-        epoch: u64,
-        candidate: &mut Option<BoundedSecurityContext<R, K>>,
-    ) -> Result<Association, super::OscoreInstallError> {
-        let context = candidate
-            .as_ref()
-            .ok_or(super::OscoreInstallError::MissingCandidate)?;
-        let (slot, generation) = self.check_install(endpoint, owner, epoch, context)?;
-        let association = Association {
-            route: endpoint.physical().with_association(generation),
-            owner,
-            epoch,
-        };
-        self.rows[slot] = Some(Entry {
-            context: candidate.take().expect("checked candidate"),
-            association: Some(association),
-            revoked: false,
-        });
-        self.generation = generation;
-        Ok(association)
-    }
-
-    #[cfg(feature = "oscore")]
-    pub fn check_install<U: OwnedToken>(
-        &self,
+    pub(super) fn vacant<'a, U: OwnedToken>(
+        &'a mut self,
         endpoint: Endpoint,
         owner: [u8; 32],
         epoch: u64,
         context: &BoundedSecurityContext<R, U>,
-    ) -> Result<(usize, u32), super::OscoreInstallError> {
+        checkpoint: &'a mut super::oscore::CheckpointState,
+    ) -> Result<VacantAssociation<'a, R, K>, super::OscoreInstallError> {
         use super::OscoreInstallError as E;
-        if self
-            .rows
-            .iter()
-            .flatten()
-            .any(|row| row.association.is_none())
-        {
-            return Err(E::Busy);
+        let physical = endpoint.physical();
+        let mut vacant = None;
+        for row in &mut self.rows {
+            let Some(entry) = row else {
+                vacant.get_or_insert(row);
+                continue;
+            };
+            // A primary can only occupy slot zero, so Busy precedes conflicts.
+            let association = entry.association.as_ref().ok_or(E::Busy)?;
+            if (association.owner == owner && association.epoch == epoch)
+                || (association.endpoint() == physical
+                    && entry.context.recipient_id() == context.recipient_id()
+                    && entry.context.id_context() == context.id_context())
+            {
+                return Err(E::Ambiguous);
+            }
         }
-        if self.rows.iter().flatten().any(|row| {
-            row.association.is_some_and(|a| {
-                (a.owner == owner && a.epoch == epoch)
-                    || (a.endpoint() == endpoint.physical()
-                        && row.context.recipient_id() == context.recipient_id()
-                        && row.context.id_context() == context.id_context())
-            })
-        }) {
-            return Err(E::Ambiguous);
-        }
-        let slot = self
-            .rows
-            .iter()
-            .position(Option::is_none)
-            .ok_or(E::Capacity)?;
+        let row = vacant.ok_or(E::Capacity)?;
         let generation = self
             .generation
             .checked_add(1)
             .ok_or(E::GenerationExhausted)?;
-        Ok((slot, generation))
+        Ok(VacantAssociation {
+            row,
+            generation: &mut self.generation,
+            checkpoint,
+            association: Association {
+                route: physical.with_association(generation),
+                owner,
+                epoch,
+            },
+        })
     }
 
     #[cfg(feature = "oscore")]
@@ -354,5 +343,19 @@ impl<const R: usize, K: OwnedToken> ContextStorage<R, K> for Option<BoundedSecur
     }
     fn is_some(&self) -> bool {
         self.is_some()
+    }
+}
+
+#[cfg(feature = "oscore")]
+impl<const R: usize, K: OwnedToken> VacantAssociation<'_, R, K> {
+    pub(crate) fn insert(self, context: BoundedSecurityContext<R, K>) -> Association {
+        *self.row = Some(Entry {
+            context,
+            association: Some(self.association),
+            revoked: false,
+        });
+        *self.generation = self.association.route.association();
+        self.checkpoint.invalidate();
+        self.association
     }
 }

@@ -7,6 +7,16 @@ This is the current status and work order. Detailed results live in linked
 
 ## Current position
 
+The [authenticated association installation comparison](architecture/requirements/MANAGED-INSTALL-20261128.md)
+found repeated preflight work and a 32-byte owner copy in a single-pass trial.
+Borrowing the row and keeping the checked vacancy cut the final authenticated
+32-slot install time by 57–61% in ten alternating pairs per vacancy layout.
+Direct 32-slot calls improved in at least 29/30 pairs per case across three runs.
+Placing the new implementation after the lookup implementations preserves the
+previous established-read server's complete executable code. One-slot direct
+success remained inconclusive. The final Windows release completed more reads
+than stock libcoap in all 24 capacity pairs. At 800/s both met the offered rate.
+
 The [Windows and ESP32-S3 throughput comparison](architecture/requirements/THROUGHPUT-AND-LOOKUP-20261128.md)
 separates capacity, an 800/s offered load and active device intervals. Coaptic
 won all six Windows capacity pairs per workload in the second rotation. The
