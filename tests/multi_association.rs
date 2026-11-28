@@ -154,4 +154,24 @@ fn udp_two_owners_share_constrained_pools_and_finish_blockwise_and_observe() {
     server.poll(6).unwrap();
     assert!(a.cancel(ca));
     assert!(b.cancel(cb));
+    assert_eq!(
+        b.take_response(cb).unwrap().unwrap_err(),
+        coaptic::CallFailure::Cancelled
+    );
+
+    // Slot zero is free. The remaining association must still route and
+    // authenticate both blocks, including the handler's association metadata.
+    let read = b.get("large").to(server_endpoint).send(7).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut output = [0; BODY.len()];
+    loop {
+        server.poll(8).unwrap();
+        b.poll(8).unwrap();
+        if let Some(reply) = b.take_response_into(read, &mut output).unwrap() {
+            assert_eq!(reply.unwrap().payload(), BODY);
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
 }
