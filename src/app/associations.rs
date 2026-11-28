@@ -53,8 +53,20 @@ pub(crate) struct Store<const REQUESTS: usize, const ASSOCIATIONS: usize, K: Own
 impl<const R: usize, const A: usize, K: OwnedToken> Store<R, A, K> {
     #[cfg(feature = "oscore")]
     pub fn is_some(&self) -> bool {
-        self.generation != 0 || self.rows.iter().any(Option::is_some)
+        self.generation != 0 || self.rows.first().is_some_and(Option::is_some)
     }
+    // Generation zero permits only the primary in slot zero. Requiring or
+    // installing managed associations sets a generation that survives removal.
+    #[cfg(feature = "oscore")]
+    fn lookup_len(&self) -> usize {
+        if self.generation == 0 { A.min(1) } else { A }
+    }
+
+    #[cfg(feature = "oscore")]
+    fn lookup_rows(&self) -> &[Option<Entry<R, K>>] {
+        &self.rows[..self.lookup_len()]
+    }
+
     pub const fn new() -> Self {
         Self {
             #[cfg(feature = "oscore")]
@@ -184,7 +196,7 @@ pub(crate) trait ContextStorage<const REQUESTS: usize, K: OwnedToken = Token> {
 impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Store<R, A, K> {
     #[cfg(feature = "oscore")]
     fn context(&self, namespace: u32) -> Option<&BoundedSecurityContext<R, K>> {
-        self.rows
+        self.lookup_rows()
             .iter()
             .flatten()
             .find(|row| {
@@ -194,7 +206,8 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
     }
     #[cfg(feature = "oscore")]
     fn context_mut(&mut self, namespace: u32) -> Option<&mut BoundedSecurityContext<R, K>> {
-        self.rows
+        let len = self.lookup_len();
+        self.rows[..len]
             .iter_mut()
             .flatten()
             .find(|row| {
@@ -208,7 +221,12 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
             return Ok(peer.physical());
         }
         let mut found = None;
-        for row in self.rows.iter().flatten().filter(|row| !row.revoked) {
+        for row in self
+            .lookup_rows()
+            .iter()
+            .flatten()
+            .filter(|row| !row.revoked)
+        {
             let route = row.association.map_or(peer.physical(), |a| a.route);
             if route.physical() == peer.physical()
                 && (peer.association() == 0 || peer.association() == route.association())
@@ -230,7 +248,7 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
             return Ok(peer.physical());
         }
         if self
-            .rows
+            .lookup_rows()
             .iter()
             .flatten()
             .any(|row| !row.revoked && row.association.is_none())
@@ -246,7 +264,12 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
             .map(|value| OscoreHeader::parse(value.value()))
             .transpose()?;
         let mut found = None;
-        for row in self.rows.iter().flatten().filter(|row| !row.revoked) {
+        for row in self
+            .lookup_rows()
+            .iter()
+            .flatten()
+            .filter(|row| !row.revoked)
+        {
             let route = row.association.map_or(peer.physical(), |a| a.route);
             if route.physical() != peer.physical() {
                 continue;
@@ -267,14 +290,14 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
     }
     #[cfg(feature = "oscore")]
     fn has_live_requests(&self) -> bool {
-        self.rows
+        self.lookup_rows()
             .iter()
             .flatten()
             .any(|row| row.context.has_live_requests())
     }
     #[cfg(feature = "oscore")]
     fn checkpoints(&self, commit: &mut super::oscore::CheckpointCommit<'_>) -> bool {
-        self.rows
+        self.lookup_rows()
             .iter()
             .flatten()
             .all(|row| commit(row.association, row.context.replay_checkpoint()))
@@ -282,7 +305,7 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
     fn association(&self, peer: Endpoint) -> Option<Association> {
         #[cfg(feature = "oscore")]
         {
-            self.rows
+            self.lookup_rows()
                 .iter()
                 .flatten()
                 .filter(|row| !row.revoked)
@@ -297,7 +320,7 @@ impl<const R: usize, const A: usize, K: OwnedToken> ContextStorage<R, K> for Sto
     }
     #[cfg(feature = "oscore")]
     fn is_some(&self) -> bool {
-        self.generation != 0 || self.rows.iter().any(Option::is_some)
+        Store::is_some(self)
     }
 }
 

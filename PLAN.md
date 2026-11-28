@@ -1,11 +1,22 @@
 # Project plan
 
-Updated 2026-11-28 after tracing complete Windows reads and their empty ACKs.
+Updated 2026-11-28 after comparing complete Windows reads with stock libcoap.
 Current effort: **performance**, with reliability as an acceptance condition.
 This is the current status and work order. Detailed results live in linked
 [evidence and history](architecture/requirements/PROJECT-HISTORY-20261117.md).
 
 ## Current position
+
+The [Windows and ESP32-S3 throughput comparison](architecture/requirements/THROUGHPUT-AND-LOOKUP-20261128.md)
+separates capacity, an 800/s offered load and active device intervals. Coaptic
+won all six Windows capacity pairs per workload in the second rotation. The
+preceding unprotected 4 KiB rotation was mixed. The landed ESP32-S3 peers had
+similar mixed throughput, while Coaptic consumed 1.27–1.38 ms more worker CPU
+per datagram. Physical stage attribution and both original 50% server-CPU
+targets remain open. Bounding the association scan while the generation is zero
+raised unprotected four-block throughput by 6.2% and 4.8% in two independent
+32-slot Windows cohorts. A wider association-lookup rewrite and a compact duplicate
+history representation both regressed on repeat and were rejected.
 
 The [Windows read and ACK walkthrough](architecture/requirements/WINDOWS-READ-WALK-20261128.md)
 follows both received datagrams per block. The rotating RX scan already excludes
